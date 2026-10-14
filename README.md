@@ -61,7 +61,15 @@ dotnet publish D:/Widget/src/DeskWidgets.App -c Release -r win-x64 -o D:/Widget/
 设置保存在 `%LOCALAPPDATA%\DeskWidgets\settings.json`，日志在 `logs\app.log`（上限 1 MB，自动轮转）。
 桌面图标的排列顺序在同一文件夹的 `desktop-icons.json`；如果旧的 DesktopRightAlign 留下了它的设置，第一次使用时会直接接管。旧版本写的 `desktop-icons-original.json`（「恢复原来的布局」的备份，该功能已移除）不再使用，可以删掉。
 
-开机启动用「任务计划程序」里当前用户的登录任务 `DeskWidgets`（登录 15 秒后启动，不需要密码和管理员权限），不再用注册表的 Run 项。原因是 2026-10-13 开机时，Explorer 跳过了 Run 项里的这个程序。
+「开机自动启动」用「任务计划程序」里当前用户的登录任务 `DeskWidgets`（登录 15 秒后启动，不需要密码和管理员权限），不用注册表的 Run 项：从 Claude 会话里写的 Run 项只进了 Claude 的私有注册表（见下文「在 Claude 会话里开发」），Explorer 看不到，2026-10-13 开机时就是这样没启动的。本机改由「AI Apps - Wait for TUN and Network」登录任务在网络就绪后统一启动本程序，所以托盘里的「开机自动启动」保持关闭，免得启动两次。
+
+### 在 Claude 会话里开发
+
+Claude 桌面版是 MSIX 打包应用。从它的会话（包括 Claude Code 和其中的 `dotnet run`）启动的进程，写 `%LOCALAPPDATA%` 和 `HKCU` 时会被重定向到 Claude 的私有副本（`%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local\` 和私有注册表），读的时候也优先读这份副本。所以：
+
+- 在会话里启动的 DeskWidgets 用的是另一套设置、日志和图标数据，和登录时启动的那个互不影响；
+- 会话里看到的 `%LOCALAPPDATA%\DeskWidgets` 不一定是真正运行的那份。要看真实文件，用资源管理器打开，或在会话里通过 WMI 读（`Get-CimInstance CIM_DataFile`）；
+- 要在真实环境里试新版本，在资源管理器里双击 exe；会话里用 WMI 启动（`Invoke-CimMethod Win32_Process -MethodName Create -Arguments @{ CommandLine = '"<exe 路径>"' }`），不要用 `dotnet run`。
 
 ## 目录结构
 
