@@ -98,38 +98,42 @@ public sealed class DeviceHub : IDisposable
 
     private async Task ScanAsync(SourceSlot slot)
     {
-        if (Interlocked.Exchange(ref slot.Running, 1) == 1)
+        // Ask first, then try to become the scanner. Whoever scans checks for
+        // requests again after letting go of the slot, so a request that lands
+        // while a scan is finishing is picked up instead of lost.
+        Volatile.Write(ref slot.Pending, 1);
+        while (Volatile.Read(ref slot.Pending) == 1 && !_cts.IsCancellationRequested)
         {
-            Volatile.Write(ref slot.Pending, 1);
-            return;
-        }
-        try
-        {
-            do
+            if (Interlocked.Exchange(ref slot.Running, 1) == 1)
+                return; // the running scan sees the request
+            try
             {
-                Volatile.Write(ref slot.Pending, 0);
-                IReadOnlyList<DeviceStatus> devices;
-                try
+                while (Interlocked.Exchange(ref slot.Pending, 0) == 1 && !_cts.IsCancellationRequested)
                 {
-                    devices = await slot.Source.ScanAsync(_cts.Token).ConfigureAwait(false);
+                    IReadOnlyList<DeviceStatus> devices;
+                    try
+                    {
+                        devices = await slot.Source.ScanAsync(_cts.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        // Keep the previous result; one failed scan should not blank the widget.
+                        Log.Warn($"Device source '{slot.Source.Name}' scan failed", ex);
+                        continue;
+                    }
+                    Publish(slot, devices);
                 }
-                catch (OperationCanceledException) when (_cts.IsCancellationRequested)
-                {
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    // Keep the previous result; one failed scan should not blank the widget.
-                    Log.Warn($"Device source '{slot.Source.Name}' scan failed", ex);
-                    continue;
-                }
-                Publish(slot, devices);
             }
-            while (Volatile.Read(ref slot.Pending) == 1 && !_cts.IsCancellationRequested);
-        }
-        finally
-        {
-            Volatile.Write(ref slot.Running, 0);
+            finally
+            {
+                // A full fence (unlike a volatile write): the Pending check that
+                // follows cannot be read before the slot is released.
+                Interlocked.Exchange(ref slot.Running, 0);
+            }
         }
     }
 
