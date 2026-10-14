@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace DeskWidgets.Interop;
 
@@ -48,6 +49,7 @@ internal static class Win32
     public const int SM_CYSMICON = 50;
 
     public const uint MF_STRING = 0x0000;
+    public const uint MF_GRAYED = 0x0001;
     public const uint MF_CHECKED = 0x0008;
     public const uint MF_POPUP = 0x0010;
     public const uint MF_SEPARATOR = 0x0800;
@@ -63,6 +65,14 @@ internal static class Win32
     public const uint NIF_MESSAGE = 0x1;
     public const uint NIF_ICON = 0x2;
     public const uint NIF_TIP = 0x4;
+
+    public const uint MB_YESNO = 0x0004;
+    public const uint MB_ICONQUESTION = 0x0020;
+    public const uint MB_ICONWARNING = 0x0030;
+    public const uint MB_ICONINFORMATION = 0x0040;
+    public const uint MB_SETFOREGROUND = 0x00010000;
+    public const uint MB_TOPMOST = 0x00040000;
+    public const int IDYES = 6;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT
@@ -103,6 +113,34 @@ internal static class Win32
         public RECT rcWork;
         public uint dwFlags;
     }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct MONITORINFOEX
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string szDevice;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GUITHREADINFO
+    {
+        public int cbSize;
+        public uint flags;
+        public nint hwndActive;
+        public nint hwndFocus;
+        public nint hwndCapture;
+        public nint hwndMenuOwner;
+        public nint hwndMoveSize;
+        public nint hwndCaret;
+        public RECT rcCaret;
+    }
+
+    /// <summary>A monitor: its device name (e.g. \\.\DISPLAY1), whether it is the primary one, and its work area.</summary>
+    public readonly record struct MonitorArea(string Device, bool Primary, RECT Work);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct WNDCLASSEX
@@ -147,6 +185,32 @@ internal static class Win32
     public delegate nint SubclassProc(nint hWnd, uint msg, nint wParam, nint lParam, nuint idSubclass, nuint refData);
 
     public delegate nint WindowProcedure(nint hWnd, uint msg, nint wParam, nint lParam);
+
+    private delegate bool MonitorEnumProc(nint monitor, nint hdc, nint rect, nint data);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumDisplayMonitors(nint hdc, nint clip, MonitorEnumProc callback, nint data);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetMonitorInfoW")]
+    private static extern bool GetMonitorInfoEx(nint monitor, ref MONITORINFOEX info);
+
+    [DllImport("user32.dll")]
+    public static extern bool ScreenToClient(nint hWnd, ref POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int virtualKey);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(nint hWnd, StringBuilder className, int maxCount);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
+    public static extern int MessageBox(nint hWnd, string text, string caption, uint type);
 
     [DllImport("comctl32.dll")]
     public static extern bool SetWindowSubclass(nint hWnd, SubclassProc subclassProc, nuint idSubclass, nuint refData);
@@ -320,6 +384,28 @@ internal static class Win32
         var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
         GetMonitorInfo(MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST), ref info);
         return info.rcWork;
+    }
+
+    /// <summary>Every monitor, in no particular order.</summary>
+    public static List<MonitorArea> GetMonitors()
+    {
+        var monitors = new List<MonitorArea>();
+        EnumDisplayMonitors(0, 0, (monitor, _, _, _) =>
+        {
+            if (DescribeMonitor(monitor) is { } area)
+                monitors.Add(area);
+            return true;
+        }, 0);
+        return monitors;
+    }
+
+    /// <summary>The monitor nearest to <paramref name="point"/>.</summary>
+    public static MonitorArea? MonitorAt(POINT point) => DescribeMonitor(MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST));
+
+    private static MonitorArea? DescribeMonitor(nint monitor)
+    {
+        var info = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>(), szDevice = string.Empty };
+        return GetMonitorInfoEx(monitor, ref info) ? new MonitorArea(info.szDevice, (info.dwFlags & 1) != 0 /* MONITORINFOF_PRIMARY */, info.rcWork) : null;
     }
 
     public static double GetScaleAt(POINT point)

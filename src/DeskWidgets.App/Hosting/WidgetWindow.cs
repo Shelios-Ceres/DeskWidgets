@@ -292,9 +292,9 @@ internal sealed class WidgetWindow : Window
         SavePosition();
     }
 
-    private static PointInt32 SnapToGrid(Win32.RECT card)
+    private PointInt32 SnapToGrid(Win32.RECT card)
     {
-        var grid = DesktopGrid.At(new Win32.POINT { X = (card.Left + card.Right) / 2, Y = (card.Top + card.Bottom) / 2 });
+        var grid = _host.GridAt(new Win32.POINT { X = (card.Left + card.Right) / 2, Y = (card.Top + card.Bottom) / 2 });
         return grid.Snap(card.Left, card.Top, card.Width, card.Height);
     }
 

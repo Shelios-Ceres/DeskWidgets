@@ -71,4 +71,26 @@ internal static class Strings
 
     /// <summary>Date under each world-clock time: "Oct 13" / "10月13日".</summary>
     public static string CityDatePattern => T("M月d日", "MMM d");
+
+    public static string StartupFailed => T("没能设置开机自动启动：", "Couldn't change Start with Windows: ");
+
+    public static string IconsMenu => T("桌面图标", "Desktop icons");
+    public static string IconsArrangeRight => T("靠右自动排列", "Keep arranged on the right");
+    public static string IconsArrangeNow => T("立即整理", "Arrange now");
+    public static string IconsRestore => T("恢复原来的布局…", "Restore original layout…");
+    public static string IconsStatusOff => T("未开启自动排列", "Not arranging");
+    public static string IconsStatusArranging(int count) => T($"自动排列中 · {count} 个图标", $"Arranging · {count} icons");
+    public static string IconsDesktopNotReady => T("等待桌面就绪", "Waiting for the desktop");
+    public static string IconsWaitingForIcons => T("等待桌面图标加载", "Waiting for the icons to load");
+    public static string IconsNotIconView => T("桌面当前不是图标视图", "The desktop isn't showing icons");
+    public static string IconsDuplicate => T("桌面上有两个项目标识相同，没有移动图标", "Two desktop items look the same; nothing was moved");
+    public static string IconsNoRoom => T("桌面放不下所有图标，这次没有移动任何图标", "Not enough room for every icon; nothing was moved");
+    public static string IconsChanging => T("图标正在变化，稍后重试", "Icons are changing; trying again shortly");
+    public static string IconsNotKept => T("Explorer 还没保留新位置，稍后再核对", "Explorer hasn't kept the new positions yet; checking again");
+    public static string IconsLegacyToolRunning => T("旧的「桌面图标靠右排列」程序还在运行，请先退出它", "The old DesktopRightAlign tool is still running; quit it first");
+    public static string IconsNoBackup => T("没有找到原布局的备份", "No backup of the original layout was found");
+    public static string IconsRestoreMismatch => T("显示器或图标大小和备份时不同，请先改回原来的显示设置", "Your displays or icon size differ from the backup; change them back first");
+    public static string IconsRestoreConfirm => T("把桌面图标放回第一次自动排列之前的位置，并关闭自动排列？", "Put the desktop icons back where they were before they were first arranged, and stop arranging them?");
+    public static string IconsRestored(int count) => T($"已恢复 {count} 个图标的位置。", $"Restored {count} icons.");
+    public static string IconsRestoreFailed => T("没能恢复：", "Couldn't restore the layout: ");
 }

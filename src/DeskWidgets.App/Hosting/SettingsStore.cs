@@ -15,6 +15,9 @@ internal sealed class AppSettings
     /// <summary>Snap widgets to the desktop icon grid (otherwise to screen edges and neighbours).</summary>
     public bool SnapToDesktopGrid { get; set; } = true;
 
+    /// <summary>Keep the desktop icons arranged from the top-right corner, clear of the widgets.</summary>
+    public bool ArrangeDesktopIcons { get; set; }
+
     public AppLanguage Language { get; set; } = AppLanguage.English;
 
     public WidgetTheme Theme { get; set; } = WidgetTheme.Glass;

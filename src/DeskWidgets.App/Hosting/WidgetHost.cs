@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using DeskWidgets.Core.Devices;
 using DeskWidgets.Core.Diagnostics;
+using DeskWidgets.Desktop;
 using DeskWidgets.Devices.Bluetooth;
 using DeskWidgets.Devices.Hid;
 using DeskWidgets.Interop;
@@ -12,9 +13,9 @@ using Windows.Graphics;
 namespace DeskWidgets.Hosting;
 
 /// <summary>
-/// Owns the app's long-lived parts: the device hub, the desktop backdrop, the
-/// settings, the tray icon and one <see cref="WidgetWindow"/> per widget.
-/// Everything here runs on the UI thread.
+/// Owns the app's long-lived parts: the device hub, the settings, the tray
+/// icon, the desktop icon arranger and one <see cref="WidgetWindow"/> per
+/// widget. Everything here runs on the UI thread.
 /// </summary>
 internal sealed class WidgetHost
 {
@@ -22,6 +23,9 @@ internal sealed class WidgetHost
     private const uint CommandStartup = 2;
     private const uint CommandLogs = 3;
     private const uint CommandGrid = 4;
+    private const uint CommandIconsToggle = 5;
+    private const uint CommandIconsArrangeNow = 6;
+    private const uint CommandIconsRestore = 7;
     private const uint CommandExit = 9;
     private const uint CommandLanguageBase = 50;
     private const uint CommandThemeBase = 70;
@@ -30,6 +34,8 @@ internal sealed class WidgetHost
     private readonly SettingsStore _settings = new();
     private readonly List<WidgetWindow> _windows = [];
     private readonly DispatcherQueueTimer _saveTimer;
+    private readonly IconArranger _icons;
+    private IconArrangerStatus _iconStatus = new(IconArrangerState.Off, 0, null);
     private TrayIcon? _tray;
     private bool _exiting;
 
@@ -46,11 +52,20 @@ internal sealed class WidgetHost
         _saveTimer.Interval = TimeSpan.FromMilliseconds(600);
         _saveTimer.IsRepeating = false;
         _saveTimer.Tick += (_, _) => _settings.Save();
+
+        _icons = new IconArranger(_settings.Current.ArrangeDesktopIcons);
+        _icons.StatusChanged += status => dispatcher.TryEnqueue(() => ShowIconStatus(status));
+        _icons.MarginsChanged += () => dispatcher.TryEnqueue(ResnapAll);
     }
 
     public AppServices Services { get; }
 
     public bool SnapToDesktopGrid => _settings.Current.SnapToDesktopGrid;
+
+    public bool ArrangeDesktopIcons => _settings.Current.ArrangeDesktopIcons;
+
+    /// <summary>The desktop grid at <paramref name="point"/>, sharing the icons' columns while they are arranged.</summary>
+    public DesktopGrid GridAt(Win32.POINT point) => DesktopGrid.At(point, _icons.AnchorAt(point));
 
     public WidgetTheme Theme => _settings.Current.Theme;
 
@@ -81,8 +96,9 @@ internal sealed class WidgetHost
         }
         foreach (var placement in settings.Widgets.ToList())
             Open(placement);
+        _icons.SetBlocked(GetCardRects(except: null));
 
-        _tray = new TrayIcon(Strings.AppName, Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
+        _tray = new TrayIcon(TrayTooltip(), Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
         _tray.MenuRequested += ShowTrayMenu;
     }
 
@@ -103,10 +119,12 @@ internal sealed class WidgetHost
         RequestSave();
     }
 
+    /// <summary>Saves soon. Every change to the widgets' layout comes through here, so the icon arranger hears of it too.</summary>
     public void RequestSave()
     {
         _saveTimer.Stop();
         _saveTimer.Start();
+        _icons.SetBlocked(GetCardRects(except: null));
     }
 
     public IEnumerable<Win32.RECT> GetCardRects(WidgetWindow? except)
@@ -116,12 +134,14 @@ internal sealed class WidgetHost
     {
         foreach (var window in _windows)
             window.EnsureOnScreen();
+        _icons.Invalidate();
     }
 
     /// <summary>
     /// Window position for a new widget: top-right of the primary work area,
     /// stepping down (then left) past the widgets already there — on the
-    /// desktop grid when grid snapping is on.
+    /// desktop grid when grid snapping is on, from the top-left while the
+    /// icons are arranged on the right.
     /// </summary>
     public PointInt32 GetDefaultPosition(WidgetSize size, WidgetWindow? except)
     {
@@ -135,7 +155,7 @@ internal sealed class WidgetHost
 
         if (SnapToDesktopGrid)
         {
-            var slots = DesktopGrid.At(corner).Slots(width, height).ToList();
+            var slots = GridAt(corner).Slots(width, height, fromLeft: ArrangeDesktopIcons).ToList();
             var free = slots.FirstOrDefault(p => !occupied.Any(o => Intersects(o, new Win32.RECT { Left = p.X, Top = p.Y, Right = p.X + width, Bottom = p.Y + height })), slots.FirstOrDefault());
             return free;
         }
@@ -171,6 +191,7 @@ internal sealed class WidgetHost
         foreach (var window in _windows.ToList())
             window.CloseFromHost();
         _windows.Clear();
+        _icons.Dispose();
         _tray?.Dispose();
         Services.Devices.Dispose();
         Log.Info("exit");
@@ -199,6 +220,72 @@ internal sealed class WidgetHost
         }
     }
 
+    private void ResnapAll()
+    {
+        foreach (var window in _windows)
+            window.EnsureOnScreen();
+    }
+
+    /// <summary>Turns icon arranging on or off. Widgets re-snap, because the grid's origin follows the icons.</summary>
+    private void SetArrangeIcons(bool on)
+    {
+        if (on == ArrangeDesktopIcons)
+            return;
+        _settings.Current.ArrangeDesktopIcons = on;
+        _icons.Enabled = on;
+        RequestSave();
+        ResnapAll();
+        _tray?.SetTooltip(TrayTooltip());
+    }
+
+    private async void RestoreIconLayout()
+    {
+        if (ShowMessage(Strings.IconsRestoreConfirm, Win32.MB_YESNO | Win32.MB_ICONQUESTION) != Win32.IDYES)
+            return;
+        SetArrangeIcons(false); // first, so a failed restore is not arranged again straight away
+        try
+        {
+            int count = await _icons.RestoreOriginalAsync();
+            ShowMessage(Strings.IconsRestored(count), Win32.MB_ICONINFORMATION);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Restoring the desktop icon layout failed", ex);
+            ShowMessage(Strings.IconsRestoreFailed + (ex is InvalidOperationException ? ex.Message : Strings.IconsDesktopNotReady), Win32.MB_ICONWARNING);
+        }
+    }
+
+    private static void ToggleStartup()
+    {
+        try
+        {
+            StartupRegistration.SetEnabled(!StartupRegistration.IsEnabled);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Changing Start with Windows failed", ex);
+            ShowMessage(Strings.StartupFailed + ex.Message, Win32.MB_ICONWARNING);
+        }
+    }
+
+    private static int ShowMessage(string text, uint type)
+        => Win32.MessageBox(0, text, Strings.AppName, type | Win32.MB_SETFOREGROUND | Win32.MB_TOPMOST);
+
+    private void ShowIconStatus(IconArrangerStatus status)
+    {
+        _iconStatus = status;
+        _tray?.SetTooltip(TrayTooltip());
+    }
+
+    private string TrayTooltip() => ArrangeDesktopIcons ? $"{Strings.AppName} · {IconStatusText()}" : Strings.AppName;
+
+    private string IconStatusText() => _iconStatus.State switch
+    {
+        IconArrangerState.Arranging when ArrangeDesktopIcons => Strings.IconsStatusArranging(_iconStatus.IconCount),
+        IconArrangerState.Waiting when ArrangeDesktopIcons => _iconStatus.Problem ?? Strings.IconsDesktopNotReady,
+        _ => ArrangeDesktopIcons ? Strings.IconsDesktopNotReady : Strings.IconsStatusOff,
+    };
+
     /// <summary>Switches every widget, menu and the tray tooltip to <paramref name="language"/> and saves it.</summary>
     private void SetLanguage(AppLanguage language)
     {
@@ -209,7 +296,7 @@ internal sealed class WidgetHost
         RequestSave();
         foreach (var window in _windows)
             window.ApplyLanguage();
-        _tray?.SetTooltip(Strings.AppName);
+        _tray?.SetTooltip(TrayTooltip());
         Services.Devices.RefreshAll(); // demo devices are named in the UI language
     }
 
@@ -231,10 +318,18 @@ internal sealed class WidgetHost
             uint check = theme == Theme ? Win32.MF_CHECKED : 0;
             Win32.AppendMenu(themeMenu, Win32.MF_STRING | check, CommandThemeBase + (uint)theme, Strings.ThemeName(theme));
         }
+        nint iconsMenu = Win32.CreatePopupMenu();
+        Win32.AppendMenu(iconsMenu, Win32.MF_STRING | Win32.MF_GRAYED, 0, IconStatusText());
+        Win32.AppendMenu(iconsMenu, Win32.MF_SEPARATOR, 0, null);
+        Win32.AppendMenu(iconsMenu, Win32.MF_STRING | (ArrangeDesktopIcons ? Win32.MF_CHECKED : 0), CommandIconsToggle, Strings.IconsArrangeRight);
+        Win32.AppendMenu(iconsMenu, Win32.MF_STRING, CommandIconsArrangeNow, Strings.IconsArrangeNow);
+        Win32.AppendMenu(iconsMenu, Win32.MF_SEPARATOR, 0, null);
+        Win32.AppendMenu(iconsMenu, Win32.MF_STRING, CommandIconsRestore, Strings.IconsRestore);
         Win32.AppendMenu(menu, Win32.MF_POPUP, (nuint)addMenu, Strings.AddWidget);
         Win32.AppendMenu(menu, Win32.MF_STRING, CommandRefresh, Strings.RefreshDevices);
         Win32.AppendMenu(menu, Win32.MF_SEPARATOR, 0, null);
         Win32.AppendMenu(menu, Win32.MF_STRING | (SnapToDesktopGrid ? Win32.MF_CHECKED : 0), CommandGrid, Strings.SnapToDesktopGrid);
+        Win32.AppendMenu(menu, Win32.MF_POPUP, (nuint)iconsMenu, Strings.IconsMenu);
         Win32.AppendMenu(menu, Win32.MF_STRING | (StartupRegistration.IsEnabled ? Win32.MF_CHECKED : 0), CommandStartup, Strings.StartWithWindows);
         Win32.AppendMenu(menu, Win32.MF_POPUP, (nuint)themeMenu, Strings.ThemeMenu);
         Win32.AppendMenu(menu, Win32.MF_POPUP, (nuint)languageMenu, Strings.LanguageMenu);
@@ -251,13 +346,22 @@ internal sealed class WidgetHost
                 Services.Devices.RefreshAll();
                 break;
             case CommandStartup:
-                StartupRegistration.SetEnabled(!StartupRegistration.IsEnabled);
+                ToggleStartup();
                 break;
             case CommandGrid:
                 _settings.Current.SnapToDesktopGrid = !SnapToDesktopGrid;
                 RequestSave();
-                foreach (var window in _windows)
-                    window.EnsureOnScreen(); // re-snap everything under the new rule
+                ResnapAll(); // under the new rule
+                break;
+            case CommandIconsToggle:
+                SetArrangeIcons(!ArrangeDesktopIcons);
+                break;
+            case CommandIconsArrangeNow:
+                SetArrangeIcons(true);
+                _icons.Invalidate();
+                break;
+            case CommandIconsRestore:
+                RestoreIconLayout();
                 break;
             case CommandLogs:
                 Directory.CreateDirectory(Log.LogDirectory);
