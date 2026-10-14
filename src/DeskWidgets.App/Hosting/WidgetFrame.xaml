@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="DeskWidgets.Hosting.WidgetFrame"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <!-- The live blur comes from GlassBackdrop; these layers stay thin on purpose. -->
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="GlassTintBrush" Color="#FFFFFF" Opacity="0.24" />
+                    <LinearGradientBrush x:Key="GlassSheenBrush" StartPoint="0,0" EndPoint="0.7,1">
+                        <GradientStop Offset="0" Color="#38FFFFFF" />
+                        <GradientStop Offset="0.6" Color="#00FFFFFF" />
+                    </LinearGradientBrush>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="GlassTintBrush" Color="#000000" Opacity="0.24" />
+                    <LinearGradientBrush x:Key="GlassSheenBrush" StartPoint="0,0" EndPoint="0.7,1">
+                        <GradientStop Offset="0" Color="#1FFFFFFF" />
+                        <GradientStop Offset="0.6" Color="#00FFFFFF" />
+                    </LinearGradientBrush>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!-- Glass, bottom to top: thin tint, diagonal sheen, widget content. No outline.
+         The pixel theme swaps the two glass layers for a pixel card panel (code-behind). -->
+    <Grid x:Name="Root" Background="Transparent">
+        <Border x:Name="GlassTint" CornerRadius="22" Background="{ThemeResource GlassTintBrush}" />
+        <Border x:Name="GlassSheen" CornerRadius="22" Background="{ThemeResource GlassSheenBrush}" IsHitTestVisible="False" />
+        <ContentPresenter x:Name="ContentHost" />
+    </Grid>
+</UserControl>

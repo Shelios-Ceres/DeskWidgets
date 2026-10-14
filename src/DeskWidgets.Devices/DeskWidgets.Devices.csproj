@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>$(DeskWidgetsWindowsTfm)</TargetFramework>
+    <TargetPlatformMinVersion>$(DeskWidgetsMinWindows)</TargetPlatformMinVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DeskWidgets.Core\DeskWidgets.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DeskWidgets.DeviceProbe" />
+  </ItemGroup>
+
+</Project>
