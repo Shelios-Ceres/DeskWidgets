@@ -25,7 +25,6 @@ internal sealed class WidgetHost
     private const uint CommandGrid = 4;
     private const uint CommandIconsToggle = 5;
     private const uint CommandIconsArrangeNow = 6;
-    private const uint CommandIconsRestore = 7;
     private const uint CommandExit = 9;
     private const uint CommandLanguageBase = 50;
     private const uint CommandThemeBase = 70;
@@ -238,23 +237,6 @@ internal sealed class WidgetHost
         _tray?.SetTooltip(TrayTooltip());
     }
 
-    private async void RestoreIconLayout()
-    {
-        if (ShowMessage(Strings.IconsRestoreConfirm, Win32.MB_YESNO | Win32.MB_ICONQUESTION) != Win32.IDYES)
-            return;
-        SetArrangeIcons(false); // first, so a failed restore is not arranged again straight away
-        try
-        {
-            int count = await _icons.RestoreOriginalAsync();
-            ShowMessage(Strings.IconsRestored(count), Win32.MB_ICONINFORMATION);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("Restoring the desktop icon layout failed", ex);
-            ShowMessage(Strings.IconsRestoreFailed + (ex is InvalidOperationException ? ex.Message : Strings.IconsDesktopNotReady), Win32.MB_ICONWARNING);
-        }
-    }
-
     private static void ToggleStartup()
     {
         try
@@ -323,8 +305,6 @@ internal sealed class WidgetHost
         Win32.AppendMenu(iconsMenu, Win32.MF_SEPARATOR, 0, null);
         Win32.AppendMenu(iconsMenu, Win32.MF_STRING | (ArrangeDesktopIcons ? Win32.MF_CHECKED : 0), CommandIconsToggle, Strings.IconsArrangeRight);
         Win32.AppendMenu(iconsMenu, Win32.MF_STRING, CommandIconsArrangeNow, Strings.IconsArrangeNow);
-        Win32.AppendMenu(iconsMenu, Win32.MF_SEPARATOR, 0, null);
-        Win32.AppendMenu(iconsMenu, Win32.MF_STRING, CommandIconsRestore, Strings.IconsRestore);
         Win32.AppendMenu(menu, Win32.MF_POPUP, (nuint)addMenu, Strings.AddWidget);
         Win32.AppendMenu(menu, Win32.MF_STRING, CommandRefresh, Strings.RefreshDevices);
         Win32.AppendMenu(menu, Win32.MF_SEPARATOR, 0, null);
@@ -359,9 +339,6 @@ internal sealed class WidgetHost
             case CommandIconsArrangeNow:
                 SetArrangeIcons(true);
                 _icons.Invalidate();
-                break;
-            case CommandIconsRestore:
-                RestoreIconLayout();
                 break;
             case CommandLogs:
                 Directory.CreateDirectory(Log.LogDirectory);

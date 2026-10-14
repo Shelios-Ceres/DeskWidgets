@@ -12,8 +12,7 @@ internal sealed record DisplayArea(string Device, bool Primary, int Left, int To
 
 /// <summary>
 /// One reading of the desktop: Explorer's layout flags and grid spacing, the
-/// monitors and every icon. The JSON shape matches the DesktopRightAlign tool's
-/// backups, so its original-layout.json can be taken over as is.
+/// monitors and every icon (also what <c>--icons-inspect</c> writes out).
 /// </summary>
 internal sealed record DesktopSnapshot(DateTimeOffset CapturedAt, uint Flags, int SpacingX, int SpacingY,
     int IconSize, long Window, List<DisplayArea> Displays, List<IconPosition> Items);

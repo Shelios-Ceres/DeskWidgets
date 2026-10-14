@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
@@ -37,7 +36,6 @@ internal sealed class IconArranger : IDisposable
 
     private readonly Thread _thread;
     private readonly AutoResetEvent _wake = new(false);
-    private readonly ConcurrentQueue<Action> _jobs = new();
     private readonly List<FileSystemWatcher> _watchers = [];
     private readonly IconLayoutSettings _layout; // used on the arranger's thread only
     private volatile IReadOnlyDictionary<string, Insets> _margins;
@@ -108,29 +106,6 @@ internal sealed class IconArranger : IDisposable
     }
 
     /// <summary>
-    /// Puts the icons back where the restore point has them and gives Explorer
-    /// its own arranging flags back. Turn <see cref="Enabled"/> off first, or the
-    /// next pass would arrange them again.
-    /// </summary>
-    public Task<int> RestoreOriginalAsync()
-    {
-        var done = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _jobs.Enqueue(() =>
-        {
-            try
-            {
-                done.SetResult(RestoreOriginal());
-            }
-            catch (Exception ex)
-            {
-                done.SetException(ex);
-            }
-        });
-        _wake.Set();
-        return done.Task;
-    }
-
-    /// <summary>
     /// Read-only check (<c>DeskWidgets.exe --icons-inspect &lt;file&gt;</c>): the
     /// desktop as it is and what a pass would move with <paramref name="cards"/>
     /// in the way, as JSON. Moves nothing and writes no other file.
@@ -175,8 +150,6 @@ internal sealed class IconArranger : IDisposable
             _wake.WaitOne(TimeSpan.FromMilliseconds(500));
             if (_disposed)
                 break;
-            while (_jobs.TryDequeue(out var job))
-                job();
             try
             {
                 Pass();
@@ -233,7 +206,6 @@ internal sealed class IconArranger : IDisposable
         bool learned = IconLayout.Learn(current, _layout);
         var blocked = _blocked.Select(desktop.ToClient).ToList();
         var planned = IconLayout.Plan(current, _layout, blocked); // validates everything before anything moves
-        IconStore.EnsureOriginal(current); // never arrange without a restore point
         if (learned)
         {
             IconStore.SaveLayout(_layout);
@@ -259,27 +231,6 @@ internal sealed class IconArranger : IDisposable
         }
         _iconCount = current.Items.Count;
         Publish(new IconArrangerStatus(IconArrangerState.Arranging, _iconCount, null));
-    }
-
-    private int RestoreOriginal()
-    {
-        if (LegacyToolRunning())
-            throw new InvalidOperationException(Strings.IconsLegacyToolRunning);
-        var backup = IconStore.LoadOriginal() ?? throw new InvalidOperationException(Strings.IconsNoBackup);
-        using var desktop = new ShellDesktop();
-        var current = desktop.Capture();
-        if (!backup.Displays.SequenceEqual(current.Displays) || backup.SpacingX != current.SpacingX || backup.SpacingY != current.SpacingY)
-            throw new InvalidOperationException(Strings.IconsRestoreMismatch);
-        var present = new HashSet<string>(current.Items.Select(i => i.Key), StringComparer.OrdinalIgnoreCase);
-        var targets = backup.Items.Where(i => present.Contains(i.Key)).ToList();
-        desktop.SetLayoutFlags(0);
-        desktop.Position(targets);
-        var after = desktop.Capture().Items.ToDictionary(i => i.Key, StringComparer.OrdinalIgnoreCase);
-        if (targets.Any(p => !after.TryGetValue(p.Key, out var seen) || !IconLayout.SamePosition(p, seen)))
-            throw new InvalidOperationException(Strings.IconsNotKept);
-        desktop.SetLayoutFlags(backup.Flags);
-        Log.Info($"desktop icons: restored {targets.Count} icons from the original layout");
-        return targets.Count;
     }
 
     /// <summary>Never move an icon while the user drags something, has a menu open or is renaming an icon.</summary>
