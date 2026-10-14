@@ -72,6 +72,16 @@ internal sealed class GlassBackdrop : SystemBackdrop, IDisposable
         disconnectedTarget.SystemBackdrop = null;
     }
 
+    /// <summary>
+    /// Called when the system theme or high contrast changes. Nothing here uses
+    /// the default backdrop configuration (the brush stays transparent), and the
+    /// base version throws ArgumentException "target" for this backdrop, so it is
+    /// deliberately not called.
+    /// </summary>
+    protected override void OnDefaultSystemBackdropConfigurationChanged(ICompositionSupportsSystemBackdrop target, XamlRoot xamlRoot)
+    {
+    }
+
     public void Dispose()
     {
         if (_target is not null)
