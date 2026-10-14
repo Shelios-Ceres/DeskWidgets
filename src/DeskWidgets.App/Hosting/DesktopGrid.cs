@@ -20,18 +20,25 @@ internal readonly record struct DesktopGrid(Win32.RECT Area, int CellWidth, int 
     {
         var area = Win32.GetWorkArea(point);
         var (width, height) = Win32.GetDesktopIconSpacing() ?? DefaultSpacing(point);
+        return Create(area, width, height, anchor);
+    }
+
+    /// <summary>The grid over <paramref name="workArea"/>; with an anchor, its cells end at the icons' right margin.</summary>
+    public static DesktopGrid Create(Win32.RECT workArea, int cellWidth, int cellHeight, GridAnchor? anchor = null)
+    {
+        var area = workArea;
         if (anchor is { } margins)
         {
             int right = area.Right - margins.Right;
             area = new Win32.RECT
             {
-                Left = area.Left + Math.Max(0, right - area.Left) % width,
+                Left = area.Left + Math.Max(0, right - area.Left) % cellWidth,
                 Top = area.Top + margins.Top,
                 Right = right,
                 Bottom = area.Bottom,
             };
         }
-        return new DesktopGrid(area, width, height);
+        return new DesktopGrid(area, cellWidth, cellHeight);
     }
 
     /// <summary>Snapped top-left for a card of the given size, from the block of cells nearest to it.</summary>

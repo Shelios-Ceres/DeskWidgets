@@ -33,4 +33,8 @@
     <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="DeskWidgets.Tests" />
+  </ItemGroup>
+
 </Project>

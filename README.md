@@ -71,6 +71,14 @@ Claude 桌面版是 MSIX 打包应用。从它的会话（包括 Claude Code 和
 - 会话里看到的 `%LOCALAPPDATA%\DeskWidgets` 不一定是真正运行的那份。要看真实文件，用资源管理器打开，或在会话里通过 WMI 读（`Get-CimInstance CIM_DataFile`）；
 - 要在真实环境里试新版本，在资源管理器里双击 exe；会话里用 WMI 启动（`Invoke-CimMethod Win32_Process -MethodName Create -Arguments @{ CommandLine = '"<exe 路径>"' }`），不要用 `dotnet run`。
 
+### 测试
+
+```bash
+dotnet test D:/Widget/tests/DeskWidgets.Tests -c Release
+```
+
+测试覆盖不依赖界面的逻辑：桌面网格吸附、图标排列、像素字体排版、世界时钟的时差和日期、卡片尺寸，以及 `DeviceHub` 的汇总和扫描合并。用 Release 配置，程序运行时（Debug 版 exe 被占用）也能编译和跑测试。
+
 ## 目录结构
 
 ```
@@ -87,6 +95,8 @@ src/
     Hosting/                 透明窗口、实时毛玻璃（GlassBackdrop）、拖动吸附、托盘、设置、开机启动（登录任务）
     Pixel/                   像素主题：画布、手绘字体和精灵图、配色、卡片、整数倍放大显示（PixelSurface）、预览图
     Widgets/                 小组件接口 + 电池组件 + 时钟组件 + 世界时钟（WorldClock/）；各组件的 *PixelScene 是像素主题的画法
+tests/
+  DeskWidgets.Tests/       xUnit 单元测试（引用 App 和 Core，自带 Windows App SDK 运行时）
 tools/
   DeskWidgets.DeviceProbe/ 命令行诊断：列出 HID 设备、各数据源扫描结果（--hid-all / --self-test / --listen 秒数）
   Make-AppIcon.ps1         重新生成程序图标
