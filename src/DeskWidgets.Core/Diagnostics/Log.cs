@@ -18,8 +18,9 @@ public static class Log
 
     public static void Info(string message) => Write("INFO", message);
 
+    /// <summary>One line: the exception's type, HRESULT and message (COM errors often come with an empty message).</summary>
     public static void Warn(string message, Exception? ex = null)
-        => Write("WARN", ex is null ? message : $"{message}: {ex.GetType().Name}: {ex.Message}");
+        => Write("WARN", ex is null ? message : $"{message}: {ex.GetType().Name} (0x{ex.HResult:X8}) {ex.Message}".TrimEnd());
 
     public static void Error(string message, Exception? ex = null)
         => Write("ERROR", ex is null ? message : $"{message}: {ex}");
