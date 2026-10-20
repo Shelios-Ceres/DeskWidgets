@@ -1,307 +1,309 @@
-# 主题设计规范
+# Theme design spec
 
-> 版本 1 · 2026-10-13 · 适用于 DeskWidgets 的全部主题（目前：毛玻璃 Glass、像素 Pixel）。
-> 新增主题、修改主题、给小组件做新画法之前，先读完这份文档。规范和代码不一致时：**先改规范，再改代码**。
+[中文版](THEMES.zh-CN.md)
 
-用词约定：
+> Version 1 · 2026-10-13 · Applies to all DeskWidgets themes (currently Glass and Pixel).
+> Read this document before adding a theme, changing a theme, or adding a new rendering for a widget. When the spec and the code disagree: **change the spec first, then the code**.
 
-- **必须**：硬性规定。违反会出 bug，或推翻用户已经确认过的决定（见附录 B）。
-- **应该**：默认做法。有充分理由才能例外，例外要写进文末的「变更记录」。
-- **可以**：自由发挥。
+Wording convention:
+
+- **Must**: a hard rule. Breaking it causes a bug, or overturns a decision the user has already confirmed (see Appendix B).
+- **Should**: the default. An exception needs a good reason and goes into the changelog at the end.
+- **May**: optional; use your judgement.
 
 ---
 
-## 1. 什么是主题
+## 1. What a theme is
 
-主题 = 所有小组件共用的一整套外观：**卡片**（形状、材质、边缘）、**配色**（浅色、深色各一套）、**字体**、**图标**、**动效**。
+A theme is one complete look shared by all widgets: the **card** (shape, material, edge), the **palette** (one light set, one dark set), the **fonts**, the **icons** and the **motion**.
 
-主题**不决定**：小组件显示哪些信息、卡片尺寸和位置、怎么操作、文案。这些在所有主题里都一样（第 2 节）。
+A theme does **not** decide: which information a widget shows, card size and position, how you interact with it, or the copy. Those are the same in every theme (section 2).
 
-| 主题 | 枚举值 | 一句话 | 实现方式 |
+| Theme | Enum value | In one line | Implementation |
 |---|---|---|---|
-| 毛玻璃 | `WidgetTheme.Glass`（默认） | 仿 Apple 小组件：实时模糊的薄玻璃，22 DIP 圆角，没有描边和阴影 | 组件的 XAML 内容 + `GlassBackdrop`（DWM host backdrop）+ `WidgetFrame` 的底色和高光层 |
-| 像素 | `WidgetTheme.Pixel` | 不透明的像素画卡片，低分辨率逐像素绘制，整数倍放大，边缘永远是硬的 | 每个组件一个静态 `XxxPixelScene`，画在 `PixelCanvas` 上，由 `PixelSurface` 1:1 显示 |
+| Glass | `WidgetTheme.Glass` (default) | Apple-style widgets: thin, live-blurred glass with 22 DIP rounded corners, no outline and no shadow | The widget's XAML content + `GlassBackdrop` (DWM host backdrop) + the tint and highlight layers of `WidgetFrame` |
+| Pixel | `WidgetTheme.Pixel` | An opaque pixel-art card, drawn pixel by pixel at low resolution and scaled up by a whole number, and its edges are always hard | One static `XxxPixelScene` per widget, drawn on a `PixelCanvas` and shown 1:1 by `PixelSurface` |
 
-切换入口：托盘菜单或任意小组件的右键菜单 →「Theme / 主题」。设置保存在 `settings.json` 的 `Theme` 字段。
+Where to switch: tray menu or any widget's right-click menu → "Theme" ("主题" in the Chinese UI). The setting is saved in the `Theme` field of `settings.json`.
 
 ---
 
-## 2. 所有主题都必须遵守的规则
+## 2. Rules every theme must follow
 
-### 2.1 全局切换
+### 2.1 Global switching
 
-- **必须**：主题是全局的，所有小组件一起切换，不支持一部分组件用毛玻璃、另一部分用像素。
-- **必须**：切换立即生效，不用重启。宿主（`WidgetHost.SetTheme` → `WidgetWindow.ApplyTheme`）会用新主题重新创建每个组件。一个组件实例的 `WidgetContext.Theme` 在它的生命周期里不会变，所以组件自己不用处理主题切换。
+- **Must**: the theme is global. All widgets switch together; having some widgets in Glass and others in Pixel isn't supported.
+- **Must**: switching takes effect immediately, without a restart. The host (`WidgetHost.SetTheme` → `WidgetWindow.ApplyTheme`) recreates every widget with the new theme. A widget instance's `WidgetContext.Theme` never changes during its lifetime, so widgets don't need to handle theme switching themselves.
 
-### 2.2 尺寸与位置
+### 2.2 Size and position
 
-- **必须**：每个尺寸的卡片占地固定：小 164×164、中 344×164、大 344×344（单位 DIP；中、大 = 两个小卡片加 16 DIP 间隔）。桌面网格吸附和已保存的位置都依赖这些尺寸，换主题不能打乱用户的桌面。
-- **可以**：整数倍放大带来的少量偏差（像素主题在 125%、175% 缩放下比毛玻璃略大）。
-- **必须**：内容画在卡片里面。窗口就是卡片，画到外面会被裁掉。
-- **必须**：不为某个主题新增专属尺寸。
+- **Must**: each size has a fixed footprint: small 164×164, medium 344×164, large 344×344 (in DIP; medium and large = two small cards plus a 16 DIP gap). Desktop grid snapping and saved positions depend on these sizes, so changing theme must not disturb the user's desktop.
+- **May**: deviate slightly because of whole-number scaling (Pixel is slightly larger than Glass at 125% and 175% scaling).
+- **Must**: draw content inside the card. The window is the card, and anything drawn outside is clipped.
+- **Must**: don't add a size that exists for only one theme.
 
-### 2.3 信息底线
+### 2.3 Minimum information
 
-主题可以换表现形式（圆环 ↔ 电池条、城市全名 ↔ 三字母代码），放得下时也可以多显示一点，但每个尺寸**不能少于**下表的内容：
+A theme may change how information is presented (rings ↔ battery bars, full city names ↔ three-letter codes), and may show a little more when there is room, but every size **must show at least** what this table lists:
 
-| 组件 | 小 | 中 | 大 |
+| Widget | Small | Medium | Large |
 |---|---|---|---|
-| 电池 | 单设备：图标、电量数字、充电状态，开启「显示设备名称」时加名称<br>多设备：2×2，每格是图标 + 电量（图形或数字）+ 充电状态 | 最多 4 个设备：图标、电量（图形 + 数字）、充电状态、名称（可关闭） | 最多 6 行：图标、名称、连接方式和状态、电量数字 |
-| 时钟 | 星期、时间、日期 | 同小号 | 不支持 |
-| 世界时钟 | 4 个表盘 + 城市标识（全名或三字母代码） | 4 个表盘，各带城市名、时间、当地日期 | 每城一行：表盘、城市名、与本地的时差（含今天/昨天/明天）、时间、当地日期 |
+| Battery | One device: icon, charge percentage and charging state, plus the name when "Show device names" is on<br>Several devices: 2×2, each cell is an icon + charge (graphic or number) + charging state | Up to 4 devices: icon, charge (graphic + number), charging state, name (can be turned off) | Up to 6 rows: icon, name, connection type and state, charge percentage |
+| Clock | Weekday, time, date | Same as small | Not supported |
+| World clock | 4 dials + a city label (full name or three-letter code) | 4 dials, each with city name, time and local date | One row per city: dial, city name, time difference from local time (including today/yesterday/tomorrow), time, local date |
 
-- 没有设备时显示空状态文案（`Strings.NoDevices`）。
-- 开启「显示未连接的设备」时，未连接的设备要明显变暗，电量用「—」代替。
-- 右键菜单里的选项（显示设备名称、显示秒针、更换城市……）在所有主题里效果相同。
+- With no devices, show the empty-state text (`Strings.NoDevices`).
+- When "Show disconnected devices" is on, disconnected devices must be clearly dimmed, with "—" in place of the charge.
+- The options in the right-click menu (show device names, show second hand, change cities, …) do the same thing in every theme.
 
-### 2.4 颜色的含义
+### 2.4 What colors mean
 
-主题决定具体色值，但**不能改变含义**：
+A theme decides the exact color values, but **must not change the meaning**:
 
-- 电量 ≤ 20% 且没在充电：红；省电模式：黄；其他：绿（和 iOS 一致）。
-- 充电中：显示闪电标志。
-- 世界时钟：当地 6:00–18:00 用白天表盘，其余时间用夜间表盘；秒针用橙色强调色。
-- 时钟的星期用强调色（红或橙）。
+- Charge ≤ 20% and not charging: red; power-saving mode: yellow; anything else: green (as in iOS).
+- Charging: show a lightning bolt.
+- World clock: use the day dial for local 6:00–18:00 and the night dial otherwise; the second hand uses the orange accent.
+- The clock's weekday uses the accent color (red or orange).
 
-每个主题的具体色值见第 8 节。
+Each theme's exact values are in section 8.
 
-### 2.5 语言与文字
+### 2.5 Language and text
 
-- **必须**：所有可见文字取自 `Strings`（English 默认 + 中文），不在组件里硬写文案。日期用 `Strings.Culture` 或明确的格式串。
-- **必须**：城市名在两种语言下都用英文（用户决定）。
-- **必须**：时间用 24 小时制 `HH:mm`。
-- **必须**：字体要么能覆盖中英文，要么有回退方案，而且**同一串文字不能混用两种字号**（像素主题的做法：像素字体拼不出来的文字，整串改用宋体 12px 点阵）。
-- **必须**：两种语言都要放得下。英文通常更宽，中文通常更高（像素主题里中文行高 12px，像素字体只有 5px 或 7px）。实在放不下时可以换更紧凑的写法（例：像素主题的中文日期写成「10/13」而不是「10月13日」），并记到第 4 节。
+- **Must**: all visible text comes from `Strings` (English by default + Chinese); no copy hard-coded in widgets. Format dates with `Strings.Culture` or an explicit format string.
+- **Must**: city names are in English in both languages (the user's decision).
+- **Must**: time uses the 24-hour `HH:mm` format.
+- **Must**: fonts either cover both Chinese and English or have a fallback, and **one string of text must not mix two font sizes** (the Pixel approach: text the pixel fonts can't spell is set entirely in the 12 px SimSun bitmap font).
+- **Must**: both languages must fit. English is usually wider and Chinese usually taller (in Pixel, Chinese lines are 12 px high while the pixel fonts are 5 px or 7 px). When something really doesn't fit, a more compact wording may be used (for example, Pixel writes the Chinese date as "10/13" instead of "10月13日"), and it goes into section 4.
 
-### 2.6 跟随系统
+### 2.6 Following the system
 
-- **必须**：提供浅色、深色两套配色，系统切换时立即重绘。XAML 内容监听 `ActualThemeChanged`；`PixelSurface` 会自动重绘。
-- **必须**：在 100%–200% 缩放和跨显示器 DPI 变化时都保持清晰。
-- **应该**：用到透明效果的主题，要说明 Windows 关闭「透明效果」或开启节电模式时的样子（毛玻璃会变成纯色，属于正常现象）。
+- **Must**: provide a light and a dark palette, and redraw immediately when the system switches. XAML content listens to `ActualThemeChanged`; `PixelSurface` redraws by itself.
+- **Must**: stay sharp at 100%–200% scaling and across monitors with different DPI.
+- **Should**: a theme that uses transparency should say what it looks like when Windows "Transparency effects" is off or "Energy saver" is on (Glass turns into a solid color, which is normal).
 
-### 2.7 操作与可读性
+### 2.7 Interaction and legibility
 
-- **必须**：整张卡片都能拖动，内容不能拦截指针事件。卡片里不放按钮、输入框、滚动区域；设置一律放进右键菜单。
-- **必须**：纯装饰层设置 `IsHitTestVisible = false`。
-- **必须**（不透明主题）：正文文字和背景的对比度 ≥ 4.5:1，大数字 ≥ 3:1。只用于刻度、分隔线的弱色（像素主题的 `Faint`）不能用来写正文。
-- 毛玻璃的背景是实时的，无法保证对比度，见 4.1 的「已知取舍」。
+- **Must**: the whole card can be dragged, so content must not intercept pointer events. No buttons, text boxes or scroll areas on the card; all settings go in the right-click menu.
+- **Must**: purely decorative layers set `IsHitTestVisible = false`.
+- **Must** (opaque themes): contrast between body text and background ≥ 4.5:1, and ≥ 3:1 for big numbers. The faint colors used only for tick marks and separators (Pixel's `Faint`) must not be used for body text.
+- Glass's background is live, so contrast can't be guaranteed; see "Known trade-off" in 4.1.
 
-### 2.8 性能
+### 2.8 Performance
 
-- **必须**：空闲时几乎不占 CPU。只在数据变化或时钟跳动（对齐到整秒或整分）时重绘；不写每帧都刷新的循环；过渡动画不超过 1 秒。
-- **应该**：重用画布、位图和画刷，不要每次重绘都分配大对象。
+- **Must**: use almost no CPU when idle. Redraw only when data changes or the clock ticks (aligned to the whole second or minute); no loop that refreshes every frame; transition animations last at most 1 second.
+- **Should**: reuse canvases, bitmaps and brushes instead of allocating large objects on every redraw.
 
-### 2.9 代码分层
+### 2.9 Code layering
 
-- **必须**：数据和文案放在共享层（`DeviceStatus`、`WorldCities`、`Strings`……），主题层只负责「画」。同一条信息在各主题里的写法由同一个共享函数产生（例：`WorldCities.FormatTime` / `FormatDate` / `DescribeOffset`），主题只能在放不下时做 2.5 里那种有记录的压缩。
-- **必须**：每个主题的画法放在自己的文件里。毛玻璃 = 组件类里的 XAML 和代码；像素 = `Pixel/` 基础设施 + `Widgets/<组件>/<组件>PixelScene.cs`。新主题照此新建 `<主题名>/` 文件夹和 `<组件><主题名>Scene.cs`。
-- **必须**：组件只用本主题调色板里的颜色角色（第 8 节），不在组件里写死色值。
-  - ⚠ 历史遗留：毛玻璃下的 `ClockWidget`、`WorldClockWidget`、`AnalogClock` 目前写死了颜色。以后改到这些文件时，顺手把颜色迁移到调色板。
-- **应该**：没有专属画法的组件也能工作（它的 XAML 内容会直接放在当前主题的卡片上）。但正式发布的主题应该给每个组件都做专属画法。
+- **Must**: data and copy live in the shared layer (`DeviceStatus`, `WorldCities`, `Strings`, …); the theme layer only does the rendering. The same piece of information is formatted by the same shared function in every theme (for example `WorldCities.FormatTime` / `FormatDate` / `DescribeOffset`), and a theme may shorten it only when it doesn't fit, and only in the recorded way of 2.5.
+- **Must**: each theme's rendering lives in its own files. Glass = the XAML and code in the widget classes; Pixel = the `Pixel/` infrastructure + `Widgets/<widget>/<widget>PixelScene.cs`. A new theme creates a `<ThemeName>/` folder and `<Widget><ThemeName>Scene.cs` in the same way.
+- **Must**: widgets use only the color roles of their theme's palette (section 8), with no color values hard-coded in widgets.
+  - ⚠ Historical leftover: Glass's `ClockWidget`, `WorldClockWidget` and `AnalogClock` currently hard-code their colors. Whenever those files are touched, move the colors to the palette while you're there.
+- **Should**: a widget without its own rendering should still work (its XAML content is placed directly on the current theme's card). A theme that ships officially, though, should give every widget its own rendering.
 
-### 2.10 素材来源
+### 2.10 Where assets come from
 
-- **必须**：字体、图标、精灵图必须是原创、系统自带，或者许可允许再分发。不打包 Apple 的 SF 字体，也不从游戏截图里抠素材。现有主题只用了系统字体（Segoe UI Variable、Segoe Fluent Icons、宋体）和手绘的像素字体、精灵图。
+- **Must**: fonts, icons and sprites must be original, come with the system, or be licensed for redistribution. Don't bundle Apple's SF fonts, and don't lift assets from game screenshots. The existing themes use only system fonts (Segoe UI Variable, Segoe Fluent Icons, SimSun) and hand-drawn pixel fonts and sprites.
 
 ---
 
-## 3. 每个主题必须定义的设计令牌
+## 3. Design tokens every theme must define
 
-同一类令牌集中放在一处，不要散落在各个组件里。
+Tokens of one kind go in one place, not scattered across widgets.
 
-| 类别 | 要定义的内容 | 毛玻璃在哪里 | 像素在哪里 |
+| Category | What to define | Where Glass has it | Where Pixel has it |
 |---|---|---|---|
-| 卡片 | 形状、圆角、材质、边缘、高光和阴影 | `Hosting/WidgetFrame.xaml`、`Hosting/GlassBackdrop.cs` | `Pixel/PixelCard.cs` |
-| 配色 | 浅色、深色两套，按第 8 节的角色命名 | `Widgets/Battery/BatteryPalette.cs`（还有上面提到的遗留写死颜色） | `Pixel/PixelPalette.cs` |
-| 字体 | 字族、字号阶梯、字重、回退字体 | Segoe UI Variable Display / Text | `Pixel/PixelFonts.cs`（3×5、5×7）+ `Pixel/SystemGlyphs.cs`（宋体 12px） |
-| 图标 | 设备图标、充电标志、空状态图标 | Segoe Fluent Icons（`Widgets/Battery/DeviceGlyphs.cs`） | `Pixel/PixelSprites.cs` |
-| 动效 | 哪些变化有动画、时长、曲线 | 电量环 700 ms 三次方缓出；秒针逐秒跳 | 没有补间，状态变化直接换帧；秒针逐秒跳 |
+| Card | Shape, corner radius, material, edge, highlight and shadow | `Hosting/WidgetFrame.xaml`, `Hosting/GlassBackdrop.cs` | `Pixel/PixelCard.cs` |
+| Palette | A light and a dark set, named by the roles of section 8 | `Widgets/Battery/BatteryPalette.cs` (plus the hard-coded colors mentioned above) | `Pixel/PixelPalette.cs` |
+| Fonts | Family, type scale, weights, fallback fonts | Segoe UI Variable Display / Text | `Pixel/PixelFonts.cs` (3×5, 5×7) + `Pixel/SystemGlyphs.cs` (SimSun 12 px) |
+| Icons | Device icons, charging indicator, empty-state icon | Segoe Fluent Icons (`Widgets/Battery/DeviceGlyphs.cs`) | `Pixel/PixelSprites.cs` |
+| Motion | Which changes animate, duration, easing | Battery ring: 700 ms cubic ease-out; the second hand ticks once a second | No tweening; state changes swap frames directly; the second hand ticks once a second |
 
 ---
 
-## 4. 各主题规格
+## 4. Theme specs
 
-### 4.1 毛玻璃 Glass
+### 4.1 Glass
 
-用户已确认（2026-10-12）：
+Confirmed by the user (2026-10-12):
 
-- **薄、通透**：DWM host backdrop 实时模糊窗口背后的内容，上面只叠 24% 的底色（浅色模式白、深色模式黑）和一道斜向高光。
-- **不加描边**（用户觉得卡片四周的白线难看），**不加阴影**（XAML 阴影会盖在系统层的玻璃上面，把它弄脏）。
-- **不要用加厚底色来提高对比度**（「太厚」的版本被用户否决过）。
-- 圆角 22 DIP，抗锯齿。
+- **Thin and see-through**: the DWM host backdrop blurs whatever is behind the window in real time, with only a 24% tint on top (white in light mode, black in dark mode) and a diagonal highlight.
+- **No outline** (the user found the white line around the card ugly) and **no shadow** (a XAML shadow would sit above the system-layer glass and dirty it).
+- **Don't use a thicker tint to raise contrast** (the "too thick" version was rejected by the user).
+- Corner radius 22 DIP, anti-aliased.
 
-字号（现有取值，新组件就近选用）：
+Font sizes (current values; new widgets pick the nearest):
 
-| 用途 | 字体 | 字号 / 字重 |
+| Use | Font | Size / weight |
 |---|---|---|
-| 主角大数字（时钟时间、单设备电量） | Segoe UI Variable Display | 36–64，SemiBold |
-| 列表大数字（世界时钟时间、列表电量） | Display | 17–28，SemiBold |
-| 列表标题（设备名、城市名） | Segoe UI Variable Text | 14–15，SemiBold |
-| 正文（名称、时间、中号电量） | Text | 11–15 |
-| 辅助信息（日期、状态、时差） | Text | 11–12，次要色 |
+| Hero number (clock time, single-device charge) | Segoe UI Variable Display | 36–64, SemiBold |
+| List number (world clock time, list charge) | Display | 17–28, SemiBold |
+| List title (device name, city name) | Segoe UI Variable Text | 14–15, SemiBold |
+| Body (name, time, medium-size charge) | Text | 11–15 |
+| Secondary information (date, state, time difference) | Text | 11–12, secondary color |
 
-**已知取舍**：玻璃很薄，所以在很暗的壁纸上，浅色模式的深色文字对比度会下降（反过来也一样）。改进方向（尚未实现）：根据卡片背后的亮度自动选文字颜色，而不是加厚底色。
+**Known trade-off**: the glass is very thin, so on a very dark wallpaper the contrast of light mode's dark text drops (and the other way round). The direction for improvement (not implemented yet): pick the text color from the brightness behind the card, instead of thickening the tint.
 
-### 4.2 像素 Pixel
+### 4.2 Pixel
 
-2026-10-13 新增。
+Added 2026-10-13.
 
-- **栅格**：1 个美术像素 = 2 DIP。卡片美术尺寸：小 82×82、中 172×82、大 172×172。
-- **放大**：放大倍数 = round(缩放比例 × 2)，即 100% 为 2、150% 为 3、200% 为 4。位图按 1:1 显示，每个美术像素必须是一块 N×N 的纯色方块：不滤波、不抗锯齿、不用小数坐标。大数字只按整数倍放大（×2、×3）。
-- **卡片**：不透明面板。1px 描边；圆角是台阶状（从上往下依次内缩 4、2、1、1 像素）；顶部 1px 高光，底部 2px 阴影。像素主题下毛玻璃的模糊层隐藏。像素卡片的描边是像素画风格的一部分，和毛玻璃「不加描边」的决定不冲突。
-- **配色**：基于 Sweetie 16 色板，浅色（day）、深色（night）两套。组件只能用 `PixelPalette` 里的角色。
-- **字体**：手绘的纯大写像素字体两套。
-  - 3×5（`PixelFonts.Small`）：标签、名称、小数字。
-  - 5×7（`PixelFonts.Regular`）：数值、标题；大数字用它 ×2 或 ×3。
-  - 小写字母自动转大写，重音去掉（São → SAO）。
-  - 像素字体拼不出来的文字整串改用宋体 12px 点阵（`PixelFonts.System`），所以布局要给中文留出 12px 行高。
-- **图标**：`PixelSprites` 里的手绘精灵；未连接的设备变暗；充电时电池条上叠一个带描边的闪电。
-- **布局**：坐标都用美术像素；内容离卡片边缘至少 7 像素；分隔用点线（`PixelCanvas.DottedLine`）。
-- **动效**：没有补间动画，状态变化直接换帧；秒针逐秒跳。
-- **已记录的压缩写法**：
-  - 世界时钟小号用三字母城市代码（NYC、LAX、STJ、PEK……）。
-  - 中文日期写成「10/13」。宋体的「10月13日」约 48 像素宽，放不进中号 39 像素的列。
-
----
-
-## 5. 新增一个主题
-
-1. **先设计**：按附录 A 填写设计简报，写进第 4 节。做出静态预览（每个组件 × 每个尺寸 × 浅/深 × 中/英），给用户确认后再写代码。
-2. **写代码**：
-   - 在 `WidgetTheme` 枚举末尾加值。名字会以文本形式存进 `settings.json`，定了就不能改名。
-   - 在 `Strings.ThemeName` 里加中英文名称。托盘菜单和右键菜单会自动列出新主题。
-   - 卡片：改 `WidgetFrame.SetCard`。需要实时模糊才调用 `GlassBackdrop.SetVisible(true)`。如果卡片的像素尺寸不是「DIP × 缩放」，同时修改 `WidgetLayout.GetCardPixels`。
-   - 调色板：新建一个类，第 8 节的角色要齐全，浅、深两套。
-   - 每个组件：在构造函数里按 `context.Theme` 选择画法，覆盖它支持的全部尺寸。
-   - 预览：仿照 `Pixel/PixelPreview.cs`，让新主题也能一条命令导出全部布局的总览图。
-3. **写文档**：更新 README 的简介和操作表、本文件第 4 节，以及文末的变更记录。
-4. **验收**：第 7 节全部通过。
+- **Grid**: 1 art pixel = 2 DIP. Card art sizes: small 82×82, medium 172×82, large 172×172.
+- **Scaling**: the scale factor N = round(DPI scale × 2), so 100% is 2, 150% is 3 and 200% is 4. The bitmap is shown 1:1, and every art pixel must be a solid N×N block: no filtering, no anti-aliasing, no fractional coordinates. Big numbers are only scaled by whole numbers (×2, ×3).
+- **Card**: an opaque panel. 1 px outline; stepped corners (from the top down, inset by 4, 2, 1, 1 pixels); a 1 px highlight at the top and a 2 px shadow at the bottom. Glass's blur layer is hidden in the Pixel theme. The pixel card's outline is part of the pixel-art style and doesn't conflict with the decision that Glass has no outline.
+- **Palette**: based on the Sweetie 16 palette, with a light (day) and a dark (night) set. Widgets must use only the roles in `PixelPalette`.
+- **Fonts**: two hand-drawn, all-caps pixel fonts.
+  - 3×5 (`PixelFonts.Small`): labels, names, small numbers.
+  - 5×7 (`PixelFonts.Regular`): values, titles; big numbers use it ×2 or ×3.
+  - Lowercase letters are turned into capitals automatically and accents are dropped (São → SAO).
+  - Text the pixel fonts can't spell is set entirely in the 12 px SimSun bitmap font (`PixelFonts.System`), so layouts must leave a 12 px line height for Chinese.
+- **Icons**: hand-drawn sprites in `PixelSprites`; disconnected devices are dimmed; while charging, an outlined lightning bolt is laid over the battery bar.
+- **Layout**: all coordinates are in art pixels; content stays at least 7 pixels from the card edge; dotted lines (`PixelCanvas.DottedLine`) are used for separation.
+- **Motion**: no tweening; state changes swap frames directly; the second hand ticks once a second.
+- **Recorded compressions**:
+  - The small world clock uses three-letter city codes (NYC, LAX, STJ, PEK, …).
+  - The Chinese date is written as "10/13". SimSun's "10月13日" is about 48 pixels wide and doesn't fit the 39-pixel column of the medium size.
 
 ---
 
-## 6. 修改现有主题
+## 5. Adding a theme
 
-### 6.1 改动分级
+1. **Design first**: fill in the design brief of Appendix A and put it in section 4. Make static previews (every widget × every size × light/dark × Chinese/English) and have the user confirm them before writing code.
+2. **Write the code**:
+   - Add a value at the end of the `WidgetTheme` enum. The name is saved in `settings.json` as text, so once chosen it must never be renamed.
+   - Add the Chinese and English names to `Strings.ThemeName`. The tray menu and the right-click menu list the new theme automatically.
+   - Card: change `WidgetFrame.SetCard`. Call `GlassBackdrop.SetVisible(true)` only if you need the live blur. If the card's pixel size isn't "DIP × scale", also change `WidgetLayout.GetCardPixels`.
+   - Palette: create a class that has every role of section 8, in a light and a dark set.
+   - Each widget: pick the rendering from `context.Theme` in the constructor, covering all the sizes it supports.
+   - Preview: following `Pixel/PixelPreview.cs`, let the new theme export an overview of all layouts with one command.
+3. **Write the docs**: update the README's introduction and controls table, section 4 of this file, and the changelog at the end.
+4. **Acceptance**: everything in section 7 passes.
 
-| 级别 | 例子 | 要求 |
+---
+
+## 6. Changing an existing theme
+
+### 6.1 Change levels
+
+| Level | Examples | What it takes |
 |---|---|---|
-| 微调 | 间距 ±1–2、同一角色内换色、措辞 | 跑第 7 节的相关检查，写变更记录 |
-| 主题内改版 | 某个尺寸换布局、换图标或字体、调整动效 | 给用户看改动前后的对比图；更新第 4 节 |
-| 共享规则变更 | 卡片尺寸、显示哪些信息、颜色含义、交互方式、文案、设置字段 | 先问用户；所有主题在同一次改动里一起改；更新第 2 节 |
-| 推翻用户决定 | 例如给毛玻璃加描边或阴影、把城市名改回中文 | 必须先得到用户明确同意 |
+| Tweak | Spacing ±1–2, a different color within the same role, wording | Run the relevant checks of section 7 and write a changelog row |
+| Redesign within a theme | A new layout for one size, new icons or fonts, changed motion | Show the user before/after comparisons; update section 4 |
+| Change to a shared rule | Card sizes, which information is shown, color meanings, how interaction works, copy, settings fields | Ask the user first; change all themes in the same change; update section 2 |
+| Overturn a user decision | For example adding an outline or shadow to Glass, or putting city names back into Chinese | Must have the user's explicit agreement first |
 
-### 6.2 其他规则
+### 6.2 Other rules
 
-- **兼容**：已经存进 `settings.json` 的标识不改名、不删除：
-  - `TypeId`：battery、clock、worldclock
-  - 枚举名：`WidgetTheme`、`WidgetSize`、`AppLanguage`
-  - 选项键：showNames、showDisconnected、cities、showSeconds
+- **Compatibility**: identifiers already saved in `settings.json` must never be renamed or removed:
+  - `TypeId`: battery, clock, worldclock
+  - Enum names: `WidgetTheme`, `WidgetSize`, `AppLanguage`
+  - Option keys: showNames, showDisconnected, cities, showSeconds
 
-  新增选项的默认值必须保持原有行为。
-- **多人协作**：可能有好几个会话同时在改这个仓库。
-  - 改文件前重新读一遍。
-  - 保持每个文件原有的换行符（仓库里 CRLF 和 LF 混用）。
-  - 不顺手格式化没改动的代码，不回退别人的改动。
-- **留证据**：每次视觉改动都附上截图或预览图。
-- **记录**：在文末「变更记录」写一行：日期、主题、改了什么、为什么。
-
----
-
-## 7. 验收清单
-
-**构建**
-
-- [ ] `dotnet build src/DeskWidgets.App -c Release` 零错误、零警告。（运行中的 Debug 程序会锁住 exe，用 Release 检查编译。）
-
-**画面**：每个组件 × 每个支持的尺寸
-
-- [ ] English 和中文都检查。
-- [ ] 系统浅色和深色都检查。深色用预览图检查，**不要为了测试去改用户的系统设置**；需要在真机上看，就请用户自己切换。
-- [ ] 极端数据：
-  - 长名称：Los Angeles、Mexico City、需要换两行的设备名
-  - 中文回退字体
-  - 电量 ≤ 20%、充电中、未连接、没有设备
-  - 已经跨到第二天的城市、白天和夜间表盘
-- [ ] 缩放：至少检查 100% 和 150%。像素主题要确认没有发虚、或宽窄不一的像素。
-
-**行为**
-
-- [ ] 从托盘菜单和右键菜单切换主题，都不用重启；切换后位置重新吸附；没有上一个主题的残留层（例如像素主题下看不到模糊玻璃）。
-- [ ] 切换语言实时生效。
-- [ ] 拖动和右键菜单正常。
-- [ ] 空闲时 CPU 接近 0。
-
-**怎么检查**
-
-- 像素主题：`DeskWidgets.exe --pixel-preview <新文件夹>` 导出昼/夜 × 中/英四张总览图。程序运行中也能用。
-- 测试布局：
-  1. 先备份 `%LOCALAPPDATA%\DeskWidgets\settings.json`。
-  2. 用「置顶」的测试布局启动并截图。
-  3. 测完恢复用户原来的设置，重新启动程序。
-- 截取桌面上真实的组件：小组件常被别的窗口挡住，普通截屏拍不到。用开启 Per-Monitor V2 DPI 感知的进程调用 `PrintWindow(hwnd, PW_RENDERFULLCONTENT)`。注意：这样截不到毛玻璃的模糊效果。
+  The default of a new option must keep the existing behavior.
+- **Working together**: several sessions may be changing this repository at once.
+  - Re-read a file before editing it.
+  - Keep each file's own line endings (the repository mixes CRLF and LF).
+  - Don't reformat code you aren't changing, and don't revert other people's changes.
+- **Keep evidence**: attach a screenshot or preview image to every visual change.
+- **Record**: write one line in the changelog at the end: date, theme, what changed, why.
 
 ---
 
-## 8. 颜色角色对照
+## 7. Acceptance checklist
 
-| 角色 | 用途 | 毛玻璃（浅 / 深） | 像素（浅 / 深） |
+**Build**
+
+- [ ] `dotnet build src/DeskWidgets.App -c Release` has zero errors and zero warnings. (A running Debug app locks its exe, so check compilation with Release.)
+
+**Appearance**: every widget × every supported size
+
+- [ ] Check both English and Chinese.
+- [ ] Check both light and dark system modes. Check dark with the preview sheets; **don't change the user's system settings for testing**. If you need to see it on the real machine, ask the user to switch it themselves.
+- [ ] Extreme data:
+  - Long names: Los Angeles, Mexico City, device names that need two lines
+  - The Chinese fallback font
+  - Charge ≤ 20%, charging, disconnected, no devices
+  - A city that is already on the next day, day and night dials
+- [ ] Scaling: check at least 100% and 150%. For Pixel, confirm there are no blurry pixels or pixels of uneven width.
+
+**Behavior**
+
+- [ ] Switching theme from both the tray menu and the right-click menu works without a restart; positions re-snap after the switch; no layer from the previous theme is left over (for example, no blurred glass under the Pixel theme).
+- [ ] Switching language takes effect immediately.
+- [ ] Dragging and the right-click menu work.
+- [ ] CPU is close to zero when idle.
+
+**How to check**
+
+- Pixel theme: `DeskWidgets.exe --pixel-preview <new folder>` exports four overview sheets (day/night × Chinese/English). It also works while the app is running.
+- A test layout:
+  1. First back up `%LOCALAPPDATA%\DeskWidgets\settings.json`.
+  2. Start with an "always on top" test layout and take screenshots.
+  3. When done, restore the user's original settings and restart the program.
+- Capturing the real widgets on the desktop: other windows often cover widgets, so an ordinary screenshot can't see them. Use a process with Per-Monitor V2 DPI awareness to call `PrintWindow(hwnd, PW_RENDERFULLCONTENT)`. Note that this can't capture Glass's blur.
+
+---
+
+## 8. Color roles
+
+| Role | Used for | Glass (light / dark) | Pixel (light / dark) |
 |---|---|---|---|
-| 主文字（Primary / Ink） | 名称、数值 | `#1C1C1E` / `#FFFFFF` | `#1A1C2C` / `#F4F4F4` |
-| 次要文字（Secondary / Soft） | 状态、时间、日期、时差 | `#3C3C43` 60% / `#EBEBF5` 60% | `#566C86` / `#94B0C2` |
-| 弱色（Faint） | 刻度、分隔线，不用于正文 | 表盘小刻度：主色 45% | `#94B0C2` / `#566C86` |
-| 轨道（Track） | 电量环、电池条的空槽 | 黑 14% / 白 24% | `#D5DFE6` / `#333C57` |
-| 空位（Placeholder / Well） | 空设备位、凹槽 | 黑 8% / 白 12% | `#E3E9ED` / `#131423` |
-| 绿（Green） | 电量正常 | `#34C759` / `#30D158` | `#38B764` / `#A7F070` |
-| 黄（Yellow） | 省电模式；像素主题的充电闪电 | `#FFCC00` / `#FFD60A` | `#FFCD75` / `#FFCD75` |
-| 红（Red） | 电量 ≤ 20% | `#FF3B30` / `#FF453A` | `#B13E53` / `#EF5D57` |
-| 强调（Accent） | 时钟的星期 | `#FF453A` | `#B13E53` / `#EF7D57` |
-| 橙（Orange） | 秒针 | `#FF9500` | `#EF7D57` |
-| 白天表盘 | 当地 6:00–18:00 | 盘面 `#FFFFFF`，指针 `#1C1C1E` | 盘面 `#FFFFFF` / `#F4F4F4`，指针 `#1A1C2C` |
-| 夜间表盘 | 其余时间 | 盘面 `#1C1C1E`，指针 `#FFFFFF` | 盘面 `#29366F`，指针 `#F4F4F4` |
-| 卡片 | 底 | 白 24% / 黑 24% + 斜向高光 | 面板 `#F4F4F4` / `#1A1C2C`，描边 `#333C57` / `#0B0C14` |
+| Primary text (Primary / Ink) | Names, values | `#1C1C1E` / `#FFFFFF` | `#1A1C2C` / `#F4F4F4` |
+| Secondary text (Secondary / Soft) | State, time, date, time difference | `#3C3C43` 60% / `#EBEBF5` 60% | `#566C86` / `#94B0C2` |
+| Faint | Tick marks, separators; not for body text | Dial minor ticks: primary color at 45% | `#94B0C2` / `#566C86` |
+| Track | Empty groove of the battery ring and bar | Black 14% / white 24% | `#D5DFE6` / `#333C57` |
+| Placeholder / Well | Empty device slot, recessed groove | Black 8% / white 12% | `#E3E9ED` / `#131423` |
+| Green | Charge is normal | `#34C759` / `#30D158` | `#38B764` / `#A7F070` |
+| Yellow | Power-saving mode; Pixel's charging bolt | `#FFCC00` / `#FFD60A` | `#FFCD75` / `#FFCD75` |
+| Red | Charge ≤ 20% | `#FF3B30` / `#FF453A` | `#B13E53` / `#EF5D57` |
+| Accent | The clock's weekday | `#FF453A` | `#B13E53` / `#EF7D57` |
+| Orange | Second hand | `#FF9500` | `#EF7D57` |
+| Day dial | Local 6:00–18:00 | Face `#FFFFFF`, hands `#1C1C1E` | Face `#FFFFFF` / `#F4F4F4`, hands `#1A1C2C` |
+| Night dial | Any other time | Face `#1C1C1E`, hands `#FFFFFF` | Face `#29366F`, hands `#F4F4F4` |
+| Card | Base | White 24% / black 24% + diagonal highlight | Panel `#F4F4F4` / `#1A1C2C`, outline `#333C57` / `#0B0C14` |
 
-新主题照这张表逐行给出色值，可以增加角色，但不能少。
+A new theme gives color values row by row from this table. It may add roles but must not leave any out.
 
 ---
 
-## 附录 A：新主题设计简报模板
+## Appendix A: design brief template for a new theme
 
 ```
-主题名：枚举值（英文） / 中文名 / English name
-气质与参考（一两句话，附参考图）：
-卡片：形状、圆角、材质（是否透明）、边缘、高光和阴影
-配色：浅色一套、深色一套（按第 8 节逐行给色值）
-字体：字族、字号阶梯、中文怎么处理
-图标：来源和风格（注意 2.10 素材来源）
-动效：哪些地方会动、时长、曲线
-布局：每个组件 × 每个尺寸各一句话（附草图或预览图）
-放不下时的压缩写法：
-已知风险和取舍：
+Theme name: enum value (English) / Chinese name / English name
+Character and references (one or two sentences, with reference images):
+Card: shape, corner radius, material (transparent or not), edge, highlight and shadow
+Palette: one light set, one dark set (color values row by row from section 8)
+Fonts: families, type scale, how Chinese is handled
+Icons: source and style (mind 2.10, where assets come from)
+Motion: what moves, duration, easing
+Layout: one sentence for each widget × size (with a sketch or preview image)
+Compressed wording when it doesn't fit:
+Known risks and trade-offs:
 ```
 
-## 附录 B：用户已确认的决定
+## Appendix B: decisions the user has confirmed
 
-改动前先对照这张表。要推翻其中任何一条，都必须先得到用户同意。
+Check this table before making a change. To overturn any of them, you must first get the user's agreement.
 
-| 日期 | 决定 |
+| Date | Decision |
 |---|---|
-| 2026-10-12 | 毛玻璃要薄、通透；不加厚底色，不加阴影 |
-| 2026-10-12 | 卡片四周不要白色描边 |
-| 2026-10-12 | 电池组件只显示外设，不显示笔记本自己的电池 |
-| 2026-10-12 | 设备名显示在图标下方（右键菜单可以关闭） |
-| 2026-10-12 | 小组件对齐桌面图标网格 |
-| 2026-10-13 | 界面语言默认 English，可以切换成中文，切换立即生效 |
-| 2026-10-13 | 世界时钟默认 New York、Los Angeles、St. John's（纽芬兰）、Beijing；城市名一律用英文；城市名下显示完整时间，时间下显示当地日期 |
-| 2026-10-13 | 新增可切换的像素主题 |
+| 2026-10-12 | Glass must be thin and see-through; no thicker tint, no shadow |
+| 2026-10-12 | No white outline around the card |
+| 2026-10-12 | The battery widget shows only peripherals, not the laptop's own battery |
+| 2026-10-12 | The device name is shown under the icon (can be turned off in the right-click menu) |
+| 2026-10-12 | Widgets snap to the desktop icon grid |
+| 2026-10-13 | The interface language defaults to English and can be switched to Chinese, taking effect immediately |
+| 2026-10-13 | The world clock defaults to New York, Los Angeles, St. John's (Newfoundland) and Beijing; city names are always in English; the full time is shown under the city name and the local date under the time |
+| 2026-10-13 | Add a switchable Pixel theme |
 
 ---
 
-## 变更记录
+## Changelog
 
-| 日期 | 主题 | 改动 | 原因 |
+| Date | Theme | Change | Why |
 |---|---|---|---|
-| 2026-10-12 | 毛玻璃 | 从「模糊壁纸截图 + 52% 底色 + 阴影」改为实时模糊 + 24% 底色，去掉阴影 | 用户觉得太厚 |
-| 2026-10-12 | 毛玻璃 | 去掉卡片四周 1px 的白色高光描边 | 用户觉得难看 |
-| 2026-10-13 | 像素 | 新增像素主题 | 用户想要可切换的像素风 |
-| 2026-10-13 | 全部 | 世界时钟在时间下面加当地日期；去掉「+1」跨天标记 | 用户需要；日期已经能看出跨天 |
-| 2026-10-13 | — | 制定本规范 v1 | 方便后续设计和修改主题 |
+| 2026-10-12 | Glass | From "blurred wallpaper screenshot + 52% tint + shadow" to live blur + 24% tint, shadow removed | The user found it too thick |
+| 2026-10-12 | Glass | Removed the 1 px white highlight outline around the card | The user found it ugly |
+| 2026-10-13 | Pixel | Added the Pixel theme | The user wanted a switchable pixel look |
+| 2026-10-13 | All | The world clock shows the local date under the time; the "+1" next-day marker was removed | The user asked for it; the date already shows the day change |
+| 2026-10-13 | — | Wrote this spec, v1 | To make later theme design and changes easier |
