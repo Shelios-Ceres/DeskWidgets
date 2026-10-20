@@ -235,6 +235,26 @@ internal static class Win32
     [DllImport("user32.dll")]
     private static extern nint GetAncestor(nint hWnd, uint flags);
 
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint hWnd, uint command);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(nint hWnd);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(nint hwnd, int attribute, out int value, int size);
+
+    public delegate void WinEventProc(nint hook, uint eventType, nint hwnd, int idObject, int idChild, uint threadId, uint time);
+
+    [DllImport("user32.dll")]
+    public static extern nint SetWinEventHook(uint eventMin, uint eventMax, nint module, WinEventProc callback, uint processId, uint threadId, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnhookWinEvent(nint hook);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SetWindowTextW")]
     public static extern bool SetWindowText(nint hWnd, string text);
 
@@ -456,6 +476,45 @@ internal static class Win32
         var className = new StringBuilder(32);
         GetClassName(root == 0 ? hit : root, className, className.Capacity);
         return className.ToString() is "Progman" or "WorkerW";
+    }
+
+    /// <summary>
+    /// Whether the desktop (Progman, or the window that hosts the icon view) sits
+    /// above <paramref name="window"/> in the z-order. Win+D (Show desktop) does
+    /// that: it lifts the desktop over everything that is not topmost.
+    /// </summary>
+    public static bool IsDesktopAbove(nint window)
+    {
+        nint progman = FindWindow("Progman", null);
+        nint list = FindDesktopListView();
+        nint host = list == 0 ? 0 : GetAncestor(list, 2 /* GA_ROOT */);
+        for (nint above = GetWindow(window, 3 /* GW_HWNDPREV */); above != 0; above = GetWindow(above, 3))
+        {
+            if (above == progman || above == host)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Whether the foreground window is an ordinary application window: visible,
+    /// uncloaked, no tool window, not the desktop or the taskbar, not ours.
+    /// </summary>
+    public static bool ForegroundIsAppWindow()
+    {
+        nint window = GetForegroundWindow();
+        if (window == 0 || !IsWindowVisible(window))
+            return false;
+        GetWindowThreadProcessId(window, out uint processId);
+        if (processId == (uint)Environment.ProcessId)
+            return false;
+        var className = new StringBuilder(64);
+        GetClassName(window, className, className.Capacity);
+        if (className.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd")
+            return false;
+        if (((long)GetWindowLongPtr(window, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0)
+            return false;
+        return !(DwmGetWindowAttribute(window, 14 /* DWMWA_CLOAKED */, out int cloaked, sizeof(int)) == 0 && cloaked != 0);
     }
 
     private static nint FindDesktopListView()

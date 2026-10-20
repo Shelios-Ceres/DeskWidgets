@@ -34,6 +34,7 @@ internal sealed class WidgetWindow : Window
     private WidgetTheme _theme;
     private double _scale = 1;
     private bool _menuOpen;
+    private bool _overDesktop; // Show desktop has the desktop on top: stay above it, not at the bottom
     private bool _closingByHost;
     private bool _pointerDown;
     private bool _dragging;
@@ -197,11 +198,26 @@ internal sealed class WidgetWindow : Window
         _glass.SetLayout(new System.Numerics.Vector2(size.Width, size.Height), (float)(WidgetLayout.CornerRadius * _scale));
     }
 
+    public nint Handle => _hwnd;
+
+    /// <summary>
+    /// While Win+D has lifted the desktop over everything, keeps the widget above
+    /// the desktop (never activating it); false puts it back at the bottom, under
+    /// the application windows.
+    /// </summary>
+    public void SetOverDesktop(bool over)
+    {
+        if (_overDesktop == over)
+            return;
+        _overDesktop = over;
+        ApplyZOrder();
+    }
+
     private void ApplyZOrder()
     {
         if (Placement.AlwaysOnTop)
             return; // the presenter keeps it topmost
-        Win32.SetWindowPos(_hwnd, Win32.HWND_BOTTOM, 0, 0, 0, 0,
+        Win32.SetWindowPos(_hwnd, _overDesktop ? Win32.HWND_TOP : Win32.HWND_BOTTOM, 0, 0, 0, 0,
             Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE | Win32.SWP_NOOWNERZORDER);
     }
 
@@ -216,7 +232,7 @@ internal sealed class WidgetWindow : Window
                 // The presenter re-adds a dialog frame on activation; claiming the
                 // whole window as client area keeps the content at (0,0) regardless.
                 return 0;
-            case Win32.WM_WINDOWPOSCHANGING when !Placement.AlwaysOnTop && !_menuOpen:
+            case Win32.WM_WINDOWPOSCHANGING when !Placement.AlwaysOnTop && !_menuOpen && !_overDesktop:
             {
                 // Clicking a widget must not raise it above app windows: keep it on the desktop layer.
                 var position = Marshal.PtrToStructure<Win32.WINDOWPOS>(lParam);

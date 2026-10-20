@@ -36,6 +36,8 @@ internal sealed class WidgetHost
     private readonly IconArranger _icons;
     private IconArrangerStatus _iconStatus = new(IconArrangerState.Off, 0, null);
     private TrayIcon? _tray;
+    private ShowDesktopWatcher? _showDesktop;
+    private bool _overDesktop; // Win+D has lifted the desktop over the widgets, so they sit above it for now
     private bool _exiting;
 
     public WidgetHost(bool demoMode)
@@ -99,6 +101,38 @@ internal sealed class WidgetHost
 
         _tray = new TrayIcon(TrayTooltip(), Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
         _tray.MenuRequested += ShowTrayMenu;
+
+        _showDesktop = new ShowDesktopWatcher(Services.Dispatcher, CheckShowDesktop);
+        CheckShowDesktop();
+    }
+
+    /// <summary>
+    /// Win+D (Show desktop) lifts the desktop window over everything that isn't
+    /// topmost, which hides widgets sitting at the bottom of the z-order. While
+    /// that is so, keep the widgets just above the desktop; as soon as an
+    /// application window takes the foreground, put them back at the bottom.
+    /// </summary>
+    private void CheckShowDesktop()
+    {
+        if (_exiting)
+            return;
+        if (!_overDesktop)
+        {
+            var widget = _windows.FirstOrDefault(w => !w.Placement.AlwaysOnTop);
+            if (widget is null || !Win32.IsDesktopAbove(widget.Handle))
+                return;
+            _overDesktop = true;
+        }
+        else if (Win32.ForegroundIsAppWindow())
+        {
+            _overDesktop = false;
+        }
+        else
+        {
+            return;
+        }
+        foreach (var window in _windows)
+            window.SetOverDesktop(_overDesktop);
     }
 
     public void AddWidget(IWidgetFactory factory)
@@ -199,6 +233,7 @@ internal sealed class WidgetHost
         foreach (var window in _windows.ToList())
             window.CloseFromHost();
         _windows.Clear();
+        _showDesktop?.Dispose();
         _icons.Dispose();
         _tray?.Dispose();
         Services.Devices.Dispose();
@@ -221,6 +256,8 @@ internal sealed class WidgetHost
             var window = new WidgetWindow(this, factory, placement);
             _windows.Add(window);
             window.Show();
+            if (_overDesktop)
+                window.SetOverDesktop(true);
         }
         catch (Exception ex)
         {
