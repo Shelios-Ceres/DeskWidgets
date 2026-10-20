@@ -63,7 +63,7 @@ dotnet publish D:/Widget/src/DeskWidgets.App -c Release -r win-x64 -o D:/Widget/
 设置保存在 `%LOCALAPPDATA%\DeskWidgets\settings.json`，日志在 `logs\app.log`（上限 1 MB，自动轮转）。
 桌面图标的排列顺序在同一文件夹的 `desktop-icons.json`；如果旧的 DesktopRightAlign 留下了它的设置，第一次使用时会直接接管。旧版本写的 `desktop-icons-original.json`（「恢复原来的布局」的备份，该功能已移除）不再使用，可以删掉。
 
-「开机自动启动」用「任务计划程序」里当前用户的登录任务 `DeskWidgets`（登录 15 秒后启动，不需要密码和管理员权限），不用注册表的 Run 项：从 Claude 会话里写的 Run 项只进了 Claude 的私有注册表（见下文「在 Claude 会话里开发」），Explorer 看不到，2026-10-13 开机时就是这样没启动的。本机改由「AI Apps - Wait for TUN and Network」登录任务在网络就绪后统一启动本程序，所以托盘里的「开机自动启动」保持关闭，免得启动两次。
+「开机自动启动」用「任务计划程序」里当前用户的登录任务 `DeskWidgets`（登录 15 秒后启动，不需要密码和管理员权限），不用注册表的 Run 项：从 Claude 会话里写的 Run 项只进了 Claude 的私有注册表（见下文「在 Claude 会话里开发」），Explorer 看不到，2026-10-13 开机时就是这样没启动的。本机开着「开机自动启动」，程序就是由这个任务启动的。2026-10-14 到 10-19 期间曾改由单独的「AI Apps - Wait for TUN and Network」登录任务启动，那个任务现在已经删除。
 
 ### 在 Claude 会话里开发
 
