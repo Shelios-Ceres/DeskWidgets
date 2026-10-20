@@ -20,7 +20,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260804001" />
+    <!-- Only the Windows App SDK parts the app uses. The metapackage would also copy
+         the AI, ML and Widgets components (onnxruntime, DirectML) next to the exe.
+         Versions are the ones Microsoft.WindowsAppSDK 1.8.260804001 pins. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="1.8.260803002" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
   </ItemGroup>
 

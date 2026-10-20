@@ -159,4 +159,4 @@ internal sealed class WeatherWidgetFactory : IWidgetFactory
 - 关闭 Windows「透明效果」或开启节电模式时，系统会把模糊背景换成纯色。
 - 像素主题：缩放比例不是 50% 的整数倍时（125%、175% 等），卡片按整数倍放大，会比毛玻璃卡片略大一点。中文用宋体 12px 点阵，比像素字体高，长名字会换行或截断。
 - 桌面图标排列：Explorer 重启、显示器热插拔、缩放变化都沿用了原工具的处理逻辑，但还没有在真机上测过。
-- 自包含的 Windows App SDK 让输出约 140 MB（包含用不到的 AI 组件），后续可改为只引用 WinUI 组件包瘦身。
+- 自包含的 Windows App SDK 让输出约 90 MB。项目只引用 Foundation 和 WinUI 两个组件包（不引用 `Microsoft.WindowsAppSDK` 元包，它会多带约 50 MB 用不到的 AI 和 ML 组件）。剩下的主要是 WinRT 投影（`Microsoft.Windows.SDK.NET.dll`，24 MB）和 WinUI 本身。
