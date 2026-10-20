@@ -413,7 +413,8 @@ internal sealed class WidgetWindow : Window
         menu.Items.Add(remove);
         menu.Items.Add(new MenuFlyoutSeparator());
         var exit = new MenuFlyoutItem { Text = Strings.Exit };
-        exit.Click += (_, _) => _host.Exit();
+        // After the menu has closed, so the question isn't stacked on it.
+        exit.Click += (_, _) => DispatcherQueue.TryEnqueue(() => _host.ConfirmExit(_hwnd));
         menu.Items.Add(exit);
 
         // While the menu is open, lift the widget so the menu is not hidden under app windows.

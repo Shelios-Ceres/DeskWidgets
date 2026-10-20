@@ -180,6 +180,15 @@ internal sealed class WidgetHost
     private static bool Intersects(Win32.RECT a, Win32.RECT b)
         => a.Left < b.Right && b.Left < a.Right && a.Top < b.Bottom && b.Top < a.Bottom;
 
+    /// <summary>Quits from a widget's menu, but only if the user says Yes; No is the default button, so a stray Enter doesn't quit.</summary>
+    public void ConfirmExit(nint owner)
+    {
+        int answer = Win32.MessageBox(owner, Strings.ExitQuestion + "\n\n" + Strings.ExitDetail, Strings.AppName,
+            Win32.MB_YESNO | Win32.MB_ICONQUESTION | Win32.MB_DEFBUTTON2 | Win32.MB_SETFOREGROUND | Win32.MB_TOPMOST);
+        if (answer == Win32.IDYES)
+            Exit();
+    }
+
     public void Exit()
     {
         if (_exiting)

@@ -68,7 +68,11 @@ internal static class Win32
     public const uint NIF_ICON = 0x2;
     public const uint NIF_TIP = 0x4;
 
+    public const uint MB_YESNO = 0x0004;
+    public const uint MB_ICONQUESTION = 0x0020;
     public const uint MB_ICONWARNING = 0x0030;
+    public const uint MB_DEFBUTTON2 = 0x0100;
+    public const int IDYES = 6;
     public const uint MB_SETFOREGROUND = 0x00010000;
     public const uint MB_TOPMOST = 0x00040000;
 

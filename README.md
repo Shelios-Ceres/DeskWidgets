@@ -52,7 +52,7 @@ dotnet publish D:/Widget/src/DeskWidgets.App -c Release -r win-x64 -o D:/Widget/
 | Action | How |
 |---|---|
 | Move | Press and drag a widget (it snaps when you let go) |
-| Change size / always on top / lock position / remove | Right-click the widget |
+| Change size / always on top / lock position / remove / exit (asks first) | Right-click the widget |
 | Add a widget / snap to the desktop grid / start with Windows / language / exit | Right-click or left-click the tray icon |
 | Switch theme (Glass / Pixel, all widgets together) | Right-click a widget or the tray icon → "Theme" |
 | Arrange desktop icons on the right / arrange now | Tray icon → "Desktop icons" (the first line shows the current status) |
