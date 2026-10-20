@@ -56,6 +56,7 @@ internal sealed class TrayIcon : IDisposable
     public void SetTooltip(string tooltip)
     {
         _tooltip = tooltip;
+        Win32.SetWindowText(_hwnd, tooltip); // the hidden window's title shows up in window lists too
         var data = CreateData();
         Win32.Shell_NotifyIcon(Win32.NIM_MODIFY, ref data);
     }

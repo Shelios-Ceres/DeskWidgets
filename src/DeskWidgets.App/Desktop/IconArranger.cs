@@ -28,11 +28,20 @@ internal sealed record IconArrangerStatus(IconArrangerState State, int IconCount
 /// icons, plans the layout around the widgets' cards, moves only misplaced icons
 /// and reads them back to confirm Explorer kept them. Nothing moves while the
 /// user drags, has a menu open or renames an icon, nor while the old tool still
-/// runs (the two would fight over the same icons).
+/// runs (the two would fight over the same icons). An icon the user drops
+/// somewhere stays there: the first pass after a drag takes the new place as
+/// the icon's place in the order, and the others shift to make room. Turning
+/// arranging back on takes the icons' order as it is then.
 /// </summary>
 internal sealed class IconArranger : IDisposable
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
+
+    /// <summary>How often the mouse is sampled, so that even a quick drag is seen.</summary>
+    private static readonly TimeSpan MouseInterval = TimeSpan.FromMilliseconds(40);
+
+    /// <summary>After a drag ends, Explorer needs a moment to record where the icon landed.</summary>
+    private static readonly TimeSpan DropSettle = TimeSpan.FromMilliseconds(300);
 
     private readonly Thread _thread;
     private readonly AutoResetEvent _wake = new(false);
@@ -43,6 +52,11 @@ internal sealed class IconArranger : IDisposable
     private volatile bool _enabled;
     private volatile bool _changed = true;
     private volatile bool _disposed;
+    private volatile bool _adoptCurrentOrder; // set by the user's switching arranging back on
+    private readonly DesktopDragWatcher _drag = new(Math.Max(Win32.GetSystemMetrics(Win32.SM_CXDRAG), Win32.GetSystemMetrics(Win32.SM_CYDRAG)));
+    private bool _userDragged; // arranger's thread only: a drag ended on the desktop and the next pass should learn from it
+    private bool _layoutDirty; // arranger's thread only: the layout changed in memory and is not saved yet
+    private DateTime _settleUntil = DateTime.MinValue;
     private DateTime _nextPass = DateTime.MinValue;
     private int _failures;
     private int _iconCount;
@@ -70,6 +84,9 @@ internal sealed class IconArranger : IDisposable
         get => _enabled;
         set
         {
+            // Only the user's switching on adopts the icons' order (startup never does:
+            // Explorer may have reflowed the icons while the app was not running).
+            _adoptCurrentOrder = value && !_enabled;
             _enabled = value;
             Invalidate();
         }
@@ -147,11 +164,12 @@ internal sealed class IconArranger : IDisposable
     {
         while (!_disposed)
         {
-            _wake.WaitOne(TimeSpan.FromMilliseconds(500));
+            _wake.WaitOne(_enabled ? MouseInterval : TimeSpan.FromMilliseconds(500));
             if (_disposed)
                 break;
             try
             {
+                WatchMouse();
                 Pass();
             }
             catch (Exception ex)
@@ -168,6 +186,8 @@ internal sealed class IconArranger : IDisposable
             Publish(new IconArrangerStatus(IconArrangerState.Off, _iconCount, null));
             return;
         }
+        if (DateTime.UtcNow < _settleUntil)
+            return;
         if (DateTime.UtcNow < _nextPass && !_changed)
             return;
         if (UserIsInteracting())
@@ -203,12 +223,32 @@ internal sealed class IconArranger : IDisposable
             Publish(new IconArrangerStatus(IconArrangerState.Waiting, 0, Strings.IconsWaitingForIcons));
             return;
         }
-        bool learned = IconLayout.Learn(current, _layout);
+        if (IconLayout.Learn(current, _layout))
+            _layoutDirty = true;
         var blocked = _blocked.Select(desktop.ToClient).ToList();
+        if (_adoptCurrentOrder)
+        {
+            IconLayout.Adopt(current, _layout);
+            _adoptCurrentOrder = false;
+            _userDragged = false;
+            _layoutDirty = true;
+            Log.Info($"desktop icons: kept the current order of {current.Items.Count} icons");
+        }
+        else if (_userDragged)
+        {
+            int placed = IconLayout.LearnDrops(current, _layout, blocked);
+            _userDragged = false;
+            if (placed > 0)
+            {
+                _layoutDirty = true;
+                Log.Info($"desktop icons: {placed} icon(s) placed by hand");
+            }
+        }
         var planned = IconLayout.Plan(current, _layout, blocked); // validates everything before anything moves
-        if (learned)
+        if (_layoutDirty)
         {
             IconStore.SaveLayout(_layout);
+            _layoutDirty = false;
             if (_layout.Margins.Count != _margins.Count)
             {
                 _margins = new Dictionary<string, Insets>(_layout.Margins);
@@ -231,6 +271,39 @@ internal sealed class IconArranger : IDisposable
         }
         _iconCount = current.Items.Count;
         Publish(new IconArrangerStatus(IconArrangerState.Arranging, _iconCount, null));
+    }
+
+    /// <summary>
+    /// Samples the left button. A drag that ends after passing over the desktop
+    /// makes the next pass learn where the user put the icons, instead of
+    /// moving them back.
+    /// </summary>
+    private void WatchMouse()
+    {
+        if (!_enabled)
+        {
+            _drag.Reset();
+            _userDragged = false;
+            return;
+        }
+        bool down = (Win32.GetAsyncKeyState(0x01 /* VK_LBUTTON */) & 0x8000) != 0;
+        if (!down && !_drag.Pressed)
+            return;
+        int x = 0, y = 0;
+        bool over = false;
+        if (down)
+        {
+            if (!Win32.GetCursorPos(out var cursor))
+                return;
+            (x, y) = (cursor.X, cursor.Y);
+            over = (!_drag.Pressed || _drag.NeedsDesktopCheck) && Win32.IsDesktopAt(cursor);
+        }
+        if (_drag.Update(down, x, y, over))
+        {
+            _userDragged = true;
+            _settleUntil = DateTime.UtcNow + DropSettle;
+            _changed = true;
+        }
     }
 
     /// <summary>Never move an icon while the user drags something, has a menu open or is renaming an icon.</summary>

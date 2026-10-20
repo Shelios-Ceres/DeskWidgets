@@ -46,6 +46,8 @@ internal static class Win32
     public const uint MONITOR_DEFAULTTONEAREST = 2;
 
     public const int SM_CXSMICON = 49;
+    public const int SM_CXDRAG = 68;
+    public const int SM_CYDRAG = 69;
     public const int SM_CYSMICON = 50;
 
     public const uint MF_STRING = 0x0000;
@@ -222,6 +224,15 @@ internal static class Win32
 
     [DllImport("user32.dll")]
     public static extern bool GetCursorPos(out POINT point);
+
+    [DllImport("user32.dll")]
+    private static extern nint WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetAncestor(nint hWnd, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SetWindowTextW")]
+    public static extern bool SetWindowText(nint hWnd, string text);
 
     [DllImport("user32.dll")]
     public static extern bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
@@ -425,6 +436,22 @@ internal static class Win32
             return null;
         int width = (int)(spacing & 0xFFFF), height = (int)((spacing >> 16) & 0xFFFF);
         return width > 0 && height > 0 ? (width, height) : null;
+    }
+
+    /// <summary>
+    /// Whether the window under <paramref name="point"/> belongs to the desktop
+    /// (Progman, or the WorkerW that hosts the icon view): not a widget, not an
+    /// application window.
+    /// </summary>
+    public static bool IsDesktopAt(POINT point)
+    {
+        nint hit = WindowFromPoint(point);
+        if (hit == 0)
+            return false;
+        nint root = GetAncestor(hit, 2 /* GA_ROOT */);
+        var className = new StringBuilder(32);
+        GetClassName(root == 0 ? hit : root, className, className.Capacity);
+        return className.ToString() is "Progman" or "WorkerW";
     }
 
     private static nint FindDesktopListView()

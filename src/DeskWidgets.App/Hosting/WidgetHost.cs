@@ -265,7 +265,7 @@ internal sealed class WidgetHost
     {
         IconArrangerState.Arranging when ArrangeDesktopIcons => Strings.IconsStatusArranging(_iconStatus.IconCount),
         IconArrangerState.Waiting when ArrangeDesktopIcons => _iconStatus.Problem ?? Strings.IconsDesktopNotReady,
-        _ => ArrangeDesktopIcons ? Strings.IconsDesktopNotReady : Strings.IconsStatusOff,
+        _ => ArrangeDesktopIcons ? Strings.IconsStatusStarting : Strings.IconsStatusOff,
     };
 
     /// <summary>Switches every widget, menu and the tray tooltip to <paramref name="language"/> and saves it.</summary>

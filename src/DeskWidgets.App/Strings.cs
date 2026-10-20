@@ -79,6 +79,7 @@ internal static class Strings
     public static string IconsArrangeNow => T("立即整理", "Arrange now");
     public static string IconsStatusOff => T("未开启自动排列", "Not arranging");
     public static string IconsStatusArranging(int count) => T($"自动排列中 · {count} 个图标", $"Arranging · {count} icons");
+    public static string IconsStatusStarting => T("正在整理图标…", "Starting to arrange…");
     public static string IconsDesktopNotReady => T("等待桌面就绪", "Waiting for the desktop");
     public static string IconsWaitingForIcons => T("等待桌面图标加载", "Waiting for the icons to load");
     public static string IconsNotIconView => T("桌面当前不是图标视图", "The desktop isn't showing icons");
