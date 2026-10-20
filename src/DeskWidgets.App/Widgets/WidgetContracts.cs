@@ -59,7 +59,7 @@ public static class WidgetLayout
 /// A widget instance. The host owns the window, glass card, dragging, sizing
 /// and persistence; a widget only provides its content.
 /// </summary>
-public interface IWidget : IDisposable
+internal interface IWidget : IDisposable
 {
     /// <summary>The content placed on the glass card (transparent background).</summary>
     FrameworkElement View { get; }
@@ -68,14 +68,14 @@ public interface IWidget : IDisposable
     void ApplySize(WidgetSize size);
 
     /// <summary>Widget-specific entries for the right-click menu (may be empty).</summary>
-    IEnumerable<MenuFlyoutItemBase> CreateMenuItems();
+    IEnumerable<PixelUi.MenuEntry> CreateMenuItems();
 
     /// <summary>Called after the user switches the app language: rebuild any text taken from <see cref="Strings"/>.</summary>
     void ApplyLanguage();
 }
 
 /// <summary>Describes a widget type and creates instances of it. Register factories in <see cref="WidgetCatalog"/>.</summary>
-public interface IWidgetFactory
+internal interface IWidgetFactory
 {
     /// <summary>Stable id stored in settings.json — never rename.</summary>
     string TypeId { get; }

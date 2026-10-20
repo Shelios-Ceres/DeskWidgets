@@ -120,7 +120,7 @@ internal static class PixelPreview
     }
 
     /// <summary>A soft diagonal two-tone stand-in for a desktop wallpaper.</summary>
-    private static void PaintWallpaper(PixelCanvas sheet, bool dark)
+    internal static void PaintWallpaper(PixelCanvas sheet, bool dark)
     {
         uint a = dark ? 0xFF262B44 : 0xFF8FA7BF, b = dark ? 0xFF2D3350 : 0xFF9AB2C9;
         for (int y = 0; y < sheet.Height; y++)
@@ -143,7 +143,7 @@ internal static class PixelPreview
         }
     }
 
-    private static void SavePng(string path, PixelCanvas canvas, int factor)
+    internal static void SavePng(string path, PixelCanvas canvas, int factor)
     {
         int width = canvas.Width * factor, height = canvas.Height * factor;
         var bgra = new byte[width * height * 4];

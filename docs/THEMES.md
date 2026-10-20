@@ -162,6 +162,16 @@ Added 2026-10-13.
 - **Recorded compressions**:
   - The small world clock uses three-letter city codes (NYC, LAX, STJ, PEK, …).
   - The Chinese date is written as "10/13". SimSun's "10月13日" is about 48 pixels wide and doesn't fit the 39-pixel column of the medium size.
+- **Menus and dialogs** (added 2026-10-20): everything the app draws itself, not only the cards, looks like the cards under Pixel. Glass keeps its `MenuFlyout`, Win32 tray menu and MessageBoxes. The items, order, words and effects stay the same (section 2); only the look changes.
+  - **How it is drawn:** the widget menu, the tray menu and both dialogs are our own borderless popup windows (`PixelUi/`) that show a `PixelCanvas` 1:1 at the same factor as the cards. Text uses the hand-drawn fonts through `PixelText`, with the SimSun fallback. The widget menu and the tray menu are built from one list of `MenuEntry` rows, which Glass turns into WinUI flyout items or a Win32 menu.
+  - **Frame:** `PixelCard`'s panel algorithm on any rectangle: 1 px outline, fill, 1 px highlight at the top, 2 px shade lip at the bottom. Corner stair: menus [2, 1], dialogs [4, 2, 1, 1], buttons [1]. A hard shadow under menus and dialogs only (the panel's own shape, 2 art pixels down and right, role `Shadow`, no blur). Cards keep no shadow.
+  - **Menu rows:** 15 art pixels tall when every label is in the pixel font, 18 when any label in the panel needs SimSun (one height per panel); separators 7. Lead column at x 4 (check 7×6, radio diamond 5×5, or a 7×7 icon; no row has two), label at x 14 in `PixelFonts.Regular`, submenu arrow 3×5. Width = 14 + widest label + (16 with a submenu row, else 8), at least 64. Submenus open 250 ms after hover, or at once on click, Right or Enter, with their outline sharing the parent's edge column and their first row level with the parent row.
+  - **States:** the pointer's row and the keyboard's current row are the same highlight (`Select`, text `OnSelect`); pressed `SelectPressed`; the parent row of a submenu that has the focus `OpenFill`; disabled rows `Faint`, never highlighted and skipped by the keyboard; a status line is `Soft` and not focusable. **Exception to 2.7:** `Faint` on disabled labels is deliberate; disabled text has no contrast requirement and must look unavailable.
+  - **Long lists:** a panel taller than its monitor's work area is cut to whole rows with a 9-pixel scroll row at each end (the wheel scrolls a row per notch, hovering a scroll row scrolls a row every 100 ms, the current row is always scrolled into view, and the checked row is visible on opening). The scroll rows keep their space even when there is nothing more in that direction, so the panel does not change height while scrolling.
+  - **Dialogs:** 172 art pixels wide (the large card's width), a title strip with the app mark and name (drag it to move the dialog), a 13×13 badge (a `Select` disc with "?" for a question, a yellow triangle for a warning), text in `PixelFonts.Regular`, and 17-pixel buttons (18 with SimSun). The default button is the primary one (`Select` face); Exit's question opens with No focused; Esc answers No (OK in the error box); Y and N answer; Tab and the arrows move the focus. Modal to the widget that asked, centred on its monitor, topmost.
+  - **Motion:** none. Menus, submenus and dialogs appear and disappear in one frame.
+  - **Keyboard and Narrator:** arrows, Home/End, Enter/Space, Esc and Left/Right work as in a native menu; the popups expose UI Automation roles (menu, menu items with Toggle, SelectionItem or ExpandCollapse patterns, dialog with buttons).
+  - **Tray icon:** the Pixel theme has its own (a dark stepped tile with a hard-edged ring and a pixel mouse), drawn at the exact small-icon size for the display's scale and swapped live on a theme or scale change. The exe's own icon stays as it is.
 
 ---
 
@@ -264,6 +274,18 @@ Added 2026-10-13.
 
 A new theme gives color values row by row from this table. It may add roles but must not leave any out.
 
+Roles added by the Pixel menus and dialogs (Glass keeps its system menus, so it has no values for them):
+
+| Role | Used for | Pixel (light / dark) |
+|---|---|---|
+| Select | Menu: the current row; dialog: the default button's face and the question badge | `#3B5DC9` / `#3B5DC9` |
+| Select pressed | Menu: a pressed row; dialog: the default button's hover, pressed and bottom row | `#29366F` / `#29366F` |
+| Select light | The default button's top row (decoration only, never under text) | `#41A6F6` / `#41A6F6` |
+| On select | Text and marks on Select and Select pressed | `#F4F4F4` / `#F4F4F4` |
+| Open fill | Menu: the parent row of a submenu that has the focus | `#D5DFE6` / `#333C57` |
+| Button, top, hover, pressed | The secondary button's face, top row, hover face and pressed face | `#FFFFFF`, `#FFFFFF`, `#E3E9ED`, `#C5D3DC` / `#333C57`, `#566C86`, `#566C86`, `#1A1C2C` |
+| Shadow | The hard shadow under menus and dialogs | `#1A1C2C` at 40 % / `#000000` at 60 % |
+
 ---
 
 ## Appendix A: design brief template for a new theme
@@ -308,3 +330,4 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-13 | All | The world clock shows the local date under the time; the "+1" next-day marker was removed | The user asked for it; the date already shows the day change |
 | 2026-10-13 | — | Wrote this spec, v1 | To make later theme design and changes easier |
 | 2026-10-19 | Glass | Moved the clocks' hard-coded colors into one palette, `GlassPalette` (which also took over `BatteryPalette`); every color keeps its exact value | Paid off the debt recorded in 2.9 |
+| 2026-10-20 | Pixel | Menus and dialogs now look Pixel too: the widget menu, the tray menu, Exit's question and the error box are our own popups with a hard shadow; new roles Select, Select pressed, Select light, On select, Open fill, Button, Button top, Button hover, Button pressed and Shadow; the Pixel tray icon; Chinese text no longer starts a line with closing punctuation | The user asked for the whole app, not only the cards, to be Pixel |

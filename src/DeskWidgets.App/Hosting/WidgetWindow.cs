@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using DeskWidgets.Interop;
+using DeskWidgets.PixelUi;
 using DeskWidgets.Widgets;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -88,6 +89,8 @@ internal sealed class WidgetWindow : Window
     }
 
     public WidgetPlacement Placement { get; }
+
+    public string TypeId => _factory.TypeId;
 
     public IWidget Widget { get; private set; }
 
@@ -376,62 +379,17 @@ internal sealed class WidgetWindow : Window
 
     private void ShowContextMenu(Windows.Foundation.Point position)
     {
+        var entries = BuildMenu();
+        if (_theme == WidgetTheme.Pixel && Win32.GetCursorPos(out var cursor))
+        {
+            // Our own topmost popups: nothing to lift the widget for.
+            PixelMenu.Show(entries, cursor.X, cursor.Y);
+            return;
+        }
+
         var menu = new MenuFlyout { ShouldConstrainToRootBounds = false };
-
-        if (_factory.SupportedSizes.Count > 1)
-        {
-            var sizes = new MenuFlyoutSubItem { Text = Strings.Size, Icon = new FontIcon { Glyph = "" } };
-            foreach (var size in _factory.SupportedSizes)
-            {
-                var item = new RadioMenuFlyoutItem { Text = SizeName(size), GroupName = "size", IsChecked = size == Placement.Size };
-                item.Click += (_, _) => SetSize(size);
-                sizes.Items.Add(item);
-            }
-            menu.Items.Add(sizes);
-        }
-
-        foreach (var item in Widget.CreateMenuItems())
+        foreach (var item in FlyoutMenuAdapter.Build(entries))
             menu.Items.Add(item);
-        menu.Items.Add(new MenuFlyoutSeparator());
-
-        var onTop = new ToggleMenuFlyoutItem { Text = Strings.AlwaysOnTop, IsChecked = Placement.AlwaysOnTop };
-        onTop.Click += (_, _) => SetAlwaysOnTop(onTop.IsChecked);
-        menu.Items.Add(onTop);
-        var locked = new ToggleMenuFlyoutItem { Text = Strings.LockPosition, IsChecked = Placement.Locked };
-        locked.Click += (_, _) =>
-        {
-            Placement.Locked = locked.IsChecked;
-            _host.RequestSave();
-        };
-        menu.Items.Add(locked);
-        menu.Items.Add(new MenuFlyoutSeparator());
-
-        var themes = new MenuFlyoutSubItem { Text = Strings.ThemeMenu, Icon = new FontIcon { Glyph = "" } };
-        foreach (var theme in Enum.GetValues<WidgetTheme>())
-        {
-            var item = new RadioMenuFlyoutItem { Text = Strings.ThemeName(theme), GroupName = "theme", IsChecked = theme == _theme };
-            // After the menu has closed: switching replaces this widget, menu items included.
-            item.Click += (_, _) => DispatcherQueue.TryEnqueue(() => _host.SetTheme(theme));
-            themes.Items.Add(item);
-        }
-        menu.Items.Add(themes);
-
-        var add = new MenuFlyoutSubItem { Text = Strings.AddWidget, Icon = new FontIcon { Glyph = "" } };
-        foreach (var factory in WidgetCatalog.All)
-        {
-            var item = new MenuFlyoutItem { Text = factory.DisplayName, Icon = new FontIcon { Glyph = factory.Glyph } };
-            item.Click += (_, _) => _host.AddWidget(factory);
-            add.Items.Add(item);
-        }
-        menu.Items.Add(add);
-        var remove = new MenuFlyoutItem { Text = Strings.RemoveWidget, Icon = new FontIcon { Glyph = "" } };
-        remove.Click += (_, _) => _host.RemoveWidget(this);
-        menu.Items.Add(remove);
-        menu.Items.Add(new MenuFlyoutSeparator());
-        var exit = new MenuFlyoutItem { Text = Strings.Exit };
-        // After the menu has closed, so the question isn't stacked on it.
-        exit.Click += (_, _) => DispatcherQueue.TryEnqueue(() => _host.ConfirmExit(_hwnd));
-        menu.Items.Add(exit);
 
         // While the menu is open, lift the widget so the menu is not hidden under app windows.
         menu.Opening += (_, _) =>
@@ -445,6 +403,39 @@ internal sealed class WidgetWindow : Window
             ApplyZOrder();
         };
         menu.ShowAt(_frame, position);
+    }
+
+    /// <summary>The right-click menu as a model: every theme shows these rows, in this order.</summary>
+    internal IReadOnlyList<MenuEntry> BuildMenu()
+    {
+        var entries = new List<MenuEntry>();
+        if (_factory.SupportedSizes.Count > 1)
+        {
+            entries.Add(MenuEntry.Sub(Strings.Size,
+                [.. _factory.SupportedSizes.Select(size => MenuEntry.Radio(SizeName(size), size == Placement.Size, () => SetSize(size), group: "size"))],
+                glyph: "", icon: PixelIcons.Size));
+        }
+        entries.AddRange(Widget.CreateMenuItems());
+        entries.Add(MenuEntry.Separator());
+        entries.Add(MenuEntry.Toggle(Strings.AlwaysOnTop, Placement.AlwaysOnTop, () => SetAlwaysOnTop(!Placement.AlwaysOnTop)));
+        entries.Add(MenuEntry.Toggle(Strings.LockPosition, Placement.Locked, () =>
+        {
+            Placement.Locked = !Placement.Locked;
+            _host.RequestSave();
+        }));
+        entries.Add(MenuEntry.Separator());
+        // After the menu has closed: switching replaces this widget, menu items included.
+        entries.Add(MenuEntry.Sub(Strings.ThemeMenu,
+            [.. Enum.GetValues<WidgetTheme>().Select(theme => MenuEntry.Radio(Strings.ThemeName(theme), theme == _theme, () => DispatcherQueue.TryEnqueue(() => _host.SetTheme(theme)), group: "theme"))],
+            glyph: "", icon: PixelIcons.Theme));
+        entries.Add(MenuEntry.Sub(Strings.AddWidget,
+            [.. WidgetCatalog.All.Select(factory => MenuEntry.Item(factory.DisplayName, () => _host.AddWidget(factory), glyph: factory.Glyph, icon: PixelIcons.ForWidget(factory.TypeId)))],
+            glyph: "", icon: PixelIcons.Add));
+        entries.Add(MenuEntry.Item(Strings.RemoveWidget, () => _host.RemoveWidget(this), glyph: "", icon: PixelIcons.Remove));
+        entries.Add(MenuEntry.Separator());
+        // After the menu has closed, so the question isn't stacked on it.
+        entries.Add(MenuEntry.Item(Strings.Exit, () => DispatcherQueue.TryEnqueue(() => _host.ConfirmExit(_hwnd))));
+        return entries;
     }
 
     private static string SizeName(WidgetSize size) => size switch

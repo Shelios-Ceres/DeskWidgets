@@ -36,6 +36,16 @@ public partial class App : Application
             return;
         }
 
+        int menuPreview = Array.FindIndex(commandLine, a => a.Equals("--pixel-menu-preview", StringComparison.OrdinalIgnoreCase));
+        if (menuPreview >= 0)
+        {
+            // Design aid: draw every Pixel menu, dialog and the tray icon to PNG sheets and quit (works while the app is running).
+            string folder = menuPreview + 1 < commandLine.Length ? commandLine[menuPreview + 1] : Path.Combine(AppContext.BaseDirectory, "pixel-menu-preview");
+            PixelUi.MenuPreview.Render(folder);
+            Exit();
+            return;
+        }
+
         // Maintenance commands that run and quit, alongside a running instance.
         int inspect = Array.FindIndex(commandLine, a => a.Equals("--icons-inspect", StringComparison.OrdinalIgnoreCase));
         if (inspect >= 0)
@@ -81,6 +91,9 @@ public partial class App : Application
         Log.Info(demo ? "starting (demo devices)" : Has(commandLine, "--autostart") ? "starting (sign-in task)" : "starting");
         _host = new WidgetHost(demo);
         _host.Start();
+        string? open = commandLine.FirstOrDefault(a => a.StartsWith("--pixel-ui-open=", StringComparison.OrdinalIgnoreCase));
+        if (open is not null)
+            _host.OpenForCapture(open[(open.IndexOf('=') + 1)..], Has(commandLine, "--pixel-ui-zh")); // design QA: open a menu or dialog without a mouse
     }
 
     private static bool Has(string[] commandLine, string flag) => commandLine.Any(a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));

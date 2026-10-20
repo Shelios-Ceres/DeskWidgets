@@ -1,5 +1,6 @@
 using DeskWidgets.Core.Devices;
 using DeskWidgets.Pixel;
+using DeskWidgets.PixelUi;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -55,23 +56,23 @@ internal sealed class BatteryWidget : UserControl, IWidget
         Render();
     }
 
-    public IEnumerable<MenuFlyoutItemBase> CreateMenuItems()
+    public IEnumerable<MenuEntry> CreateMenuItems()
     {
-        var showNames = new ToggleMenuFlyoutItem { Text = Strings.ShowDeviceNames, IsChecked = ShowNames };
-        showNames.Click += (_, _) =>
-        {
-            _options.SetBool(ShowNamesKey, showNames.IsChecked);
-            Render();
-        };
-        var showDisconnected = new ToggleMenuFlyoutItem { Text = Strings.ShowDisconnected, IsChecked = _options.GetBool(ShowDisconnectedKey) };
-        showDisconnected.Click += (_, _) =>
-        {
-            _options.SetBool(ShowDisconnectedKey, showDisconnected.IsChecked);
-            Render();
-        };
-        var refresh = new MenuFlyoutItem { Text = Strings.RefreshDevices, Icon = new FontIcon { Glyph = "" } };
-        refresh.Click += (_, _) => _hub.RefreshAll();
-        return [showNames, showDisconnected, refresh];
+        bool showDisconnected = _options.GetBool(ShowDisconnectedKey);
+        return
+        [
+            MenuEntry.Toggle(Strings.ShowDeviceNames, ShowNames, () =>
+            {
+                _options.SetBool(ShowNamesKey, !ShowNames);
+                Render();
+            }),
+            MenuEntry.Toggle(Strings.ShowDisconnected, showDisconnected, () =>
+            {
+                _options.SetBool(ShowDisconnectedKey, !showDisconnected);
+                Render();
+            }),
+            MenuEntry.Item(Strings.RefreshDevices, _hub.RefreshAll, glyph: "", icon: PixelIcons.Refresh),
+        ];
     }
 
     private bool ShowNames => _options.GetBool(ShowNamesKey, fallback: true);

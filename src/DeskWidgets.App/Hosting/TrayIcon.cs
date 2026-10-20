@@ -15,13 +15,16 @@ internal sealed class TrayIcon : IDisposable
 
     private readonly Win32.WindowProcedure _windowProcedure; // must outlive the window class
     private readonly nint _hwnd;
-    private readonly nint _icon;
+    private readonly string _iconPath;
+    private nint _icon;
+    private bool _pixel;
     private readonly uint _taskbarCreatedMessage;
     private string _tooltip;
 
     public TrayIcon(string tooltip, string iconPath)
     {
         _tooltip = tooltip;
+        _iconPath = iconPath;
         _windowProcedure = WindowProc;
         nint instance = Win32.GetModuleHandle(null);
         var windowClass = new Win32.WNDCLASSEX
@@ -34,9 +37,41 @@ internal sealed class TrayIcon : IDisposable
         Win32.RegisterClassEx(ref windowClass);
         _hwnd = Win32.CreateWindowEx(0, WindowClass, tooltip, 0, 0, 0, 0, 0, 0, 0, instance, 0);
         _taskbarCreatedMessage = Win32.RegisterWindowMessage("TaskbarCreated");
-        _icon = Win32.LoadImage(0, iconPath, 1 /* IMAGE_ICON */,
-            Win32.GetSystemMetrics(Win32.SM_CXSMICON), Win32.GetSystemMetrics(Win32.SM_CYSMICON), 0x10 /* LR_LOADFROMFILE */);
+        _icon = LoadFileIcon();
         Add();
+    }
+
+    /// <summary>Switches between the program's icon and the Pixel theme's, drawn at the exact size the notification area wants.</summary>
+    public void SetPixelIcon(bool pixel)
+    {
+        _pixel = pixel;
+        RefreshIcon();
+    }
+
+    private nint LoadFileIcon() => Win32.LoadImage(0, _iconPath, 1 /* IMAGE_ICON */,
+        Win32.GetSystemMetrics(Win32.SM_CXSMICON), Win32.GetSystemMetrics(Win32.SM_CYSMICON), 0x10 /* LR_LOADFROMFILE */);
+
+    private void RefreshIcon()
+    {
+        nint next;
+        if (_pixel)
+        {
+            // The small-icon size for the primary monitor's DPI: 16 at 100 %, 24 at 150 %, 32 at 200 %.
+            uint dpi = (uint)Math.Round(Win32.GetScaleAt(default) * 96);
+            next = PixelUi.PixelTrayIcon.Create(Math.Max(16, PixelUi.Native.GetSystemMetricsForDpi(Win32.SM_CXSMICON, dpi)));
+        }
+        else
+        {
+            next = LoadFileIcon();
+        }
+        if (next == 0)
+            return;
+        nint previous = _icon;
+        _icon = next;
+        var data = CreateData();
+        Win32.Shell_NotifyIcon(Win32.NIM_MODIFY, ref data);
+        if (previous != 0)
+            Win32.DestroyIcon(previous);
     }
 
     /// <summary>Raised with the cursor's screen position when the icon is clicked.</summary>
@@ -88,6 +123,11 @@ internal sealed class TrayIcon : IDisposable
             if (mouseMessage is Win32.WM_LBUTTONUP or Win32.WM_RBUTTONUP && Win32.GetCursorPos(out var point))
                 MenuRequested?.Invoke(point.X, point.Y);
             return 0;
+        }
+        if (msg is Win32.WM_DPICHANGED or Win32.WM_DISPLAYCHANGE)
+        {
+            RefreshIcon(); // the small-icon size follows the display's scale
+            return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
         }
         if (msg == _taskbarCreatedMessage && msg != 0)
         {

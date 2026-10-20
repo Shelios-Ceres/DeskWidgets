@@ -124,6 +124,9 @@ internal sealed class PixelText
 {
     private const string Ellipsis = "…";
 
+    /// <summary>Punctuation that must not begin a line of Chinese text.</summary>
+    private const string NoLineStart = "，。、：；！？）」』》";
+
     private PixelText(PixelFont font, IReadOnlyList<string> lines, int scale)
     {
         Font = font;
@@ -221,6 +224,10 @@ internal sealed class PixelText
             if (spaceBreak <= start && font.CapitalsOnly)
                 break; // an over-long word ends the text
             int end = spaceBreak > start ? spaceBreak : Math.Max(fit, start + 1);
+            // Chinese breaks between any two characters, but a line never starts with closing punctuation:
+            // the character before it comes down with it.
+            while (spaceBreak <= start && end > start + 1 && end < text.Length && NoLineStart.Contains(text[end]))
+                end--;
             lines.Add(text[start..end].TrimEnd());
             start = end;
         }

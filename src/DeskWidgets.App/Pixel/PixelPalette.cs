@@ -52,6 +52,31 @@ internal sealed class PixelPalette
     /// <summary>The rim around a clock face.</summary>
     public required uint Rim { get; init; }
 
+    // Menus and dialogs.
+
+    /// <summary>The current menu row (pointer or keyboard), the default button's face, the question badge.</summary>
+    public required uint Select { get; init; }
+
+    /// <summary>A pressed menu row; the default button's hover, pressed and bottom row.</summary>
+    public required uint SelectPressed { get; init; }
+
+    /// <summary>The default button's top row (decoration only, never under text).</summary>
+    public required uint SelectLight { get; init; }
+
+    /// <summary>Text and marks on <see cref="Select"/> and <see cref="SelectPressed"/>.</summary>
+    public required uint OnSelect { get; init; }
+
+    /// <summary>The parent row of an open submenu whose focus is inside it.</summary>
+    public required uint OpenFill { get; init; }
+
+    public required uint Button { get; init; }
+    public required uint ButtonTop { get; init; }
+    public required uint ButtonHover { get; init; }
+    public required uint ButtonPressed { get; init; }
+
+    /// <summary>The hard shadow under menus and dialogs (an alpha colour, two art pixels down and right).</summary>
+    public required uint Shadow { get; init; }
+
     public static PixelPalette For(bool dark) => dark ? s_night ??= CreateNight() : s_day ??= CreateDay();
 
     private static PixelPalette CreateDay() => new()
@@ -79,6 +104,16 @@ internal sealed class PixelPalette
         NightHands = Rgb(0xF4F4F4),
         NightTicks = Rgb(0x566C86),
         Rim = Rgb(0x333C57),
+        Select = Rgb(0x3B5DC9),
+        SelectPressed = Rgb(0x29366F),
+        SelectLight = Rgb(0x41A6F6),
+        OnSelect = Rgb(0xF4F4F4),
+        OpenFill = Rgb(0xD5DFE6),
+        Button = Rgb(0xFFFFFF),
+        ButtonTop = Rgb(0xFFFFFF),
+        ButtonHover = Rgb(0xE3E9ED),
+        ButtonPressed = Rgb(0xC5D3DC),
+        Shadow = 0x661A1C2C,
     };
 
     private static PixelPalette CreateNight() => new()
@@ -106,6 +141,16 @@ internal sealed class PixelPalette
         NightHands = Rgb(0xF4F4F4),
         NightTicks = Rgb(0x566C86),
         Rim = Rgb(0x566C86),
+        Select = Rgb(0x3B5DC9),
+        SelectPressed = Rgb(0x29366F),
+        SelectLight = Rgb(0x41A6F6),
+        OnSelect = Rgb(0xF4F4F4),
+        OpenFill = Rgb(0x333C57),
+        Button = Rgb(0x333C57),
+        ButtonTop = Rgb(0x566C86),
+        ButtonHover = Rgb(0x566C86),
+        ButtonPressed = Rgb(0x1A1C2C),
+        Shadow = 0x99000000,
     };
 
     private static uint Rgb(uint rgb) => 0xFF000000 | rgb;

@@ -5,6 +5,7 @@ using DeskWidgets.Desktop;
 using DeskWidgets.Devices.Bluetooth;
 using DeskWidgets.Devices.Hid;
 using DeskWidgets.Interop;
+using DeskWidgets.PixelUi;
 using DeskWidgets.Widgets;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -19,17 +20,6 @@ namespace DeskWidgets.Hosting;
 /// </summary>
 internal sealed class WidgetHost
 {
-    private const uint CommandRefresh = 1;
-    private const uint CommandStartup = 2;
-    private const uint CommandLogs = 3;
-    private const uint CommandGrid = 4;
-    private const uint CommandIconsToggle = 5;
-    private const uint CommandIconsArrangeNow = 6;
-    private const uint CommandExit = 9;
-    private const uint CommandLanguageBase = 50;
-    private const uint CommandThemeBase = 70;
-    private const uint CommandAddBase = 100;
-
     private readonly SettingsStore _settings = new();
     private readonly List<WidgetWindow> _windows = [];
     private readonly DispatcherQueueTimer _saveTimer;
@@ -79,6 +69,7 @@ internal sealed class WidgetHost
         RequestSave();
         foreach (var window in _windows)
             window.ApplyTheme(theme);
+        _tray?.SetPixelIcon(theme == WidgetTheme.Pixel);
     }
 
     public void Start()
@@ -101,6 +92,7 @@ internal sealed class WidgetHost
 
         _tray = new TrayIcon(TrayTooltip(), Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
         _tray.MenuRequested += ShowTrayMenu;
+        _tray.SetPixelIcon(Theme == WidgetTheme.Pixel);
 
         _showDesktop = new ShowDesktopWatcher(Services.Dispatcher, CheckShowDesktop);
         CheckShowDesktop();
@@ -217,6 +209,15 @@ internal sealed class WidgetHost
     /// <summary>Quits from a widget's menu, but only if the user says Yes; No is the default button, so a stray Enter doesn't quit.</summary>
     public void ConfirmExit(nint owner)
     {
+        if (Theme == WidgetTheme.Pixel)
+        {
+            PixelDialog.AskExit(owner, yes =>
+            {
+                if (yes)
+                    Exit();
+            });
+            return;
+        }
         int answer = Win32.MessageBox(owner, Strings.ExitQuestion + "\n\n" + Strings.ExitDetail, Strings.AppName,
             Win32.MB_YESNO | Win32.MB_ICONQUESTION | Win32.MB_DEFBUTTON2 | Win32.MB_SETFOREGROUND | Win32.MB_TOPMOST);
         if (answer == Win32.IDYES)
@@ -283,7 +284,7 @@ internal sealed class WidgetHost
         _tray?.SetTooltip(TrayTooltip());
     }
 
-    private static void ToggleStartup()
+    private void ToggleStartup()
     {
         try
         {
@@ -292,12 +293,17 @@ internal sealed class WidgetHost
         catch (Exception ex)
         {
             Log.Warn("Changing Start with Windows failed", ex);
-            ShowMessage(Strings.StartupFailed + ex.Message, Win32.MB_ICONWARNING);
+            ShowWarning(Strings.StartupFailed + ex.Message);
         }
     }
 
-    private static int ShowMessage(string text, uint type)
-        => Win32.MessageBox(0, text, Strings.AppName, type | Win32.MB_SETFOREGROUND | Win32.MB_TOPMOST);
+    private void ShowWarning(string text)
+    {
+        if (Theme == WidgetTheme.Pixel)
+            PixelDialog.ShowWarning(0, text);
+        else
+            Win32.MessageBox(0, text, Strings.AppName, Win32.MB_ICONWARNING | Win32.MB_SETFOREGROUND | Win32.MB_TOPMOST);
+    }
 
     private void ShowIconStatus(IconArrangerStatus status)
     {
@@ -328,80 +334,94 @@ internal sealed class WidgetHost
         Services.Devices.RefreshAll(); // demo devices are named in the UI language
     }
 
-    private void ShowTrayMenu(int x, int y)
+    /// <summary>
+    /// Design QA (<c>--pixel-ui-open=widget|cities|tray|exit|warn</c>, <c>--pixel-ui-zh</c> for Chinese): opens one menu or dialog as the
+    /// keyboard would, so it can be captured. The language change is in memory only.
+    /// </summary>
+    internal async void OpenForCapture(string what, bool chinese)
     {
-        nint menu = Win32.CreatePopupMenu();
-        nint addMenu = Win32.CreatePopupMenu();
-        for (int i = 0; i < WidgetCatalog.All.Count; i++)
-            Win32.AppendMenu(addMenu, Win32.MF_STRING, CommandAddBase + (uint)i, WidgetCatalog.All[i].DisplayName);
-        nint languageMenu = Win32.CreatePopupMenu();
-        foreach (var language in Enum.GetValues<AppLanguage>())
+        if (chinese)
+            Strings.Language = AppLanguage.Chinese;
+        await Task.Delay(1500);
+        var work = Win32.GetWorkArea(default);
+        int x = work.Left + 400, y = work.Top + 200;
+        var window = _windows.FirstOrDefault(w => w.TypeId == (what == "cities" ? "worldclock" : "battery")) ?? _windows[0];
+        switch (what)
         {
-            uint check = language == Strings.Language ? Win32.MF_CHECKED : 0;
-            Win32.AppendMenu(languageMenu, Win32.MF_STRING | check, CommandLanguageBase + (uint)language, Strings.LanguageName(language));
+            case "widget":
+                PixelMenu.Show(window.BuildMenu(), x, y);
+                break;
+            case "cities":
+            {
+                var menu = PixelMenu.Show(window.BuildMenu(), x, y);
+                foreach (int key in new[] { PixelUi.Native.VK_DOWN, PixelUi.Native.VK_DOWN, PixelUi.Native.VK_RIGHT, PixelUi.Native.VK_RIGHT })
+                    menu.OnKey(key);
+                break;
+            }
+            case "tray":
+                PixelMenu.Show(BuildTrayMenu(), work.Right - 140, work.Top);
+                break;
+            case "exit":
+                PixelDialog.AskExit(window.Handle, _ => { });
+                break;
+            case "warn":
+                PixelDialog.ShowWarning(0, Strings.StartupFailed + (Strings.IsChinese ? "拒绝访问。" : "Access is denied."));
+                break;
         }
-        nint themeMenu = Win32.CreatePopupMenu();
-        foreach (var theme in Enum.GetValues<WidgetTheme>())
-        {
-            uint check = theme == Theme ? Win32.MF_CHECKED : 0;
-            Win32.AppendMenu(themeMenu, Win32.MF_STRING | check, CommandThemeBase + (uint)theme, Strings.ThemeName(theme));
-        }
-        nint iconsMenu = Win32.CreatePopupMenu();
-        Win32.AppendMenu(iconsMenu, Win32.MF_STRING | Win32.MF_GRAYED, 0, IconStatusText());
-        Win32.AppendMenu(iconsMenu, Win32.MF_SEPARATOR, 0, null);
-        Win32.AppendMenu(iconsMenu, Win32.MF_STRING | (ArrangeDesktopIcons ? Win32.MF_CHECKED : 0), CommandIconsToggle, Strings.IconsArrangeRight);
-        Win32.AppendMenu(iconsMenu, Win32.MF_STRING, CommandIconsArrangeNow, Strings.IconsArrangeNow);
-        Win32.AppendMenu(menu, Win32.MF_POPUP, (nuint)addMenu, Strings.AddWidget);
-        Win32.AppendMenu(menu, Win32.MF_STRING, CommandRefresh, Strings.RefreshDevices);
-        Win32.AppendMenu(menu, Win32.MF_SEPARATOR, 0, null);
-        Win32.AppendMenu(menu, Win32.MF_STRING | (SnapToDesktopGrid ? Win32.MF_CHECKED : 0), CommandGrid, Strings.SnapToDesktopGrid);
-        Win32.AppendMenu(menu, Win32.MF_POPUP, (nuint)iconsMenu, Strings.IconsMenu);
-        Win32.AppendMenu(menu, Win32.MF_STRING | (StartupRegistration.IsEnabled ? Win32.MF_CHECKED : 0), CommandStartup, Strings.StartWithWindows);
-        Win32.AppendMenu(menu, Win32.MF_POPUP, (nuint)themeMenu, Strings.ThemeMenu);
-        Win32.AppendMenu(menu, Win32.MF_POPUP, (nuint)languageMenu, Strings.LanguageMenu);
-        Win32.AppendMenu(menu, Win32.MF_STRING, CommandLogs, Strings.OpenLogs);
-        Win32.AppendMenu(menu, Win32.MF_SEPARATOR, 0, null);
-        Win32.AppendMenu(menu, Win32.MF_STRING, CommandExit, Strings.Exit);
+    }
 
-        uint command = _tray!.ShowMenu(menu, x, y);
-        Win32.DestroyMenu(menu); // also destroys the submenus
-
-        switch (command)
+    /// <summary>The tray menu as a model: both themes show these rows, in this order.</summary>
+    private List<MenuEntry> BuildTrayMenu() =>
+    [
+        MenuEntry.Sub(Strings.AddWidget,
+            [.. WidgetCatalog.All.Select(factory => MenuEntry.Item(factory.DisplayName, () => AddWidget(factory), glyph: factory.Glyph, icon: PixelIcons.ForWidget(factory.TypeId)))],
+            icon: PixelIcons.Add),
+        MenuEntry.Item(Strings.RefreshDevices, Services.Devices.RefreshAll, icon: PixelIcons.Refresh),
+        MenuEntry.Separator(),
+        MenuEntry.Toggle(Strings.SnapToDesktopGrid, SnapToDesktopGrid, () =>
         {
-            case CommandRefresh:
-                Services.Devices.RefreshAll();
-                break;
-            case CommandStartup:
-                ToggleStartup();
-                break;
-            case CommandGrid:
-                _settings.Current.SnapToDesktopGrid = !SnapToDesktopGrid;
-                RequestSave();
-                ResnapAll(); // under the new rule
-                break;
-            case CommandIconsToggle:
-                SetArrangeIcons(!ArrangeDesktopIcons);
-                break;
-            case CommandIconsArrangeNow:
+            _settings.Current.SnapToDesktopGrid = !SnapToDesktopGrid;
+            RequestSave();
+            ResnapAll(); // under the new rule
+        }),
+        MenuEntry.Sub(Strings.IconsMenu,
+        [
+            MenuEntry.Status(IconStatusText()),
+            MenuEntry.Separator(),
+            MenuEntry.Toggle(Strings.IconsArrangeRight, ArrangeDesktopIcons, () => SetArrangeIcons(!ArrangeDesktopIcons)),
+            MenuEntry.Item(Strings.IconsArrangeNow, () =>
+            {
                 SetArrangeIcons(true);
                 _icons.Invalidate();
-                break;
-            case CommandLogs:
-                Directory.CreateDirectory(Log.LogDirectory);
-                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{Log.LogDirectory}\"") { UseShellExecute = true });
-                break;
-            case CommandExit:
-                Exit();
-                break;
-            case >= CommandLanguageBase and < CommandThemeBase:
-                SetLanguage((AppLanguage)(command - CommandLanguageBase));
-                break;
-            case >= CommandThemeBase and < CommandAddBase:
-                SetTheme((WidgetTheme)(command - CommandThemeBase));
-                break;
-            case >= CommandAddBase when command - CommandAddBase < WidgetCatalog.All.Count:
-                AddWidget(WidgetCatalog.All[(int)(command - CommandAddBase)]);
-                break;
+            }),
+        ]),
+        MenuEntry.Toggle(Strings.StartWithWindows, StartupRegistration.IsEnabled, ToggleStartup),
+        MenuEntry.Sub(Strings.ThemeMenu,
+            [.. Enum.GetValues<WidgetTheme>().Select(theme => MenuEntry.Radio(Strings.ThemeName(theme), theme == Theme, () => SetTheme(theme), group: "theme"))],
+            icon: PixelIcons.Theme),
+        MenuEntry.Sub(Strings.LanguageMenu,
+            [.. Enum.GetValues<AppLanguage>().Select(language => MenuEntry.Radio(Strings.LanguageName(language), language == Strings.Language, () => SetLanguage(language), group: "language"))]),
+        MenuEntry.Item(Strings.OpenLogs, () =>
+        {
+            Directory.CreateDirectory(Log.LogDirectory);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{Log.LogDirectory}\"") { UseShellExecute = true });
+        }),
+        MenuEntry.Separator(),
+        MenuEntry.Item(Strings.Exit, Exit),
+    ];
+
+    private void ShowTrayMenu(int x, int y)
+    {
+        var entries = BuildTrayMenu();
+        if (Theme == WidgetTheme.Pixel)
+        {
+            PixelMenu.Show(entries, x, y);
+            return;
         }
+        nint menu = Win32MenuAdapter.Build(entries, out var actions);
+        uint command = _tray!.ShowMenu(menu, x, y);
+        Win32.DestroyMenu(menu); // also destroys the submenus
+        if (actions.TryGetValue(command, out var action))
+            action();
     }
 }

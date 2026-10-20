@@ -1,4 +1,5 @@
 using DeskWidgets.Pixel;
+using DeskWidgets.PixelUi;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -73,28 +74,26 @@ internal sealed class WorldClockWidget : UserControl, IWidget
         Render();
     }
 
-    public IEnumerable<MenuFlyoutItemBase> CreateMenuItems()
+    public IEnumerable<MenuEntry> CreateMenuItems()
     {
-        var cities = new MenuFlyoutSubItem { Text = Strings.ChangeCities, Icon = new FontIcon { Glyph = "" } };
+        var slots = new List<MenuEntry>();
         for (int i = 0; i < CityCount; i++)
         {
             int index = i;
-            var slot = new MenuFlyoutSubItem { Text = Strings.CitySlot(index + 1, _cities[index].Name) };
-            foreach (var city in WorldCities.Catalog)
-            {
-                var item = new RadioMenuFlyoutItem { Text = city.Name, GroupName = $"city{index}", IsChecked = city.Id == _cities[index].Id };
-                item.Click += (_, _) => SetCity(index, city);
-                slot.Items.Add(item);
-            }
-            cities.Items.Add(slot);
+            var cities = WorldCities.Catalog
+                .Select(city => MenuEntry.Radio(city.Name, city.Id == _cities[index].Id, () => SetCity(index, city), group: $"city{index}"))
+                .ToList();
+            slots.Add(MenuEntry.Sub(Strings.CitySlot(index + 1, _cities[index].Name), cities));
         }
-        var seconds = new ToggleMenuFlyoutItem { Text = Strings.ShowSecondHand, IsChecked = ShowSeconds };
-        seconds.Click += (_, _) =>
-        {
-            _options.SetBool(ShowSecondsKey, seconds.IsChecked);
-            Tick();
-        };
-        return [cities, seconds];
+        return
+        [
+            MenuEntry.Sub(Strings.ChangeCities, slots, glyph: "", icon: PixelIcons.Globe),
+            MenuEntry.Toggle(Strings.ShowSecondHand, ShowSeconds, () =>
+            {
+                _options.SetBool(ShowSecondsKey, !ShowSeconds);
+                Tick();
+            }),
+        ];
     }
 
     public void ApplyLanguage() => Render();

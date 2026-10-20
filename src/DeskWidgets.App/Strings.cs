@@ -51,6 +51,9 @@ internal static class Strings
     public static string OpenLogs => T("打开日志文件夹", "Open log folder");
     public static string Exit => T("退出", "Exit");
     public static string ExitQuestion => T("退出桌面小组件？", "Quit Desk Widgets?");
+    public static string Yes => T("是", "Yes");
+    public static string No => T("否", "No");
+    public static string Ok => T("确定", "OK");
     public static string ExitDetail => T("所有小组件都会关闭，直到你再次启动本程序。", "The widgets will close until you start the app again.");
 
     public static string ThisPc => T("此电脑", "This PC");

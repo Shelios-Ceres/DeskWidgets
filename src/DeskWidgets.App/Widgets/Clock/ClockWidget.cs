@@ -1,4 +1,5 @@
 using DeskWidgets.Pixel;
+using DeskWidgets.PixelUi;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -76,7 +77,7 @@ internal sealed class ClockWidget : UserControl, IWidget
         _date.FontSize = medium ? 16 : 14;
     }
 
-    public IEnumerable<MenuFlyoutItemBase> CreateMenuItems() => [];
+    public IEnumerable<MenuEntry> CreateMenuItems() => [];
 
     public void ApplyLanguage()
     {
