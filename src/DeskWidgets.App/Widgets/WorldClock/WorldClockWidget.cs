@@ -1,5 +1,4 @@
 using DeskWidgets.Pixel;
-using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -44,6 +43,7 @@ internal sealed class WorldClockWidget : UserControl, IWidget
     private readonly FontFamily _displayFont = new("Segoe UI Variable Display");
     private readonly FontFamily _textFont = new("Segoe UI Variable Text");
     private readonly PixelSurface? _pixel;
+    private GlassPalette _glass = null!; // set by Render before any clock is made
     private WidgetSize _size = WidgetSize.Medium;
     private bool _disposed;
 
@@ -127,9 +127,9 @@ internal sealed class WorldClockWidget : UserControl, IWidget
             Tick(); // repaints and keeps the timer going
             return;
         }
-        bool dark = ActualTheme == ElementTheme.Dark;
-        var primary = new SolidColorBrush(dark ? Colors.White : ColorHelper.FromArgb(0xFF, 0x1C, 0x1C, 0x1E));
-        var secondary = new SolidColorBrush(dark ? ColorHelper.FromArgb(0x99, 0xEB, 0xEB, 0xF5) : ColorHelper.FromArgb(0x99, 0x3C, 0x3C, 0x43));
+        _glass = GlassPalette.For(ActualTheme);
+        var primary = _glass.Primary;
+        var secondary = _glass.Secondary;
 
         _root.Children.Clear();
         _root.RowDefinitions.Clear();
@@ -156,7 +156,7 @@ internal sealed class WorldClockWidget : UserControl, IWidget
         for (int i = 0; i < CityCount; i++)
         {
             var city = _cities[i];
-            var clock = new AnalogClock(46) { HorizontalAlignment = HorizontalAlignment.Center };
+            var clock = new AnalogClock(46, _glass) { HorizontalAlignment = HorizontalAlignment.Center };
             var cell = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             cell.Children.Add(clock);
             cell.Children.Add(Label(city.Name, 11, FontWeights.SemiBold, primary));
@@ -180,7 +180,7 @@ internal sealed class WorldClockWidget : UserControl, IWidget
         {
             table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var city = _cities[i];
-            var clock = new AnalogClock(60) { HorizontalAlignment = HorizontalAlignment.Center };
+            var clock = new AnalogClock(60, _glass) { HorizontalAlignment = HorizontalAlignment.Center };
             var name = Label(city.Name, 12, FontWeights.SemiBold, primary);
             name.Margin = new Thickness(0, 7, 0, 0);
             var time = Label(string.Empty, 12, FontWeights.Normal, secondary);
@@ -210,7 +210,7 @@ internal sealed class WorldClockWidget : UserControl, IWidget
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var clock = new AnalogClock(56);
+            var clock = new AnalogClock(56, _glass);
             var labels = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
             labels.Children.Add(Label(city.Name, 15, FontWeights.SemiBold, primary, centered: false));
             var offset = Label(string.Empty, 12, FontWeights.Normal, secondary, centered: false);

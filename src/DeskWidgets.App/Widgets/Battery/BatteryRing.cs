@@ -77,7 +77,7 @@ internal sealed class BatteryRing : Grid
     }
 
     /// <summary>Shows <paramref name="device"/>, or an empty slot when it is null.</summary>
-    public void Update(DeviceStatus? device, BatteryPalette palette, bool chargingBadge)
+    public void Update(DeviceStatus? device, GlassPalette palette, bool chargingBadge)
     {
         if (device is null)
         {

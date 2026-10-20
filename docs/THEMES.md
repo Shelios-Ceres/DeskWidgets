@@ -98,7 +98,6 @@ Each theme's exact values are in section 8.
 - **Must**: data and copy live in the shared layer (`DeviceStatus`, `WorldCities`, `Strings`, …); the theme layer only does the rendering. The same piece of information is formatted by the same shared function in every theme (for example `WorldCities.FormatTime` / `FormatDate` / `DescribeOffset`), and a theme may shorten it only when it doesn't fit, and only in the recorded way of 2.5.
 - **Must**: each theme's rendering lives in its own files. Glass = the XAML and code in the widget classes; Pixel = the `Pixel/` infrastructure + `Widgets/<widget>/<widget>PixelScene.cs`. A new theme creates a `<ThemeName>/` folder and `<Widget><ThemeName>Scene.cs` in the same way.
 - **Must**: widgets use only the color roles of their theme's palette (section 8), with no color values hard-coded in widgets.
-  - ⚠ Historical leftover: Glass's `ClockWidget`, `WorldClockWidget` and `AnalogClock` currently hard-code their colors. Whenever those files are touched, move the colors to the palette while you're there.
 - **Should**: a widget without its own rendering should still work (its XAML content is placed directly on the current theme's card). A theme that ships officially, though, should give every widget its own rendering.
 
 ### 2.10 Where assets come from
@@ -114,7 +113,7 @@ Tokens of one kind go in one place, not scattered across widgets.
 | Category | What to define | Where Glass has it | Where Pixel has it |
 |---|---|---|---|
 | Card | Shape, corner radius, material, edge, highlight and shadow | `Hosting/WidgetFrame.xaml`, `Hosting/GlassBackdrop.cs` | `Pixel/PixelCard.cs` |
-| Palette | A light and a dark set, named by the roles of section 8 | `Widgets/Battery/BatteryPalette.cs` (plus the hard-coded colors mentioned above) | `Pixel/PixelPalette.cs` |
+| Palette | A light and a dark set, named by the roles of section 8 | `Widgets/GlassPalette.cs` | `Pixel/PixelPalette.cs` |
 | Fonts | Family, type scale, weights, fallback fonts | Segoe UI Variable Display / Text | `Pixel/PixelFonts.cs` (3×5, 5×7) + `Pixel/SystemGlyphs.cs` (SimSun 12 px) |
 | Icons | Device icons, charging indicator, empty-state icon | Segoe Fluent Icons (`Widgets/Battery/DeviceGlyphs.cs`) | `Pixel/PixelSprites.cs` |
 | Motion | Which changes animate, duration, easing | Battery ring: 700 ms cubic ease-out; the second hand ticks once a second | No tweening; state changes swap frames directly; the second hand ticks once a second |
@@ -250,7 +249,7 @@ Added 2026-10-13.
 |---|---|---|---|
 | Primary text (Primary / Ink) | Names, values | `#1C1C1E` / `#FFFFFF` | `#1A1C2C` / `#F4F4F4` |
 | Secondary text (Secondary / Soft) | State, time, date, time difference | `#3C3C43` 60% / `#EBEBF5` 60% | `#566C86` / `#94B0C2` |
-| Faint | Tick marks, separators; not for body text | Dial minor ticks: primary color at 45% | `#94B0C2` / `#566C86` |
+| Faint | Tick marks, separators; not for body text | Dial minor ticks: the dial's ink at 45% | `#94B0C2` / `#566C86` |
 | Track | Empty groove of the battery ring and bar | Black 14% / white 24% | `#D5DFE6` / `#333C57` |
 | Placeholder / Well | Empty device slot, recessed groove | Black 8% / white 12% | `#E3E9ED` / `#131423` |
 | Green | Charge is normal | `#34C759` / `#30D158` | `#38B764` / `#A7F070` |
@@ -258,8 +257,9 @@ Added 2026-10-13.
 | Red | Charge ≤ 20% | `#FF3B30` / `#FF453A` | `#B13E53` / `#EF5D57` |
 | Accent | The clock's weekday | `#FF453A` | `#B13E53` / `#EF7D57` |
 | Orange | Second hand | `#FF9500` | `#EF7D57` |
-| Day dial | Local 6:00–18:00 | Face `#FFFFFF`, hands `#1C1C1E` | Face `#FFFFFF` / `#F4F4F4`, hands `#1A1C2C` |
-| Night dial | Any other time | Face `#1C1C1E`, hands `#FFFFFF` | Face `#29366F`, hands `#F4F4F4` |
+| Day dial | Local 6:00–18:00 | Face `#FFFFFF`, ink (hands, numerals, ticks) `#1C1C1E` | Face `#FFFFFF` / `#F4F4F4`, hands `#1A1C2C` |
+| Night dial | Any other time | Face `#1C1C1E`, ink `#FFFFFF` | Face `#29366F`, hands `#F4F4F4` |
+| On accent | Glyph on a coloured badge (the charging bolt) | `#FFFFFF` / `#000000` | — |
 | Card | Base | White 24% / black 24% + diagonal highlight | Panel `#F4F4F4` / `#1A1C2C`, outline `#333C57` / `#0B0C14` |
 
 A new theme gives color values row by row from this table. It may add roles but must not leave any out.
@@ -307,3 +307,4 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-13 | Pixel | Added the Pixel theme | The user wanted a switchable pixel look |
 | 2026-10-13 | All | The world clock shows the local date under the time; the "+1" next-day marker was removed | The user asked for it; the date already shows the day change |
 | 2026-10-13 | — | Wrote this spec, v1 | To make later theme design and changes easier |
+| 2026-10-19 | Glass | Moved the clocks' hard-coded colors into one palette, `GlassPalette` (which also took over `BatteryPalette`); every color keeps its exact value | Paid off the debt recorded in 2.9 |

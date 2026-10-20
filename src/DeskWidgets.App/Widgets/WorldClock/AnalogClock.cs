@@ -1,5 +1,4 @@
 using System.Globalization;
-using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -18,14 +17,7 @@ internal sealed class AnalogClock : Canvas
     /// <summary>Faces this size (DIPs) and up get numerals; smaller ones get ticks.</summary>
     private const double NumeralsFrom = 60;
 
-    private static readonly SolidColorBrush DayFace = new(Colors.White);
-    private static readonly SolidColorBrush NightFace = new(ColorHelper.FromArgb(0xFF, 0x1C, 0x1C, 0x1E));
-    private static readonly SolidColorBrush DayInk = new(ColorHelper.FromArgb(0xFF, 0x1C, 0x1C, 0x1E));
-    private static readonly SolidColorBrush NightInk = new(Colors.White);
-    private static readonly SolidColorBrush DayFaint = new(ColorHelper.FromArgb(0x73, 0x1C, 0x1C, 0x1E));
-    private static readonly SolidColorBrush NightFaint = new(ColorHelper.FromArgb(0x73, 0xFF, 0xFF, 0xFF));
-    private static readonly SolidColorBrush Orange = new(ColorHelper.FromArgb(0xFF, 0xFF, 0x95, 0x00));
-
+    private readonly GlassPalette _palette;
     private readonly Ellipse _face;
     private readonly List<TextBlock> _numerals = [];
     private readonly List<(Line Line, bool Major)> _ticks = [];
@@ -36,8 +28,9 @@ internal sealed class AnalogClock : Canvas
     private readonly Canvas _secondHand;
     private bool? _isDay;
 
-    public AnalogClock(double diameter)
+    public AnalogClock(double diameter, GlassPalette palette)
     {
+        _palette = palette;
         Width = diameter;
         Height = diameter;
         double center = diameter / 2;
@@ -65,13 +58,13 @@ internal sealed class AnalogClock : Canvas
             Y1 = center + center * 0.2,
             X2 = center,
             Y2 = center - center * 0.88,
-            Stroke = Orange,
+            Stroke = _palette.Orange,
             StrokeThickness = Math.Max(1, diameter * 0.018),
             StrokeStartLineCap = PenLineCap.Round,
             StrokeEndLineCap = PenLineCap.Round,
         });
         var secondCap = Dot(center, Math.Max(2.5, diameter * 0.05));
-        secondCap.Fill = Orange;
+        secondCap.Fill = _palette.Orange;
         _secondHand.Children.Add(secondCap);
         Children.Add(_secondHand);
     }
@@ -92,9 +85,9 @@ internal sealed class AnalogClock : Canvas
     private void ApplyFace(bool day)
     {
         _isDay = day;
-        _face.Fill = day ? DayFace : NightFace;
-        var ink = day ? DayInk : NightInk;
-        var faint = day ? DayFaint : NightFaint;
+        _face.Fill = day ? _palette.DayFace : _palette.NightFace;
+        var ink = day ? _palette.DayInk : _palette.NightInk;
+        var faint = day ? _palette.DayFaint : _palette.NightFaint;
         foreach (var numeral in _numerals)
             numeral.Foreground = ink;
         foreach (var (line, major) in _ticks)

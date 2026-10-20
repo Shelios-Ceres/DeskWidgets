@@ -120,7 +120,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
             _pixel.Invalidate();
             return;
         }
-        var palette = BatteryPalette.For(ActualTheme);
+        var palette = GlassPalette.For(ActualTheme);
         var devices = VisibleDevices();
 
         // Rings are reused across renders so their levels animate; detach them first.
@@ -152,7 +152,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
     }
 
     /// <summary>Small, one device: ring (and its name) top-left, big percentage bottom-left.</summary>
-    private void RenderSingle(DeviceStatus device, BatteryPalette palette)
+    private void RenderSingle(DeviceStatus device, GlassPalette palette)
     {
         _root.Padding = new Thickness(18);
         bool names = ShowNames;
@@ -171,7 +171,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
     }
 
     /// <summary>Small, several devices: 2×2 rings with charging badges, no text.</summary>
-    private void RenderRingGrid(IReadOnlyList<DeviceStatus> devices, BatteryPalette palette)
+    private void RenderRingGrid(IReadOnlyList<DeviceStatus> devices, GlassPalette palette)
     {
         _root.Padding = new Thickness(16);
         _root.RowSpacing = 10;
@@ -197,7 +197,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
     /// One shared table keeps the rows aligned across columns even when a
     /// long name wraps onto a second line.
     /// </summary>
-    private void RenderRingRow(IReadOnlyList<DeviceStatus> devices, BatteryPalette palette)
+    private void RenderRingRow(IReadOnlyList<DeviceStatus> devices, GlassPalette palette)
     {
         _root.Padding = new Thickness(10, 0, 10, 0);
         bool names = ShowNames;
@@ -239,7 +239,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
         grid.Children.Add(element);
     }
 
-    private TextBlock NameText(DeviceStatus device, double fontSize, BatteryPalette palette, int maxLines, bool centered) => new()
+    private TextBlock NameText(DeviceStatus device, double fontSize, GlassPalette palette, int maxLines, bool centered) => new()
     {
         Text = device.IsHost ? Strings.ThisPc : device.Name,
         FontFamily = _textFont,
@@ -253,7 +253,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
     };
 
     /// <summary>Large: one row per device with name, connection and percentage.</summary>
-    private void RenderList(IReadOnlyList<DeviceStatus> devices, BatteryPalette palette)
+    private void RenderList(IReadOnlyList<DeviceStatus> devices, GlassPalette palette)
     {
         _root.Padding = new Thickness(18, 14, 18, 14);
         var list = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Top };
@@ -300,7 +300,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
         _root.Children.Add(list);
     }
 
-    private void RenderEmpty(BatteryPalette palette)
+    private void RenderEmpty(GlassPalette palette)
     {
         _root.Padding = new Thickness(16);
         var stack = new StackPanel { Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
@@ -317,7 +317,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
         _root.Children.Add(stack);
     }
 
-    private BatteryRing Ring(DeviceStatus device, double diameter, double thickness, BatteryPalette palette, bool chargingBadge)
+    private BatteryRing Ring(DeviceStatus device, double diameter, double thickness, GlassPalette palette, bool chargingBadge)
     {
         if (!_rings.TryGetValue((device.Id, diameter), out var ring))
             _rings[(device.Id, diameter)] = ring = new BatteryRing(diameter, thickness);
@@ -325,7 +325,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
         return ring;
     }
 
-    private static BatteryRing Placeholder(double diameter, double thickness, BatteryPalette palette)
+    private static BatteryRing Placeholder(double diameter, double thickness, GlassPalette palette)
     {
         var ring = new BatteryRing(diameter, thickness);
         ring.Update(null, palette, chargingBadge: false);
@@ -333,7 +333,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
     }
 
     /// <summary>"76%" plus a bolt while charging; an em dash when the level is unknown.</summary>
-    private StackPanel PercentLine(DeviceStatus device, double fontSize, BatteryPalette palette, FontFamily font)
+    private StackPanel PercentLine(DeviceStatus device, double fontSize, GlassPalette palette, FontFamily font)
     {
         bool known = device.IsConnected && device.BatteryPercent is not null;
         var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Math.Round(fontSize * 0.12), VerticalAlignment = VerticalAlignment.Center };

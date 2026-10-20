@@ -1,5 +1,4 @@
 using DeskWidgets.Pixel;
-using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -44,7 +43,6 @@ internal sealed class ClockWidget : UserControl, IWidget
         _weekday.FontFamily = display;
         _time.FontFamily = display;
         _date.FontFamily = new FontFamily("Segoe UI Variable Text");
-        _weekday.Foreground = new SolidColorBrush(ColorHelper.FromArgb(0xFF, 0xFF, 0x45, 0x3A)); // Apple calendar red
         _panel.Children.Add(_weekday);
         _panel.Children.Add(_time);
         _panel.Children.Add(_date);
@@ -88,9 +86,10 @@ internal sealed class ClockWidget : UserControl, IWidget
 
     private void ApplyTheme()
     {
-        bool dark = ActualTheme == ElementTheme.Dark;
-        _time.Foreground = new SolidColorBrush(dark ? Colors.White : ColorHelper.FromArgb(0xFF, 0x1C, 0x1C, 0x1E));
-        _date.Foreground = new SolidColorBrush(dark ? ColorHelper.FromArgb(0x99, 0xEB, 0xEB, 0xF5) : ColorHelper.FromArgb(0x99, 0x3C, 0x3C, 0x43));
+        var palette = GlassPalette.For(ActualTheme);
+        _weekday.Foreground = palette.Accent;
+        _time.Foreground = palette.Primary;
+        _date.Foreground = palette.Secondary;
     }
 
     private void Refresh()
