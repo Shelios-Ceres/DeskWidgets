@@ -7,10 +7,16 @@ namespace DeskWidgets.Core.Devices;
 /// is polled on its own interval and rescanned early when it raises
 /// <see cref="IDeviceSource.Invalidated"/>. Scans of one source never overlap;
 /// a request that arrives mid-scan causes exactly one follow-up scan.
+/// A scan that throws keeps the source's previous result; the source is then
+/// retried sooner than its poll interval, and a run of failures is logged as
+/// one warning plus one line when the source recovers.
 /// </summary>
 public sealed class DeviceHub : IDisposable
 {
     private static readonly TimeSpan InvalidationDebounce = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>First retry after a failed scan; doubles per further failure, capped at the poll interval.</summary>
+    private static readonly TimeSpan DefaultRetryDelay = TimeSpan.FromSeconds(5);
 
     private sealed class SourceSlot(IDeviceSource source)
     {
@@ -19,17 +25,33 @@ public sealed class DeviceHub : IDisposable
         public int Running;
         public int Pending;
         public int DebounceArmed;
+
+        /// <summary>Failed scans in the current run; written only by the scan that owns the slot.</summary>
+        public int Failures;
+        public int RetryArmed;
+        public DateTime FailingSinceUtc;
     }
 
     private readonly SourceSlot[] _slots;
     private readonly CancellationTokenSource _cts = new();
     private readonly object _sync = new();
     private IReadOnlyList<DeviceStatus> _devices = [];
+    private readonly Action<string, Exception?> _warn;
+    private readonly Action<string> _info;
+    private readonly TimeSpan _retryDelay;
     private bool _started;
 
     public DeviceHub(IEnumerable<IDeviceSource> sources)
+        : this(sources, Log.Warn, Log.Info, DefaultRetryDelay)
+    {
+    }
+
+    internal DeviceHub(IEnumerable<IDeviceSource> sources, Action<string, Exception?> warn, Action<string> info, TimeSpan retryDelay)
     {
         _slots = sources.Select(s => new SourceSlot(s)).ToArray();
+        _warn = warn;
+        _info = info;
+        _retryDelay = retryDelay;
     }
 
     /// <summary>Raised on a background thread whenever <see cref="Devices"/> changes.</summary>
@@ -74,6 +96,29 @@ public sealed class DeviceHub : IDisposable
                 return;
             }
         }
+    }
+
+    /// <summary>After a failed scan, try again sooner than the next poll: 5 s, then 10 s, 20 s, ... up to the poll interval.</summary>
+    private void ScheduleRetry(SourceSlot slot)
+    {
+        if (Interlocked.Exchange(ref slot.RetryArmed, 1) == 1)
+            return;
+        var delay = _retryDelay * Math.Pow(2, Math.Min(slot.Failures - 1, 16));
+        if (delay > slot.Source.PollInterval)
+            delay = slot.Source.PollInterval;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(delay, _cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            Volatile.Write(ref slot.RetryArmed, 0);
+            await ScanAsync(slot).ConfigureAwait(false);
+        });
     }
 
     private void ScheduleScan(SourceSlot slot)
@@ -122,8 +167,20 @@ public sealed class DeviceHub : IDisposable
                     catch (Exception ex)
                     {
                         // Keep the previous result; one failed scan should not blank the widget.
-                        Log.Warn($"Device source '{slot.Source.Name}' scan failed", ex);
+                        // Only the first failure of a run is logged.
+                        if (slot.Failures == 0)
+                        {
+                            slot.FailingSinceUtc = DateTime.UtcNow;
+                            _warn($"Device source '{slot.Source.Name}' scan failed, retrying shortly; more failures in this run are not logged", ex);
+                        }
+                        Volatile.Write(ref slot.Failures, slot.Failures + 1);
+                        ScheduleRetry(slot);
                         continue;
+                    }
+                    if (slot.Failures > 0)
+                    {
+                        _info($"Device source '{slot.Source.Name}' recovered after {slot.Failures} failed scan(s) over {(DateTime.UtcNow - slot.FailingSinceUtc).TotalSeconds:0} s");
+                        Volatile.Write(ref slot.Failures, 0);
                     }
                     Publish(slot, devices);
                 }

@@ -78,6 +78,65 @@ public class DeviceHubTests
         Assert.Equal(0, Volatile.Read(ref overlaps));
     }
 
+    [Fact]
+    public async Task ARunOfFailedScans_IsLoggedOnce_KeepsTheDevices_AndLogsTheRecovery()
+    {
+        int call = 0;
+        var source = new FakeSource("bt")
+        {
+            OnScan = () => Interlocked.Increment(ref call) switch
+            {
+                1 => Task.FromResult<IReadOnlyList<DeviceStatus>>([Device("mouse", "ok")]),
+                2 or 3 or 4 => Task.FromException<IReadOnlyList<DeviceStatus>>(new InvalidOperationException("scan aborted")),
+                _ => Task.FromResult<IReadOnlyList<DeviceStatus>>([Device("mouse", "back")]),
+            },
+        };
+        var warnings = new List<string>();
+        var infos = new List<string>();
+        var published = new List<string>();
+        using var hub = new DeviceHub([source],
+            (message, _) => { lock (warnings) warnings.Add(message); },
+            message => { lock (infos) infos.Add(message); },
+            TimeSpan.FromMilliseconds(10));
+        hub.DevicesChanged += (_, _) => { lock (published) published.AddRange(hub.Devices.Select(d => d.Detail!)); };
+
+        hub.RefreshAll();
+        await WaitUntil(() => hub.Devices.SingleOrDefault()?.Detail == "ok");
+        hub.RefreshAll(); // fails; the retries (10 ms, 20 ms, ...) fail twice more, then succeed
+        await WaitUntil(() => hub.Devices.SingleOrDefault()?.Detail == "back");
+
+        Assert.Single(warnings);
+        Assert.Contains("'bt'", warnings[0]);
+        Assert.Single(infos);
+        Assert.Contains("recovered after 3 failed scan(s)", infos[0]);
+        Assert.Equal(new[] { "ok", "back" }, published); // nothing was published in between
+    }
+
+    [Fact]
+    public async Task ANewRunOfFailures_IsLoggedAgain()
+    {
+        int call = 0;
+        var source = new FakeSource("bt")
+        {
+            // fail, succeed, fail, succeed
+            OnScan = () => Interlocked.Increment(ref call) % 2 == 1
+                ? Task.FromException<IReadOnlyList<DeviceStatus>>(new InvalidOperationException())
+                : Task.FromResult<IReadOnlyList<DeviceStatus>>([Device("mouse", "v" + call)]),
+        };
+        int warnings = 0, infos = 0;
+        using var hub = new DeviceHub([source],
+            (_, _) => Interlocked.Increment(ref warnings),
+            _ => Interlocked.Increment(ref infos),
+            TimeSpan.FromMilliseconds(10));
+
+        hub.RefreshAll();
+        await WaitUntil(() => Volatile.Read(ref infos) == 1);
+        hub.RefreshAll();
+        await WaitUntil(() => Volatile.Read(ref infos) == 2);
+
+        Assert.Equal(2, Volatile.Read(ref warnings));
+    }
+
     private static DeviceStatus Device(string id, string detail) => new() { Id = id, Name = id, BatteryPercent = 50, Detail = detail };
 
     private static async Task WaitUntil(Func<bool> condition)

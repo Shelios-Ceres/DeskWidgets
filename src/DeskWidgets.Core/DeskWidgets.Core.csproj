@@ -4,4 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="DeskWidgets.Tests" />
+  </ItemGroup>
+
 </Project>
