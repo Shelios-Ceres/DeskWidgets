@@ -33,7 +33,14 @@ internal static class StartupRegistration
 
     private static string Executable => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "DeskWidgets.exe");
 
-    private static string UserSid => WindowsIdentity.GetCurrent().User!.Value;
+    private static string UserSid
+    {
+        get
+        {
+            using var identity = WindowsIdentity.GetCurrent(); // holds a token handle until disposed
+            return identity.User!.Value;
+        }
+    }
 
     private static bool TaskEnabled()
     {

@@ -43,6 +43,13 @@ internal sealed class IconArranger : IDisposable
     /// <summary>After a drag ends, Explorer needs a moment to record where the icon landed.</summary>
     private static readonly TimeSpan DropSettle = TimeSpan.FromMilliseconds(300);
 
+    /// <summary>
+    /// The old tool's single-instance mutex. Built once: every pass used to call
+    /// WindowsIdentity.GetCurrent(), whose token handle stays open until the
+    /// identity is disposed, so the handle count climbed by one per pass.
+    /// </summary>
+    private static readonly string LegacyMutexName = @"Local\DesktopRightAlign-v1-" + CurrentUserSid();
+
     private readonly Thread _thread;
     private readonly AutoResetEvent _wake = new(false);
     private readonly List<FileSystemWatcher> _watchers = [];
@@ -335,10 +342,16 @@ internal sealed class IconArranger : IDisposable
     /// <summary>Whether the standalone DesktopRightAlign tool is running (its single-instance mutex exists).</summary>
     private static bool LegacyToolRunning()
     {
-        if (!Mutex.TryOpenExisting(@"Local\DesktopRightAlign-v1-" + WindowsIdentity.GetCurrent().User!.Value, out var mutex))
+        if (!Mutex.TryOpenExisting(LegacyMutexName, out var mutex))
             return false;
         mutex.Dispose();
         return true;
+    }
+
+    private static string CurrentUserSid()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return identity.User!.Value;
     }
 
     private void WatchDesktopFolders()
