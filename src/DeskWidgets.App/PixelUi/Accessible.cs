@@ -97,7 +97,8 @@ internal interface IAccessible
 internal abstract partial class PopupAccessible : IAccessible
 {
     // Roles and states (oleacc.h).
-    public const int RoleMenuPopup = 0x0B, RoleMenuItem = 0x0C, RoleDialog = 0x12, RoleStaticText = 0x29, RolePushButton = 0x2B, RoleSeparator = 0x15;
+    public const int RoleWindow = 0x09, RoleMenuPopup = 0x0B, RoleMenuItem = 0x0C, RoleDialog = 0x12, RoleSeparator = 0x15, RoleList = 0x21, RoleListItem = 0x22,
+        RoleStaticText = 0x29, RoleEdit = 0x2A, RolePushButton = 0x2B;
     public const int StateUnavailable = 0x1, StateSelected = 0x2, StateFocused = 0x4, StateChecked = 0x10, StateDefault = 0x100,
         StateOffscreen = 0x10000, StateFocusable = 0x100000, StateSelectable = 0x200000, StateHasPopup = 0x40000000;
 
@@ -116,6 +117,9 @@ internal abstract partial class PopupAccessible : IAccessible
     protected abstract string? Name(int id);
 
     protected virtual string? Description(int id) => null;
+
+    /// <summary>The text of an edit field, or null for a row that has no value.</summary>
+    protected virtual string? Value(int id) => null;
 
     protected abstract int Role(int id);
 
@@ -178,7 +182,7 @@ internal abstract partial class PopupAccessible : IAccessible
 
     public string? get_accName(object varChild) => Name(Id(varChild));
 
-    public string? get_accValue(object varChild) => null;
+    public string? get_accValue(object varChild) => Value(Id(varChild));
 
     public string? get_accDescription(object varChild) => Description(Id(varChild));
 

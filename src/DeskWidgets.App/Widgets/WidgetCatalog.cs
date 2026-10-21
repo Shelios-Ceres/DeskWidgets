@@ -1,5 +1,6 @@
 using DeskWidgets.Widgets.Battery;
 using DeskWidgets.Widgets.Clock;
+using DeskWidgets.Widgets.Folder;
 using DeskWidgets.Widgets.WorldClock;
 
 namespace DeskWidgets.Widgets;
@@ -12,6 +13,7 @@ internal static class WidgetCatalog
         new BatteryWidgetFactory(),
         new ClockWidgetFactory(),
         new WorldClockWidgetFactory(),
+        new FolderWidgetFactory(),
     ];
 
     public static IWidgetFactory? Find(string typeId)

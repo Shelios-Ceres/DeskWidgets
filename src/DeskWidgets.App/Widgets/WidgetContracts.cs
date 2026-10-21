@@ -74,6 +74,64 @@ internal interface IWidget : IDisposable
     void ApplyLanguage();
 }
 
+/// <summary>What a widget may ask of the window that hosts it.</summary>
+internal interface IWidgetSite
+{
+    /// <summary>The window's handle: the owner of the dialogs and the Shell operations the widget starts.</summary>
+    nint WindowHandle { get; }
+
+    /// <summary>The card in physical screen pixels.</summary>
+    Interop.Win32.RECT CardRect { get; }
+
+    /// <summary>DPI scale of the monitor the card is on.</summary>
+    double Scale { get; }
+
+    /// <summary>Tells the user something went wrong, in the theme's own dialog.</summary>
+    void ShowWarning(string text);
+
+    /// <summary>Saves the widget's options soon.</summary>
+    void RequestSave();
+}
+
+/// <summary>
+/// A widget that wants the pointer: hover, a click on one of its parts, and its own right-click menu. The host still moves the
+/// card when the press turns into a drag (<see cref="CardPointerReleased"/> then says so, and the widget must not treat it as a click).
+/// Positions are in DIPs from the card's top-left.
+/// </summary>
+internal interface IPointerWidget
+{
+    /// <summary>The pointer moved over the card; null when it left.</summary>
+    void CardPointerMoved(Windows.Foundation.Point? position);
+
+    void CardPointerPressed(Windows.Foundation.Point position);
+
+    /// <param name="dragged">The press became a drag of the card, or was cancelled: not a click.</param>
+    void CardPointerReleased(Windows.Foundation.Point position, bool dragged);
+
+    /// <summary>The menu for a right-click at <paramref name="position"/>, or null for the host's own widget menu.</summary>
+    IReadOnlyList<PixelUi.MenuEntry>? CardContextMenu(Windows.Foundation.Point position);
+}
+
+/// <summary>A widget that accepts files dropped on its card (through the card window's own OLE drop target).</summary>
+internal interface IDropWidget
+{
+    /// <summary>False while there is nowhere to drop (the folder is missing): drags are refused, with no tint and no label.</summary>
+    bool AcceptsDrops { get; }
+
+    string DropFolderPath { get; }
+
+    /// <summary>The name the hover label uses ("Move to Projects").</summary>
+    string DropFolderName { get; }
+
+    Folder.DropPolicy DropPolicy { get; }
+
+    /// <summary>The card shows the tint and the label for what the drop would do; null hides them.</summary>
+    void ShowDropHint(Folder.DropVerb? verb);
+
+    /// <summary>Carries the drop out (after the source has been released). Returns an error text, or null.</summary>
+    string? DropItems(IReadOnlyList<Folder.Dropped> items, Folder.DropKeys keys);
+}
+
 /// <summary>Describes a widget type and creates instances of it. Register factories in <see cref="WidgetCatalog"/>.</summary>
 internal interface IWidgetFactory
 {
@@ -114,6 +172,9 @@ public sealed class WidgetContext
     /// a pixel look still works: its content sits on the pixel card.
     /// </summary>
     public WidgetTheme Theme { get; init; }
+
+    /// <summary>The hosting window, for a widget that opens panels or dialogs of its own.</summary>
+    internal IWidgetSite? Site { get; init; }
 }
 
 /// <summary>String key/value options saved in settings.json with the widget instance.</summary>

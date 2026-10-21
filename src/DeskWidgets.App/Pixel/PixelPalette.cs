@@ -77,6 +77,48 @@ internal sealed class PixelPalette
     /// <summary>The hard shadow under menus and dialogs (an alpha colour, two art pixels down and right).</summary>
     public required uint Shadow { get; init; }
 
+    // The Big Folder's sprites: the 16 Sweetie colours as fixed roles, the same by day and by night (like real app icons).
+    // The sprites' symbols map to them in this order: # p r o y L G t n b l c w g s d.
+
+    public required uint SpriteInk { get; init; }
+    public required uint SpritePurple { get; init; }
+    public required uint SpriteRed { get; init; }
+    public required uint SpriteOrange { get; init; }
+    public required uint SpriteYellow { get; init; }
+    public required uint SpriteLime { get; init; }
+    public required uint SpriteGreen { get; init; }
+    public required uint SpriteTeal { get; init; }
+    public required uint SpriteNavy { get; init; }
+    public required uint SpriteBlue { get; init; }
+    public required uint SpriteSky { get; init; }
+    public required uint SpriteCyan { get; init; }
+    public required uint SpriteWhite { get; init; }
+    public required uint SpriteSilver { get; init; }
+    public required uint SpriteSlate { get; init; }
+    public required uint SpriteDusk { get; init; }
+
+    /// <summary>The colour of a sprite symbol: '#' ink, p purple, r red, o orange, y yellow, L lime, G green, t teal, n navy, b blue, l sky, c cyan, w white, g silver, s slate, d dusk; 0 for anything else ('.' is transparent).</summary>
+    public uint Sprite(char symbol) => symbol switch
+    {
+        '#' => SpriteInk,
+        'p' => SpritePurple,
+        'r' => SpriteRed,
+        'o' => SpriteOrange,
+        'y' => SpriteYellow,
+        'L' => SpriteLime,
+        'G' => SpriteGreen,
+        't' => SpriteTeal,
+        'n' => SpriteNavy,
+        'b' => SpriteBlue,
+        'l' => SpriteSky,
+        'c' => SpriteCyan,
+        'w' => SpriteWhite,
+        'g' => SpriteSilver,
+        's' => SpriteSlate,
+        'd' => SpriteDusk,
+        _ => 0,
+    };
+
     public static PixelPalette For(bool dark) => dark ? s_night ??= CreateNight() : s_day ??= CreateDay();
 
     private static PixelPalette CreateDay() => new()
@@ -114,6 +156,22 @@ internal sealed class PixelPalette
         ButtonHover = Rgb(0xE3E9ED),
         ButtonPressed = Rgb(0xC5D3DC),
         Shadow = 0x661A1C2C,
+        SpriteInk = 0xFF1A1C2C,
+        SpritePurple = 0xFF5D275D,
+        SpriteRed = 0xFFB13E53,
+        SpriteOrange = 0xFFEF7D57,
+        SpriteYellow = 0xFFFFCD75,
+        SpriteLime = 0xFFA7F070,
+        SpriteGreen = 0xFF38B764,
+        SpriteTeal = 0xFF257179,
+        SpriteNavy = 0xFF29366F,
+        SpriteBlue = 0xFF3B5DC9,
+        SpriteSky = 0xFF41A6F6,
+        SpriteCyan = 0xFF73EFF7,
+        SpriteWhite = 0xFFF4F4F4,
+        SpriteSilver = 0xFF94B0C2,
+        SpriteSlate = 0xFF566C86,
+        SpriteDusk = 0xFF333C57,
     };
 
     private static PixelPalette CreateNight() => new()
@@ -151,6 +209,22 @@ internal sealed class PixelPalette
         ButtonHover = Rgb(0x566C86),
         ButtonPressed = Rgb(0x1A1C2C),
         Shadow = 0x99000000,
+        SpriteInk = 0xFF1A1C2C,
+        SpritePurple = 0xFF5D275D,
+        SpriteRed = 0xFFB13E53,
+        SpriteOrange = 0xFFEF7D57,
+        SpriteYellow = 0xFFFFCD75,
+        SpriteLime = 0xFFA7F070,
+        SpriteGreen = 0xFF38B764,
+        SpriteTeal = 0xFF257179,
+        SpriteNavy = 0xFF29366F,
+        SpriteBlue = 0xFF3B5DC9,
+        SpriteSky = 0xFF41A6F6,
+        SpriteCyan = 0xFF73EFF7,
+        SpriteWhite = 0xFFF4F4F4,
+        SpriteSilver = 0xFF94B0C2,
+        SpriteSlate = 0xFF566C86,
+        SpriteDusk = 0xFF333C57,
     };
 
     private static uint Rgb(uint rgb) => 0xFF000000 | rgb;

@@ -56,6 +56,26 @@ public class GlassColorsTests
     }
 
     [Fact]
+    public void TheBigFolderRoles_AreThoseOfTheGlassHandoff()
+    {
+        var light = GlassColors.Light;
+        Assert.Equal(0x14000000u, light.Hover);
+        Assert.Equal(0x24000000u, light.Pressed);
+        Assert.Equal(0xFF007AFFu, light.Select);
+        Assert.Equal(0xFFFFFFFFu, light.OnSelect);
+        Assert.Equal(0x38007AFFu, light.DropTint);   // Select at 22 %
+        Assert.Equal(0xFFFFFFFFu, light.TilePlate);
+
+        var dark = GlassColors.Dark;
+        Assert.Equal(0x1FFFFFFFu, dark.Hover);
+        Assert.Equal(0x3DFFFFFFu, dark.Pressed);
+        Assert.Equal(0xFF0A84FFu, dark.Select);
+        Assert.Equal(0xFFFFFFFFu, dark.OnSelect);
+        Assert.Equal(0x4D0A84FFu, dark.DropTint);    // Select at 30 %
+        Assert.Equal(0xFFE9E9EEu, dark.TilePlate);
+    }
+
+    [Fact]
     public void TheDialRolesDoNotDependOnTheSystemTheme()
     {
         var light = GlassColors.Light;

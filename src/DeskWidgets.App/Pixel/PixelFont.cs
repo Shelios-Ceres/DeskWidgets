@@ -127,6 +127,9 @@ internal sealed class PixelText
     /// <summary>Punctuation that must not begin a line of Chinese text.</summary>
     private const string NoLineStart = "，。、：；！？）」』》";
 
+    /// <summary>Marks that must not end a line: the text they open comes down with them.</summary>
+    private const string NoLineEnd = "“（「『《";
+
     private PixelText(PixelFont font, IReadOnlyList<string> lines, int scale)
     {
         Font = font;
@@ -226,7 +229,7 @@ internal sealed class PixelText
             int end = spaceBreak > start ? spaceBreak : Math.Max(fit, start + 1);
             // Chinese breaks between any two characters, but a line never starts with closing punctuation:
             // the character before it comes down with it.
-            while (spaceBreak <= start && end > start + 1 && end < text.Length && NoLineStart.Contains(text[end]))
+            while (spaceBreak <= start && end > start + 1 && end < text.Length && (NoLineStart.Contains(text[end]) || NoLineEnd.Contains(text[end - 1])))
                 end--;
             lines.Add(text[start..end].TrimEnd());
             start = end;

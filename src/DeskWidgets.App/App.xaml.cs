@@ -36,6 +36,16 @@ public partial class App : Application
             return;
         }
 
+        int folderPreview = Array.FindIndex(commandLine, a => a.Equals("--pixel-folder-preview", StringComparison.OrdinalIgnoreCase));
+        if (folderPreview >= 0)
+        {
+            // Design aid: draw the Big Folder's Pixel look with sample data to PNG sheets and quit (works while the app is running).
+            string folder = folderPreview + 1 < commandLine.Length ? commandLine[folderPreview + 1] : Path.Combine(AppContext.BaseDirectory, "pixel-folder-preview");
+            Widgets.Folder.FolderPixelPreview.Render(folder);
+            Exit();
+            return;
+        }
+
         int menuPreview = Array.FindIndex(commandLine, a => a.Equals("--pixel-menu-preview", StringComparison.OrdinalIgnoreCase));
         if (menuPreview >= 0)
         {

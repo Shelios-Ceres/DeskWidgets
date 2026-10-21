@@ -134,12 +134,25 @@ internal static class PixelIcons
         ".#+++++++++#.",
         "#############");
 
+    // The Big Folder's menu icons (the Pixel design's 7×7 sprites).
+
+    public static readonly PixelSprite Folder = new(".##....", "#..####", "#.....#", "#.....#", "#.....#", "#######", ".......");
+
+    public static readonly PixelSprite Pencil = new(".....##", "....#.#", "...#.#.", "..#.#..", ".#.#...", "#.#....", "##.....");
+
+    public static readonly PixelSprite Shield = new(".#####.", "#.....#", "#..#..#", "#.###.#", "#..#..#", ".#...#.", "..###..");
+
+    public static readonly PixelSprite PutBack = new("..#....", ".##....", "#######", ".##...#", "..#...#", "......#", "..#####");
+
+    public static readonly PixelSprite Sort = new(".#.###.", ".#.....", ".#.##..", ".#.....", "###.#..", ".#.....", ".......");
+
     /// <summary>The 7×7 icon of a widget type in the "Add widget" submenu.</summary>
     public static PixelSprite? ForWidget(string typeId) => typeId switch
     {
         "battery" => Battery,
         "clock" => Clock,
         "worldclock" => Globe,
+        "folder" => Folder,
         _ => null,
     };
 }

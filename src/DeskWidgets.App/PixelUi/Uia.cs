@@ -101,6 +101,18 @@ internal interface IExpandCollapseProvider
 }
 
 [ComImport]
+[Guid("c7935180-6fb3-4201-b174-7df73adbf64a")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IValueProvider
+{
+    void SetValue([MarshalAs(UnmanagedType.LPWStr)] string value);
+
+    string Value { [return: MarshalAs(UnmanagedType.BStr)] get; }
+
+    int IsReadOnly { get; }
+}
+
+[ComImport]
 [Guid("2acad808-b2d4-452d-a407-91ff1ad167b2")]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 internal interface ISelectionItemProvider
@@ -119,9 +131,10 @@ internal interface ISelectionItemProvider
 internal static class UiaNative
 {
     public const int UiaRootObjectId = -25;
-    public const int PatternInvoke = 10000, PatternExpandCollapse = 10005, PatternSelectionItem = 10010, PatternToggle = 10015;
+    public const int PatternInvoke = 10000, PatternValue = 10002, PatternExpandCollapse = 10005, PatternSelectionItem = 10010, PatternToggle = 10015;
     public const int EventMenuOpened = 20003, EventFocusChanged = 20005, EventMenuClosed = 20007, EventWindowOpened = 20016;
-    public const int ControlTypeButton = 50000, ControlTypeMenu = 50009, ControlTypeMenuItem = 50011, ControlTypeText = 50020, ControlTypeWindow = 50032, ControlTypeSeparator = 50038;
+    public const int ControlTypeButton = 50000, ControlTypeEdit = 50004, ControlTypeListItem = 50007, ControlTypeList = 50008, ControlTypeMenu = 50009,
+        ControlTypeMenuItem = 50011, ControlTypeText = 50020, ControlTypeWindow = 50032, ControlTypeSeparator = 50038;
 
     [DllImport("UIAutomationCore.dll")]
     public static extern nint UiaReturnRawElementProvider(nint hwnd, nint wParam, nint lParam, IRawElementProviderSimple? provider);
@@ -154,6 +167,9 @@ internal abstract partial class PopupAccessible
 
     /// <summary>Whether a row is a radio item: it then offers the SelectionItem pattern.</summary>
     protected virtual bool IsRadio(int id) => false;
+
+    /// <summary>What the SelectionItem pattern's Select does; a row that is both pressed and selected (a list item) separates the two.</summary>
+    protected virtual void PatternSelect(int id) => DoDefault(id);
 
     private Node RootNode => _root ??= new Node(this, 0);
 
@@ -203,6 +219,9 @@ internal abstract partial class PopupAccessible
             RoleMenuItem => UiaNative.ControlTypeMenuItem,
             RoleSeparator => UiaNative.ControlTypeSeparator,
             RoleDialog => UiaNative.ControlTypeWindow,
+            RoleList => UiaNative.ControlTypeList,
+            RoleListItem => UiaNative.ControlTypeListItem,
+            RoleEdit => UiaNative.ControlTypeEdit,
             RolePushButton => UiaNative.ControlTypeButton,
             RoleStaticText => UiaNative.ControlTypeText,
             _ => UiaNative.ControlTypeWindow,
@@ -212,7 +231,7 @@ internal abstract partial class PopupAccessible
     [ComVisible(true)]
     [ClassInterface(ClassInterfaceType.None)]
     private sealed class Node(PopupAccessible owner, int id) : IRawElementProviderSimple, IRawElementProviderFragment, IRawElementProviderFragmentRoot,
-        IInvokeProvider, IToggleProvider, IExpandCollapseProvider, ISelectionItemProvider
+        IInvokeProvider, IToggleProvider, IExpandCollapseProvider, ISelectionItemProvider, IValueProvider
     {
         private bool IsRoot => id == 0;
 
@@ -237,8 +256,9 @@ internal abstract partial class PopupAccessible
             int role = owner.Role(id);
             return patternId switch
             {
-                UiaNative.PatternInvoke when enabled && role is RolePushButton or RoleMenuItem && (state & StateHasPopup) == 0 && !owner.IsCheckable(id) && !owner.IsRadio(id) => this,
-                UiaNative.PatternSelectionItem when enabled && owner.IsRadio(id) => this,
+                UiaNative.PatternInvoke when enabled && role is RolePushButton or RoleMenuItem or RoleListItem && (state & StateHasPopup) == 0 && !owner.IsCheckable(id) && !owner.IsRadio(id) => this,
+                UiaNative.PatternSelectionItem when enabled && (owner.IsRadio(id) || role == RoleListItem) => this,
+                UiaNative.PatternValue when role == RoleEdit => this,
                 UiaNative.PatternToggle when enabled && owner.IsCheckable(id) => this,
                 UiaNative.PatternExpandCollapse when enabled && (state & StateHasPopup) != 0 => this,
                 _ => null,
@@ -265,6 +285,8 @@ internal abstract partial class PopupAccessible
                     return true;
                 case 30022: // IsOffscreen
                     return (state & StateOffscreen) != 0;
+                case 30045: // ValueValue
+                    return owner.Value(id);
                 case 30011: // AutomationId
                     return IsRoot ? "PixelPopup" : "Item" + id;
                 case 30013: // HelpText
@@ -341,15 +363,21 @@ internal abstract partial class PopupAccessible
         {
         }
 
-        public void Select() => owner.DoDefault(id);
+        public void Select() => owner.PatternSelect(id);
 
-        public void AddToSelection() => owner.DoDefault(id);
+        public void AddToSelection() => owner.PatternSelect(id);
 
         public void RemoveFromSelection()
         {
         }
 
-        public int IsSelected => (owner.State(id) & StateChecked) != 0 ? 1 : 0;
+        public int IsSelected => (owner.State(id) & (owner.Role(id) == RoleListItem ? StateSelected : StateChecked)) != 0 ? 1 : 0;
+
+        public void SetValue(string value) => throw NotImplemented;
+
+        public string Value => owner.Value(id) ?? "";
+
+        public int IsReadOnly => 1;
 
         public IRawElementProviderSimple? SelectionContainer => owner.RootNode;
 

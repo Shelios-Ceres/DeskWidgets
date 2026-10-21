@@ -19,7 +19,7 @@ namespace DeskWidgets.Hosting;
 /// its body, snaps to screen edges and neighbouring widgets, and keeps out of
 /// the taskbar and Alt+Tab.
 /// </summary>
-internal sealed class WidgetWindow : Window
+internal sealed class WidgetWindow : Window, IWidgetSite
 {
     private const double DragThreshold = 4;
     private const double EdgeGap = 16;
@@ -38,6 +38,7 @@ internal sealed class WidgetWindow : Window
     private bool _overDesktop; // Show desktop has the desktop on top: stay above it, not at the bottom
     private bool _closingByHost;
     private bool _pointerDown;
+    private bool _pressed; // a press on the card that may still turn out to be a click
     private bool _dragging;
     private Win32.POINT _dragCursorStart;
     private PointInt32 _dragWindowStart;
@@ -80,6 +81,7 @@ internal sealed class WidgetWindow : Window
         _frame.PointerPressed += OnPointerPressed;
         _frame.PointerMoved += OnPointerMoved;
         _frame.PointerReleased += OnPointerReleased;
+        _frame.PointerExited += (_, _) => (Widget as IPointerWidget)?.CardPointerMoved(null);
         _frame.PointerCaptureLost += (_, _) => EndDrag();
         _frame.RightTapped += OnRightTapped;
         Closed += OnClosed;
@@ -117,6 +119,23 @@ internal sealed class WidgetWindow : Window
         Win32.MakeTransparentToolWindow(_hwnd); // activation may re-apply presenter styles
         EnsureOnScreen();
         ApplyZOrder();
+        RegisterDropTarget();
+        // WinUI creates its child windows lazily: register again once the content is up.
+        _frame.Loaded += (_, _) => RegisterDropTarget();
+    }
+
+    private CardDropTarget? _dropTarget; // must outlive the registrations
+
+    /// <summary>
+    /// A widget that takes drops gets our own OLE drop target on the card's window and on every window below it (OLE only asks the
+    /// window under the cursor). The target hands everything to whichever widget the card holds now, so it survives a theme switch.
+    /// </summary>
+    private void RegisterDropTarget()
+    {
+        if (Widget is not IDropWidget)
+            return;
+        _dropTarget ??= new CardDropTarget(_hwnd, () => Widget as IDropWidget);
+        _dropTarget.RegisterOn(_hwnd);
     }
 
     /// <summary>Re-applies UI text after the app language changed.</summary>
@@ -183,7 +202,16 @@ internal sealed class WidgetWindow : Window
         Services = _host.Services,
         Options = new WidgetOptions(Placement.Options, _host.RequestSave),
         Theme = _theme,
+        Site = this,
     });
+
+    nint IWidgetSite.WindowHandle => _hwnd;
+
+    double IWidgetSite.Scale => _scale;
+
+    void IWidgetSite.ShowWarning(string text) => _host.ShowWarning(text);
+
+    void IWidgetSite.RequestSave() => _host.RequestSave();
 
     private void PlaceAt(int x, int y)
     {
@@ -262,19 +290,36 @@ internal sealed class WidgetWindow : Window
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (Placement.Locked || !e.GetCurrentPoint(_frame).Properties.IsLeftButtonPressed)
+        var point = e.GetCurrentPoint(_frame);
+        if (!point.Properties.IsLeftButtonPressed)
             return;
-        _pointerDown = true;
-        _dragging = false;
-        Win32.GetCursorPos(out _dragCursorStart);
-        _dragWindowStart = AppWindow.Position;
-        _frame.CapturePointer(e.Pointer);
-        e.Handled = true;
+        // A widget that takes clicks hears the press even on a locked card; only the drag is locked.
+        _pressed = Widget is IPointerWidget;
+        if (_pressed)
+            ((IPointerWidget)Widget).CardPointerPressed(point.Position);
+        if (!Placement.Locked)
+        {
+            _pointerDown = true;
+            _dragging = false;
+            Win32.GetCursorPos(out _dragCursorStart);
+            _dragWindowStart = AppWindow.Position;
+        }
+        if (_pressed || _pointerDown)
+        {
+            _frame.CapturePointer(e.Pointer);
+            e.Handled = true;
+        }
     }
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
     {
-        if (!_pointerDown || !Win32.GetCursorPos(out var cursor))
+        if (!_pointerDown)
+        {
+            if (!_pressed)
+                (Widget as IPointerWidget)?.CardPointerMoved(e.GetCurrentPoint(_frame).Position);
+            return;
+        }
+        if (!Win32.GetCursorPos(out var cursor))
             return;
         int dx = cursor.X - _dragCursorStart.X;
         int dy = cursor.Y - _dragCursorStart.Y;
@@ -286,14 +331,30 @@ internal sealed class WidgetWindow : Window
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        var position = e.GetCurrentPoint(_frame).Position;
+        bool dragged = _dragging;
+        // First the click, then the capture: releasing the capture raises PointerCaptureLost, and a press still open then counts as lost.
+        FinishPress(position, dragged);
         _frame.ReleasePointerCapture(e.Pointer);
         EndDrag();
+    }
+
+    private void FinishPress(Windows.Foundation.Point position, bool dragged)
+    {
+        if (!_pressed)
+            return;
+        _pressed = false;
+        (Widget as IPointerWidget)?.CardPointerReleased(position, dragged);
     }
 
     private void EndDrag()
     {
         if (!_pointerDown)
+        {
+            if (_pressed) // capture was lost without a release: not a click
+                FinishPress(default, dragged: true);
             return;
+        }
         _pointerDown = false;
         if (_dragging)
         {
@@ -379,7 +440,7 @@ internal sealed class WidgetWindow : Window
 
     private void ShowContextMenu(Windows.Foundation.Point position)
     {
-        var entries = BuildMenu();
+        IReadOnlyList<MenuEntry> entries = (Widget as IPointerWidget)?.CardContextMenu(position) ?? BuildMenu();
         if (_theme == WidgetTheme.Pixel && Win32.GetCursorPos(out var cursor))
         {
             // Our own topmost popups: nothing to lift the widget for.

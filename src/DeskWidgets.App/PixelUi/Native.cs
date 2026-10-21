@@ -185,6 +185,9 @@ internal static class Native
     public static extern bool EnableWindow(nint hwnd, bool enable);
 
     [DllImport("user32.dll")]
+    public static extern uint GetDoubleClickTime();
+
+    [DllImport("user32.dll")]
     public static extern bool IsWindow(nint hwnd);
 
     [DllImport("user32.dll")]

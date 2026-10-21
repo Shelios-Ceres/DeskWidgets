@@ -1,5 +1,6 @@
 using System.Globalization;
 using DeskWidgets.Widgets;
+using DeskWidgets.Widgets.Folder;
 
 namespace DeskWidgets;
 
@@ -92,5 +93,53 @@ internal static class Strings
     public static string IconsNoRoom => T("桌面放不下所有图标，这次没有移动任何图标", "Not enough room for every icon; nothing was moved");
     public static string IconsChanging => T("图标正在变化，稍后重试", "Icons are changing; trying again shortly");
     public static string IconsNotKept => T("Explorer 还没保留新位置，稍后再核对", "Explorer hasn't kept the new positions yet; checking again");
+    // The Big Folder widget. Words are settled in notes/builder/QUEUE.md (Phase 4, "Main's alignment for Phase 5").
+    public static string FolderWidget => T("大文件夹", "Big Folder");
+    public static string FolderEmpty => T("将文件拖到这里", "Drop files here");
+    public static string FolderDropMove(string folder) => T($"移动到“{folder}”", $"Move to {folder}");
+    public static string FolderDropCopy(string folder) => T($"复制到“{folder}”", $"Copy to {folder}");
+    public static string FolderDropShortcut(string folder) => T($"在“{folder}”中创建快捷方式", $"Create shortcut in {folder}");
+    public static string FolderDropMixed(string folder) => T($"添加到“{folder}”", $"Add to {folder}");
+    public static string FolderMissing => T("找不到文件夹", "Folder not found");
+    public static string FolderMissingHint => T("右键 › 选择文件夹…", "Right-click › Choose folder…");
+    public static string FolderSearch => T("搜索", "Search");
+    public static string FolderItemCount(int count) => T($"{count} 项", count == 1 ? "1 item" : $"{count} items");
+    public static string FolderSelected(int count) => T($"已选择 {count} 项", $"{count} selected");
+    public static string FolderNoMatches => T("没有匹配项", "No matches");
+    public static string FolderSortButton(FolderSort sort) => sort switch
+    {
+        FolderSort.Name => T("名称", "Name"),
+        FolderSort.Type => T("类型", "Type"),
+        FolderSort.Manual => T("手动", "Manual"),
+        _ => T("最新", "Newest"),
+    };
+
+    public static string FolderSortRow(FolderSort sort) => sort switch
+    {
+        FolderSort.Name => T("名称", "Name"),
+        FolderSort.Type => T("类型", "Type"),
+        FolderSort.Manual => T("手动", "Manual"),
+        _ => T("最新在前", "Newest first"),
+    };
+
+    public static string FolderOpen => T("打开", "Open");
+    public static string FolderRunAsAdministrator => T("以管理员身份运行", "Run as administrator");
+    public static string FolderOpenFileLocation => T("打开文件所在的位置", "Open file location");
+    public static string FolderShowInExplorer => T("在资源管理器中显示", "Show in Explorer");
+    public static string FolderRename => T("重命名", "Rename");
+    public static string FolderPutBack => T("放回原处", "Put back");
+    public static string FolderMoveToRecycleBin => T("移到回收站", "Move to Recycle Bin");
+    public static string FolderRemoveFromFolder => T("从文件夹中移除", "Remove from folder");
+    public static string FolderProperties => T("属性", "Properties");
+    public static string FolderOpenInExplorer => T("在资源管理器中打开文件夹", "Open folder in Explorer");
+    public static string FolderAddApps => T("添加应用…", "Add apps…");
+    public static string FolderSortBy => T("排序方式", "Sort by");
+    public static string FolderChange => T("更换文件夹…", "Change folder…");
+    public static string FolderChoose => T("选择文件夹…", "Choose folder…");
+    public static string FolderRenameFolder => T("重命名文件夹…", "Rename folder…");
+    public static string FolderPickerTitle => T("选择大文件夹要显示的文件夹", "Choose the folder this card shows");
+    public static string FolderDefaultName => T("大文件夹", "Big Folder");
+    public static string FolderOperationFailed(string detail) => T($"没能完成操作：{detail}", $"That didn't work: {detail}");
+
     public static string IconsLegacyToolRunning => T("旧的「桌面图标靠右排列」程序还在运行，请先退出它", "The old DesktopRightAlign tool is still running; quit it first");
 }

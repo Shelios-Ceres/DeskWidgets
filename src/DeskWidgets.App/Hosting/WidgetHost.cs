@@ -297,7 +297,7 @@ internal sealed class WidgetHost
         }
     }
 
-    private void ShowWarning(string text)
+    public void ShowWarning(string text)
     {
         if (Theme == WidgetTheme.Pixel)
             PixelDialog.ShowWarning(0, text);

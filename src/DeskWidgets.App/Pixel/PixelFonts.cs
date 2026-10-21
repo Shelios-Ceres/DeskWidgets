@@ -84,6 +84,7 @@ internal static class PixelFonts
         font.Add('_', "...|...|...|...|###");
         font.Add('&', ".#.|#.#|.#.|#.#|.##");
         font.Add('·', ".|.|#|.|."); // middle dot
+        font.Add('\\', "#..|#..|.#.|..#|..#"); // backslash, for paths
         font.Add('°', "###|#.#|###|...|..."); // degree
         font.Add('…', ".....|.....|.....|.....|#.#.#"); // ellipsis
         return font;
@@ -157,6 +158,7 @@ internal static class PixelFonts
         font.Add('_', ".....|.....|.....|.....|.....|.....|#####");
         font.Add('&', ".##..|#..#.|#.#..|.#...|#.#.#|#..#.|.##.#");
         font.Add('·', ".|.|.|#|.|.|."); // middle dot
+        font.Add('\\', "#....|#....|.#...|..#..|...#.|....#|....#"); // backslash, for paths
         font.Add('°', ".##.|#..#|.##.|....|....|....|...."); // degree
         font.Add('…', ".....|.....|.....|.....|.....|.....|#.#.#"); // ellipsis
         return font;
