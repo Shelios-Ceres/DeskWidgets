@@ -335,19 +335,32 @@ internal sealed class WidgetHost
     }
 
     /// <summary>
-    /// Design QA (<c>--pixel-ui-open=widget|cities|tray|exit|warn</c>, <c>--pixel-ui-zh</c> for Chinese): opens one menu or dialog as the
-    /// keyboard would, so it can be captured. The language change is in memory only.
+    /// Design QA (<c>--pixel-ui-open=widget|cities|tray|exit|warn|folder-panel</c>, <c>--pixel-ui-zh</c> for Chinese): opens one menu, dialog or
+    /// Big Folder panel as the keyboard would, so it can be captured; <c>folder-panel</c> works in both themes and takes
+    /// <c>--folder-panel-search=text</c> and <c>--folder-panel-select=n</c>. The language change is in memory only.
     /// </summary>
-    internal async void OpenForCapture(string what, bool chinese)
+    internal async void OpenForCapture(string what, bool chinese, Widgets.Folder.FolderCapture? folder = null)
     {
+        folder ??= new Widgets.Folder.FolderCapture();
         if (chinese)
             Strings.Language = AppLanguage.Chinese;
         await Task.Delay(1500);
         var work = Win32.GetWorkArea(default);
         int x = work.Left + 400, y = work.Top + 200;
-        var window = _windows.FirstOrDefault(w => w.TypeId == (what == "cities" ? "worldclock" : "battery")) ?? _windows[0];
+        var window = _windows.FirstOrDefault(w => w.TypeId == (what == "cities" ? "worldclock" : what is "folder-panel" or "folder-item-menu" ? "folder" : "battery")) ?? _windows[0];
         switch (what)
         {
+            case "folder-panel":
+                window.FolderWidget?.OpenPanelForCapture(folder);
+                break;
+            case "folder-cards":
+                foreach (var card in _windows)
+                    card.FolderWidget?.ShowDropHintForCapture(folder.Drop);
+                break;
+            case "folder-item-menu":
+                if (window.FolderWidget?.FirstItemMenuForCapture() is { } rows)
+                    PixelMenu.Show(rows, x, y);
+                break;
             case "widget":
                 PixelMenu.Show(window.BuildMenu(), x, y);
                 break;

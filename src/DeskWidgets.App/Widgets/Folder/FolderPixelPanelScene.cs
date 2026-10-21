@@ -35,6 +35,7 @@ internal sealed record FolderPanelView(
     IReadOnlyList<FolderItem> Items,
     string Search,
     FolderSort Sort,
+    int Total,
     PanelSelection Selection,
     int Hover,
     int Focus,
@@ -91,8 +92,6 @@ internal static class FolderPixelPanelScene
         public required int NameGap { get; init; }
     }
 
-    private static Func<string, double> Measure(PixelFont latin) => text => PixelText.Layout(text, latin).Width;
-
     /// <summary>Whether the panel needs the SimSun metric set: any visible text (title, search, sort, a name) that the pixel fonts cannot spell.</summary>
     public static bool NeedsSimSun(string name, string search, FolderSort sort, IReadOnlyList<FolderItem> items)
     {
@@ -112,7 +111,7 @@ internal static class FolderPixelPanelScene
 
     public static PanelPlan Plan(FolderPanelView view, bool simSun)
     {
-        var count = PixelText.Layout(Strings.FolderItemCount(view.Items.Count), PixelFonts.Regular);
+        var count = PixelText.Layout(Strings.FolderItemCount(view.Total), PixelFonts.Regular);
         var title = FolderPixelScene.OneLine(view.Name, PixelFonts.Regular, Width - 14 - count.Width - 8);
         var sortText = PixelText.Layout(Strings.FolderSortButton(view.Sort), PixelFonts.Regular);
         int fieldY = 20, fieldHeight = simSun ? 18 : 15;
@@ -174,12 +173,12 @@ internal static class FolderPixelPanelScene
 
     // ----- drawing -----
 
-    private static PixelText NameLine(string text) => PixelText.Layout(text, PixelFonts.Small);
-
+    /// <summary>The name in at most two lines, both in the font chosen from the whole name (SimSun for Chinese, even when a line is only digits).</summary>
     public static List<PixelText> NameLines(string displayName)
     {
-        var (first, second) = NameShortener.TwoLines(displayName, CellWidth, Measure(PixelFonts.Small));
-        return second.Length == 0 ? [NameLine(first)] : [NameLine(first), NameLine(second)];
+        var font = FolderPixelScene.FontFor(displayName, PixelFonts.Small);
+        var (first, second) = NameShortener.TwoLines(displayName, CellWidth, FolderPixelScene.Measure(font));
+        return second.Length == 0 ? [PixelText.Layout(first, font)] : [PixelText.Layout(first, font), PixelText.Layout(second, font)];
     }
 
     public static PixelCanvas Draw(PixelPalette p, FolderPanelView view, PanelPlan plan)
@@ -246,11 +245,8 @@ internal static class FolderPixelPanelScene
         }
         if (view.Edit is { Target: PanelEditTarget.Item } edit && CellRect(plan, edit.ItemIndex, view.FirstRow) is { } cell)
         {
-            // The editor is wider than the cell so that a name is readable while it is typed: centred on the cell, kept inside the panel.
-            int width = 62;
-            int x = Math.Clamp(cell.X + cell.W / 2 - width / 2, 4, Width - 4 - width);
-            int y = cell.Y + 2 + 16 + 1;
-            DrawEditField(canvas, p, x, y, width, plan.NameHeight + 5, edit.Editor, PixelFonts.Small);
+            // The field is the cell's width (38, from the cell's left edge), under the icon; the text scrolls to keep the caret in view.
+            DrawEditField(canvas, p, cell.X, cell.Y + 2 + 16 + 1, cell.W, plan.SimSun ? 16 : 14, edit.Editor, PixelFonts.Small);
         }
 
         if (plan.TotalRows > plan.VisibleRows)
@@ -284,7 +280,8 @@ internal static class FolderPixelPanelScene
         foreach (var line in NameLines(item.DisplayName))
         {
             line.Draw(canvas, x + (CellWidth - line.Width) / 2, lineY, color);
-            lineY += plan.NameHeight + plan.NameGap;
+            // Each name keeps its own font's line pitch, even in a panel with SimSun metrics: 5 + 2 for the pixel font, 12 + 1 for SimSun.
+            lineY += line.IsFallback ? 13 : 7;
         }
     }
 
@@ -298,7 +295,8 @@ internal static class FolderPixelPanelScene
             selected.Draw(canvas, Width - 7 - selected.Width, Height - 18 + (12 - selected.Height) / 2, p.Ink);
             pathWidth -= selected.Width + 8;
         }
-        var path = PixelText.Layout(NameShortener.Path(view.Path, pathWidth, Measure(PixelFonts.Small)), PixelFonts.Small);
+        var pathFont = FolderPixelScene.FontFor(view.Path, PixelFonts.Small);
+        var path = PixelText.Layout(NameShortener.Path(view.Path, pathWidth, FolderPixelScene.Measure(pathFont)), pathFont);
         path.Draw(canvas, 7, Height - 18 + (12 - path.Height) / 2, p.Soft);
     }
 

@@ -163,4 +163,31 @@ public class FolderNameShortenerTests
         Assert.True(Width(shortened) <= 60);
         Assert.Contains("…", shortened);
     }
+
+    [Fact]
+    public void WithAVisibleExtension_TheTailKeepsTheExtensionAndTwoCharactersBeforeItsDot()
+    {
+        // The 4-character fallback used to give "cross-dri….txt": an ellipsis running into a dot.
+        Assert.Equal("cro…ve.txt", One("cross-drive.txt", 60));
+        Assert.Equal("quart…rt.docx", One("quarterlyreport.docx", 78));
+        Assert.DoesNotContain("….", One("annual-budget-summary.xlsx", 78));
+    }
+
+    [Fact]
+    public void ANameWithoutAnExtension_KeepsTheOldFallbackTail()
+    {
+        Assert.Equal("Quar…2026", One("Quarterlyreport2026", 54));
+        Assert.Equal("v1.2.0 notes", One("v1.2.0 notes", 200)); // a dot inside the name is not an extension of letters at the end
+    }
+
+    [Fact]
+    public void TwoLines_PreferABreakAfterAHyphenOrBeforeTheExtension_ToBreakingInsideAWord()
+    {
+        Assert.Equal(("cross-", "drive.txt"), NameShortener.TwoLines("cross-drive.txt", 72, Width));
+        Assert.Equal(("my_long_", "file_nam…"), NameShortener.TwoLines("my_long_file_name.pdf", 54, Width));
+        // No natural break fits in line 1: the word breaks inside, as before.
+        Assert.Equal(("Quarterlyrep", "ort.docx"), NameShortener.TwoLines("Quarterlyreport.docx", 72, Width));
+        // The dot is a break when it fits: "Quarterly" + ".docx".
+        Assert.Equal(("Quarterly", ".docx"), NameShortener.TwoLines("Quarterly.docx", 54, Width));
+    }
 }

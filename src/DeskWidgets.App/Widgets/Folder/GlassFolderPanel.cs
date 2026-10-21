@@ -178,7 +178,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
     private void OnActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
     {
         // A click outside deactivates the panel, and closes it. Not while one of its own menus or dialogs is up, nor in its first moments.
-        if (args.WindowActivationState == Microsoft.UI.Xaml.WindowActivationState.Deactivated && !_menuOpen && (DateTime.UtcNow - _openedAt).TotalMilliseconds > 400)
+        if (args.WindowActivationState == Microsoft.UI.Xaml.WindowActivationState.Deactivated && !_menuOpen && !_widget.PanelPinned && (DateTime.UtcNow - _openedAt).TotalMilliseconds > 400)
             Close();
     }
 
@@ -239,6 +239,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
         var searchGrid = new Grid();
         searchGrid.Children.Add(new FontIcon { Glyph = "", FontSize = 12, FontFamily = IconFont, Margin = new Thickness(11, 0, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false });
         StyleBareTextBox(_search);
+        HideDeleteButton(_search); // our own clear button sits at the right
         _search.FontSize = 13;
         _search.Margin = new Thickness(31, 0, 36, 0);
         _search.VerticalAlignment = VerticalAlignment.Center;
@@ -264,9 +265,11 @@ internal sealed class GlassFolderPanel : IFolderPanel
 
         // The grid of items, scrolled by WinUI's own scroll viewer (overlay bar, hides itself).
         _content.Width = PanelWidth;
+        _content.HorizontalAlignment = HorizontalAlignment.Left;
+        _content.VerticalAlignment = VerticalAlignment.Top; // a short result list sits at the top of the viewport, not in its middle
         _scroll.Content = _content;
         _scroll.Width = PanelWidth;
-        _scroll.Height = _height - ViewportTop - 40;
+        _scroll.Height = _height - ViewportTop - 44;
         _scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         _scroll.HorizontalScrollMode = ScrollMode.Disabled;
         _scroll.ViewChanged += (_, _) => UpdateVisible();
@@ -316,6 +319,37 @@ internal sealed class GlassFolderPanel : IFolderPanel
         box.FontFamily = TextFont;
     }
 
+    /// <summary>Hides the TextBox's own delete button (its template part "DeleteButton"), for the fields that bring their own.</summary>
+    private static void HideDeleteButton(TextBox box)
+    {
+        box.Loaded += (_, _) =>
+        {
+            box.ApplyTemplate(); // a box made while the panel is already up has no template parts until now
+            if (FindPart(box, "DeleteButton") is not { } button)
+                return;
+            button.Visibility = Visibility.Collapsed;
+            button.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, (sender, _) =>
+            {
+                if (sender is UIElement element && element.Visibility != Visibility.Collapsed)
+                    element.Visibility = Visibility.Collapsed; // the template's states show it again while there is text
+            });
+        };
+    }
+
+    private static UIElement? FindPart(DependencyObject root, string name)
+    {
+        int count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is FrameworkElement { Name: var childName } element && childName == name)
+                return element;
+            if (FindPart(child, name) is { } found)
+                return found;
+        }
+        return null;
+    }
+
     // ----- the content: filter, selection, painting -----
 
     public void Refresh()
@@ -331,6 +365,27 @@ internal sealed class GlassFolderPanel : IFolderPanel
     }
 
     public void ApplyLanguage() => Paint();
+
+    public void PrepareForCapture(FolderCapture state)
+    {
+        _search.Text = state.Search; // TextChanged filters the list
+        _search.Select(state.Search.Length, 0); // the caret after the text, as when it is typed
+        Refresh();
+        if (state.Rename && _view.Count > 0)
+        {
+            BeginRename(_view[0].FileName);
+            return;
+        }
+        for (int i = 0; i < Math.Min(state.Select, _view.Count); i++)
+            _selected.Add(_view[i].FileName);
+        _hover = state.Hover;
+        if (state.Focus >= 0)
+        {
+            _focus = state.Focus;
+            _keyboardFocus = true;
+        }
+        Paint();
+    }
 
     private void RepaintSoon() => _root?.DispatcherQueue.TryEnqueue(() =>
     {
@@ -459,7 +514,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
         bool selected = _selected.Contains(item.FileName);
         bool hover = index == _hover, pressed = index == _pressed;
         var cell = new Grid { Width = CellWidth, Height = CellHeight, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), CanDrag = true, Tag = index };
-        Canvas.SetLeft(cell, 20 - 20 + index % Columns * CellWidth);
+        Canvas.SetLeft(cell, 20 + index % Columns * CellWidth);
         Canvas.SetTop(cell, index / Columns * CellHeight);
         var layer = new Canvas { Width = CellWidth, Height = CellHeight, IsHitTestVisible = false };
 
@@ -478,24 +533,42 @@ internal sealed class GlassFolderPanel : IFolderPanel
         layer.Children.Add(tile);
 
         // The name: two lines, 72 wide (64 while selected, so the pill fits), centred.
-        double width = selected ? 64 : 72;
+        const double width = 72;
         var measure = Measurer(12, FontWeights.Normal);
         var name = new StackPanel { Width = 72, Height = 30, IsHitTestVisible = false };
         if (_renaming == item.FileName)
         {
             _rename.Visibility = Visibility.Collapsed;
-            var box = new TextBox { Text = item.DisplayName, Width = 72, Height = 26, FontSize = 12, FontFamily = TextFont };
-            box.Resources["TextControlBackground"] = palette.Hover;
+            // The box is as wide as the name (Text 12) plus 16, 80 to 160, centred on the cell and kept inside the panel's content (x 20 to 420).
+            double boxWidth = Math.Clamp(measure(item.DisplayName) + 16, 80, 160);
+            double cellLeft = 20 + index % Columns * CellWidth;
+            double boxLeft = Math.Clamp(cellLeft + CellWidth / 2 - boxWidth / 2, 20, PanelWidth - 20 - boxWidth);
+            var box = new TextBox { Text = item.DisplayName, Width = boxWidth, FontSize = 12 };
+            StyleBareTextBox(box); // no border, no underline, no opaque focus plate: the search field's look at a smaller size
+            // The bare style makes the focused and hovered backgrounds transparent, and those win while the box has the focus.
+            foreach (string key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused" })
+                box.Resources[key] = palette.Pressed;
+            box.Height = 26;
+            box.Background = palette.Pressed;
+            box.Foreground = palette.Primary;
+            box.CornerRadius = new CornerRadius(6);
             box.Padding = new Thickness(4, 3, 4, 3);
+            box.SelectionHighlightColor = palette.Select;
+            HideDeleteButton(box);
             box.KeyDown += OnItemRenameKey;
             box.LostFocus += (_, _) => CommitItemRename(box.Text);
             box.Loaded += (_, _) =>
             {
                 box.Focus(FocusState.Programmatic);
-                box.SelectAll();
+                // With the extension shown, only the base name is selected, as in Explorer.
+                int dot = item.DisplayName.LastIndexOf('.');
+                if (!item.IsFolder && item.DisplayName == item.FileName && dot > 0)
+                    box.Select(0, dot);
+                else
+                    box.SelectAll();
             };
             box.Tag = item;
-            Canvas.SetLeft(box, 4);
+            Canvas.SetLeft(box, boxLeft - cellLeft);
             Canvas.SetTop(box, 58);
             layer.Children.Add(box);
         }
@@ -514,13 +587,17 @@ internal sealed class GlassFolderPanel : IFolderPanel
                 }
                 name.Children.Add(lineElement);
             }
-            Canvas.SetLeft(name, 4);
+            // 80 wide, like the cell: a selected name's pill is its line plus 8 and may be as wide as the cell.
+            name.Width = 80;
+            Canvas.SetLeft(name, 0);
             Canvas.SetTop(name, 58);
             layer.Children.Add(name);
             if (first != item.DisplayName || second.Length > 0 && first + second != item.DisplayName)
                 ToolTipService.SetToolTip(cell, item.DisplayName);
         }
         cell.Children.Add(layer);
+        // The cell being renamed draws over its neighbours: its box may be wider than the cell. Cells are rebuilt, so this resets itself.
+        Canvas.SetZIndex(cell, _renaming == item.FileName ? 1 : 0);
         AutomationProperties.SetName(cell, item.DisplayName);
 
         cell.PointerEntered += (_, _) =>

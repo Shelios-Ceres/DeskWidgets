@@ -281,7 +281,7 @@ internal static class ShellNative
     public const uint SIIGBF_RESIZETOFIT = 0x00, SIIGBF_BIGGERSIZEOK = 0x01, SIIGBF_MEMORYONLY = 0x02, SIIGBF_ICONONLY = 0x04,
         SIIGBF_THUMBNAILONLY = 0x08, SIIGBF_INCACHEONLY = 0x10;
 
-    public const uint FOF_SILENT = 0x4, FOF_RENAMEONCOLLISION = 0x8, FOF_NOCONFIRMATION = 0x10, FOF_ALLOWUNDO = 0x40, FOF_NOCONFIRMMKDIR = 0x200,
+    public const uint FOF_SILENT = 0x4, FOF_RENAMEONCOLLISION = 0x8, FOF_NOCONFIRMATION = 0x10, FOF_ALLOWUNDO = 0x40, FOF_WANTNUKEWARNING = 0x4000, FOF_NOCONFIRMMKDIR = 0x200,
         FOF_NOERRORUI = 0x400, FOFX_NOCOPYHOOKS = 0x00800000, FOFX_RECYCLEONDELETE = 0x00080000, FOFX_ADDUNDORECORD = 0x20000000;
 
     public const int E_PENDING = unchecked((int)0x8000000A);
@@ -338,6 +338,10 @@ internal static class ShellNative
 
     [DllImport("ole32.dll")]
     public static extern int RevokeDragDrop(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindow(IntPtr hwnd);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr GetProp(IntPtr hwnd, string name);

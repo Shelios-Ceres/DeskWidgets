@@ -123,6 +123,26 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
 
     public void ApplyLanguage() => Refresh();
 
+    public void PrepareForCapture(FolderCapture state)
+    {
+        _search.Set(state.Search, selectAll: false);
+        OnSearchChanged();
+        if (state.Rename && _view.Count > 0)
+        {
+            BeginRename(_view[0].FileName);
+            return;
+        }
+        for (int i = 0; i < Math.Min(state.Select, _view.Count); i++)
+            _selection.Toggle(i);
+        _hover = state.Hover;
+        if (state.Focus >= 0)
+        {
+            _selection.Focus = state.Focus;
+            _selection.KeyboardFocus = true;
+        }
+        Redraw();
+    }
+
     private void RecomputeView()
     {
         string filter = _search.Text.Trim();
@@ -140,7 +160,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         _simSun = FolderPixelPanelScene.NeedsSimSun(Model.Name, _search.Text, Model.Sort, _view);
     }
 
-    private FolderPanelView Snapshot() => new(Model.Name, Model.Path, _view, _search.Text, Model.Sort, _selection, _hover, _selection.Focus, _firstRow, _sortHover, _sortPressed, _edit, _icons);
+    private FolderPanelView Snapshot() => new(Model.Name, Model.Path, _view, _search.Text, Model.Sort, Model.Items.Count, _selection, _hover, _selection.Focus, _firstRow, _sortHover, _sortPressed, _edit, _icons);
 
     private void Draw(int x, int y)
     {
@@ -767,7 +787,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     /// <summary>A click outside deactivates the panel, and closes it. Not while one of its own menus is up, while items are dragged out, nor in its first moments.</summary>
     private void OnDeactivated()
     {
-        if (_menuOpen || _dragging || _closing || (DateTime.UtcNow - _openedAt).TotalMilliseconds < GuardMilliseconds)
+        if (_menuOpen || _dragging || _closing || _widget.PanelPinned || (DateTime.UtcNow - _openedAt).TotalMilliseconds < GuardMilliseconds)
             return;
         CommitEdit();
         Close();

@@ -14,6 +14,14 @@ public partial class App : Application
 
     public App()
     {
+        // Design QA: capture either look without switching Windows (the cards, the Glass panel and our own popups all follow it).
+        string[] arguments = Environment.GetCommandLineArgs();
+        if (Has(arguments, "--force-dark") || Has(arguments, "--force-light"))
+        {
+            bool dark = Has(arguments, "--force-dark");
+            RequestedTheme = dark ? ApplicationTheme.Dark : ApplicationTheme.Light;
+            PixelUi.PixelPopupWindow.Forced = dark;
+        }
         InitializeComponent();
         UnhandledException += (_, e) =>
         {
@@ -103,7 +111,15 @@ public partial class App : Application
         _host.Start();
         string? open = commandLine.FirstOrDefault(a => a.StartsWith("--pixel-ui-open=", StringComparison.OrdinalIgnoreCase));
         if (open is not null)
-            _host.OpenForCapture(open[(open.IndexOf('=') + 1)..], Has(commandLine, "--pixel-ui-zh")); // design QA: open a menu or dialog without a mouse
+        {
+            // Design QA: open a menu, dialog or Big Folder panel without a mouse.
+            string? Value(string name) => commandLine.FirstOrDefault(a => a.StartsWith(name + "=", StringComparison.OrdinalIgnoreCase)) is { } found ? found[(found.IndexOf('=') + 1)..] : null;
+            int Number(string name, int fallback) => int.TryParse(Value(name), out int number) ? number : fallback;
+            var state = new Widgets.Folder.FolderCapture(Value("--folder-panel-search") ?? "", Number("--folder-panel-select", 0), Has(commandLine, "--folder-panel-rename"),
+                Number("--folder-panel-hover", -1), Number("--folder-panel-focus", -1),
+                Enum.TryParse<Widgets.Folder.DropVerb>(Value("--folder-card-drop"), ignoreCase: true, out var verb) ? verb : null);
+            _host.OpenForCapture(open[(open.IndexOf('=') + 1)..], Has(commandLine, "--pixel-ui-zh"), state);
+        }
     }
 
     private static bool Has(string[] commandLine, string flag) => commandLine.Any(a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));

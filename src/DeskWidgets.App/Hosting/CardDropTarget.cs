@@ -46,6 +46,19 @@ internal sealed class CardDropTarget : IDropTarget
         }
     }
 
+    private readonly List<nint> _registered = [];
+
+    /// <summary>Takes this target off every window it was registered on (OLE needs that before a window is destroyed).</summary>
+    public void Revoke()
+    {
+        foreach (nint window in _registered)
+        {
+            if (ShellNative.IsWindow(window))
+                ShellNative.RevokeDragDrop(window);
+        }
+        _registered.Clear();
+    }
+
     /// <summary>Registers this target on the window and on every window below it that has none yet.</summary>
     public void RegisterOn(nint window)
     {
@@ -58,6 +71,8 @@ internal sealed class CardDropTarget : IDropTarget
             int hr = ShellNative.RegisterDragDrop(target, this);
             if (hr < 0)
                 Log.Warn($"Registering the card's drop target on window {target:X} failed: 0x{hr:X8}");
+            else
+                _registered.Add(target);
         }
     }
 

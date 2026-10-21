@@ -60,7 +60,22 @@ internal static class NameShortener
         if (lastWord is > 0 and <= 12 && separator >= 0 && measure(Ellipsis + string.Concat(elements.Skip(separator + 1))) <= maxWidth / 2)
             return lastWord;
         // A name that is one long word has no separator; its last word is the whole name, too long to be a tail.
+        // With a visible extension the tail is the extension and the last 2 characters of the name before it: "cross-d…st.txt", never "cross-dri….txt".
+        int dot = ExtensionDot(elements);
+        if (dot >= 2)
+            return count - dot + 2;
         return IsCjk(elements[^1]) ? Math.Min(2, count) : Math.Min(4, count);
+    }
+
+    /// <summary>The index of the "." that starts a visible extension (1 to 5 letters or digits at the end, something before the dot), or -1.</summary>
+    private static int ExtensionDot(string[] elements)
+    {
+        for (int i = elements.Length - 2; i >= 1 && i >= elements.Length - 6; i--)
+        {
+            if (elements[i] == ".")
+                return elements.Skip(i + 1).All(e => e.Length == 1 && char.IsLetterOrDigit(e[0])) ? i : -1;
+        }
+        return -1;
     }
 
     private static string HeadText(string[] elements, int count)
@@ -96,14 +111,21 @@ internal static class NameShortener
         bool cjkEdge = IsCjk(elements[fit - 1]) || (fit < elements.Length && IsCjk(elements[fit]));
         if (!cjkEdge && fit < elements.Length && elements[fit] != " ")
         {
-            for (int i = fit - 1; i > 0; i--)
+            // The latest natural break that fits: a space (dropped), or after "-" or "_" (kept on line 1).
+            // Failing those, before the "." of a visible extension. Only then does a word break inside.
+            int natural = -1;
+            for (int i = fit; i > 0; i--)
             {
-                if (elements[i] == " ")
+                if ((i < fit && elements[i] == " ") || (elements[i - 1] is "-" or "_" && i < elements.Length))
                 {
-                    cut = i;
+                    natural = i;
                     break;
                 }
             }
+            if (natural < 0 && ExtensionDot(elements) is var dot and > 0 && dot <= fit)
+                natural = dot;
+            if (natural > 0)
+                cut = natural;
         }
         while (cut > 1 && cut < elements.Length && (OpeningMarks.Contains(elements[cut - 1]) || ClosingMarks.Contains(elements[cut])))
             cut--;

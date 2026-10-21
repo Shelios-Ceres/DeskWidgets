@@ -86,6 +86,7 @@ internal static class FolderPixelPreview
         Sample("2026 年第三季度财务报告", FolderItemKind.Document, label: "a.docx"),
         Sample("微信", FolderItemKind.App, "wechat"),
         Sample("QQ", FolderItemKind.App, "qq"),
+        Sample("PortableApp (2)", FolderItemKind.Other, label: "PortableApp (2)"), // a two-line pixel-font name inside a SimSun panel
         Sample("钉钉", FolderItemKind.App, "dingtalk"),
         Sample("腾讯会议", FolderItemKind.App, "tencentmeeting"),
         Sample("Kimi", FolderItemKind.App, "kimi"),
@@ -211,7 +212,7 @@ internal static class FolderPixelPreview
             selection.Focus = focus;
             selection.KeyboardFocus = true;
         }
-        var view = new FolderPanelView(FolderName, @"D:\Work\Projects", items, search, sort, selection, hover, focus, firstRow, sortHover, false, edit, icons);
+        var view = new FolderPanelView(FolderName, @"D:\Work\Projects", items, search, sort, all.Count, selection, hover, focus, firstRow, sortHover, false, edit, icons);
         var plan = FolderPixelPanelScene.Plan(view, FolderPixelPanelScene.NeedsSimSun(FolderName, search, sort, items));
         var canvas = FolderPixelPanelScene.Draw(palette, view, plan);
         return new Cell(label, canvas);

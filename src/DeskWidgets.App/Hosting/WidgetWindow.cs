@@ -96,6 +96,9 @@ internal sealed class WidgetWindow : Window, IWidgetSite
 
     public IWidget Widget { get; private set; }
 
+    /// <summary>Design QA: opens a Big Folder's panel (see <see cref="WidgetHost.OpenForCapture"/>).</summary>
+    internal Widgets.Folder.FolderWidget? FolderWidget => Widget as Widgets.Folder.FolderWidget;
+
     /// <summary>The card (= the window) in physical screen pixels.</summary>
     public Win32.RECT CardRect
     {
@@ -534,6 +537,7 @@ internal sealed class WidgetWindow : Window, IWidgetSite
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _dropTarget?.Revoke();
         Win32.RemoveWindowSubclass(_hwnd, _subclassProc, 1);
         Widget.Dispose();
         _glass.Dispose();

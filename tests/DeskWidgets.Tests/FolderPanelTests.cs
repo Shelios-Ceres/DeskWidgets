@@ -1,5 +1,6 @@
 using DeskWidgets.Interop;
 using DeskWidgets.Pixel;
+using DeskWidgets.Widgets;
 using DeskWidgets.Widgets.Folder;
 
 namespace DeskWidgets.Tests;
@@ -165,7 +166,7 @@ public class FolderPanelTests
     // ----- the scene -----
 
     private static FolderPanelView View(IReadOnlyList<FolderItem> items, FolderSort sort = FolderSort.Newest, string search = "")
-        => new("Projects", @"D:\Work\Projects", items, search, sort, Selection(items.Count), -1, -1, 0, false, false, null, new PixelFolderIcons(() => { }));
+        => new("Projects", @"D:\Work\Projects", items, search, sort, items.Count, Selection(items.Count), -1, -1, 0, false, false, null, new PixelFolderIcons(() => { }));
 
     [Fact]
     public void ThePlan_ShowsFourRowsInLatinAndTwoInTheSimSunSet()
@@ -207,5 +208,71 @@ public class FolderPanelTests
         Assert.Equal((220, 196), (canvas.Width, canvas.Height));
         Assert.Equal(0u, canvas.Get(0, 0));
         Assert.Equal(palette.Outline, canvas.Get(4, 0));
+    }
+
+    // ----- design QA fixes -----
+
+    [Fact]
+    public void AChineseNameIsSetInOneFont_EvenWhenAShortenedPieceIsOnlyDigits()
+    {
+        var card = FolderPixelScene.OneLine("2026年度报告审计结果", PixelFonts.Small, 40);
+        Assert.True(card.IsFallback); // "2026…" alone could be spelled in the pixel font
+        foreach (var line in FolderPixelPanelScene.NameLines("2026年度报告审计结果汇总说明"))
+            Assert.True(line.IsFallback);
+        Assert.False(FolderPixelScene.OneLine("Quarterly report 2026", PixelFonts.Small, 36).IsFallback);
+    }
+
+    [Fact]
+    public void TheDropTint_LeavesEveryIconAndNameAlone()
+    {
+        var palette = PixelPalette.For(dark: false);
+        var items = new[] { "Budget", "Report", "Notes" }.Select(Item).ToList();
+        var icons = new PixelFolderIcons(() => { });
+        FolderPixelView View(DropVerb? drop) => new("Projects", @"D:\Work\Projects", items, true, WidgetSize.Medium, FolderHit.None, FolderHit.None, drop, icons);
+        PixelCanvas Draw(DropVerb? drop)
+        {
+            var view = View(drop);
+            var plan = FolderPixelScene.Plan(view);
+            var canvas = new PixelCanvas(plan.Width, plan.Height);
+            FolderPixelScene.Draw(canvas, palette, view, plan);
+            return canvas;
+        }
+        var plain = Draw(null);
+        var tinted = Draw(DropVerb.Move);
+        // The first cell: the 16 x 16 icon at (15, 19) and its name below it. The label sits in the middle, so look at the left column.
+        for (int y = 18; y < 40; y++)
+        {
+            for (int x = 14; x < 32; x++)
+                Assert.Equal(plain.Get(x, y), tinted.Get(x, y));
+        }
+        Assert.NotEqual(plain.Pixels, tinted.Pixels); // but the card does take the tint elsewhere
+    }
+
+    [Fact]
+    public void AFileWithNoExtension_GetsThePlainPage_AndOneWithAnExtensionGetsTheTag()
+    {
+        var palette = PixelPalette.For(dark: false);
+        var icons = new PixelFolderIcons(() => { });
+        FolderItem Other(string name) => new() { Path = @"D:\Cards\" + name, DisplayName = name, Kind = FolderItemKind.Other, LabelName = name, AddedUtc = DateTime.UtcNow };
+        var plain = icons.Icon(palette, Other("README"));
+        var tagged = icons.Icon(palette, Other("data.abc"));
+        Assert.NotEqual(palette.Sprite('d'), plain.Get(8, 9)); // no dusk band across the page
+        Assert.Equal(palette.Sprite('d'), tagged.Get(1, 9));
+    }
+
+    [Fact]
+    public void TheRenameField_IsTheCellsWidth()
+    {
+        var palette = PixelPalette.For(dark: false);
+        var items = Enumerable.Range(0, 10).Select(i => Item("name" + i)).ToList();
+        var editor = new LineEditor("a very long file name indeed.docx", selectAll: false);
+        var view = new FolderPanelView("Projects", @"D:\Work\Projects", items, "", FolderSort.Newest, items.Count, Selection(items.Count), -1, -1, 0, false, false,
+            new PanelEdit(PanelEditTarget.Item, editor, 1), new PixelFolderIcons(() => { }));
+        var plan = FolderPixelPanelScene.Plan(view, simSun: false);
+        var canvas = FolderPixelPanelScene.Draw(palette, view, plan);
+        var cell = FolderPixelPanelScene.CellRect(plan, 1, 0)!.Value;
+        // Right of the field, in the gap before the next cell, nothing of the editor is drawn: the panel's own colour is still there.
+        int gapX = cell.X + cell.W + 1;
+        Assert.Equal(palette.Panel, canvas.Get(gapX, cell.Y + 2 + 16 + 1 + 5));
     }
 }

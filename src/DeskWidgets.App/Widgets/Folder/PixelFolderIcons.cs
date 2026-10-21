@@ -42,6 +42,8 @@ internal sealed class PixelFolderIcons
                 icons.Request(request, _repaint);
             }
         }
+        if (kind == FolderItemKind.Other && FolderKinds.OtherSymbol(item.LabelName).Length == 0)
+            return Sprite(palette, PixelFolderSprites.Page, "page"); // no extension: the plain page, no tag
         var sprite = PixelFolderSprites.For(kind);
         var canvas = Sprite(palette, sprite, "kind:" + kind);
         if (kind == FolderItemKind.Other)

@@ -56,11 +56,20 @@ internal static class FolderPixelScene
         public required List<(int X, int Y, int W, int H, FolderHit Hit)> Regions { get; init; }
     }
 
-    private static Func<string, double> Measure(PixelFont latin) => text => PixelText.Layout(text, latin).Width;
+    internal static Func<string, double> Measure(PixelFont font) => text => PixelText.Layout(text, font).Width;
+
+    /// <summary>
+    /// The font a whole text is set in: the pixel font when it can spell all of it, else SimSun. Chosen from the whole text, not from the
+    /// shortened or wrapped piece ("2026年度报告" becomes "2026…", which the pixel font could spell: the name would change size).
+    /// </summary>
+    internal static PixelFont FontFor(string text, PixelFont latin) => latin.Covers(latin.Normalize(text)) ? latin : PixelFonts.System;
 
     /// <summary>One line, shortened by the shared rule, in the pixel font (or SimSun when it cannot spell the text).</summary>
     internal static PixelText OneLine(string text, PixelFont latin, int maxWidth)
-        => PixelText.Layout(NameShortener.OneLine(text, maxWidth, Measure(latin)), latin);
+    {
+        var font = FontFor(text, latin);
+        return PixelText.Layout(NameShortener.OneLine(text, maxWidth, Measure(font)), font);
+    }
 
     public static CardPlan Plan(FolderPixelView view)
     {
@@ -123,11 +132,14 @@ internal static class FolderPixelScene
         PixelCard.Draw(canvas, p);
         int width = plan.Width, height = plan.Height;
         bool missing = !view.Exists, empty = view.Exists && view.Items.Count == 0;
+        var keep = new List<(int X, int Y, int W, int H)>(); // boxes the drop tint must not touch: every icon and every text, grown by 1
 
         if (view.Hover.Kind == FolderHitKind.Header || view.Pressed.Kind == FolderHitKind.Header)
             FillRound(canvas, 3, plan.HeaderY - 2, width - 6, plan.HeaderHeight + 4, view.Pressed.Kind == FolderHitKind.Header ? p.Shade : p.OpenFill);
         plan.Title.Draw(canvas, 7, plan.HeaderY + (plan.HeaderHeight - plan.Title.Height) / 2, p.Ink);
         plan.Count.Draw(canvas, width - 7 - plan.Count.Width, plan.HeaderY + (plan.HeaderHeight - plan.Count.Height) / 2, p.Soft);
+        keep.Add((6, plan.HeaderY + (plan.HeaderHeight - plan.Title.Height) / 2 - 1, plan.Title.Width + 2, plan.Title.Height + 2));
+        keep.Add((width - 8 - plan.Count.Width, plan.HeaderY + (plan.HeaderHeight - plan.Count.Height) / 2 - 1, plan.Count.Width + 2, plan.Count.Height + 2));
         int top = plan.HeaderY + plan.HeaderHeight;
 
         if (missing)
@@ -137,14 +149,14 @@ internal static class FolderPixelScene
         }
         if (empty)
         {
-            DrawEmpty(canvas, p, plan, top);
+            DrawEmpty(canvas, p, plan, top, keep);
         }
         else
         {
-            DrawCells(canvas, p, view, plan);
+            DrawCells(canvas, p, view, plan, keep);
         }
         if (view.Drop is { } verb && view.Exists)
-            DrawDrop(canvas, p, DropLabel(verb, view.Name));
+            DrawDrop(canvas, p, DropLabel(verb, view.Name), keep);
     }
 
     public static string DropLabel(DropVerb verb, string folder) => verb switch
@@ -155,7 +167,7 @@ internal static class FolderPixelScene
         _ => Strings.FolderDropMixed(folder),
     };
 
-    private static void DrawCells(PixelCanvas canvas, PixelPalette p, FolderPixelView view, CardPlan plan)
+    private static void DrawCells(PixelCanvas canvas, PixelPalette p, FolderPixelView view, CardPlan plan, List<(int X, int Y, int W, int H)> keep)
     {
         var cells = plan.Cells;
         int columns = cells.Columns;
@@ -175,19 +187,25 @@ internal static class FolderPixelScene
                 var icon = view.Icons.Icon(p, item);
                 Blit(item.TargetMissing ? PixelFolderIcons.Dimmed(p, icon) : icon, canvas, x + 10, y + dy);
                 var name = plan.Names[i];
-                name.Draw(canvas, x + (CellWidth - name.Width) / 2, y + 16 + plan.NameGap + (plan.NameHeight - name.Height) / 2 + dy, item.TargetMissing ? p.Faint : p.Ink);
+                int nameX = x + (CellWidth - name.Width) / 2, nameY = y + 16 + plan.NameGap + (plan.NameHeight - name.Height) / 2 + dy;
+                name.Draw(canvas, nameX, nameY, item.TargetMissing ? p.Faint : p.Ink);
+                keep.Add((x + 9, y + dy - 1, 18, 18));
+                keep.Add((nameX - 1, nameY - 1, name.Width + 2, name.Height + 2));
             }
             else
             {
                 for (int k = 0; k < cells.Minis.Length; k++)
                     Blit(PixelFolderIcons.Mini(p, view.Icons.Icon(p, view.Items[cells.Minis[k]])), canvas, x + 10 + k % 2 * 9, y + k / 2 * 9 + dy);
                 var label = plan.StackLabel!;
-                label.Draw(canvas, x + (CellWidth - label.Width) / 2, y + 16 + plan.NameGap + (plan.NameHeight - label.Height) / 2 + dy, p.Ink);
+                int labelX = x + (CellWidth - label.Width) / 2, labelY = y + 16 + plan.NameGap + (plan.NameHeight - label.Height) / 2 + dy;
+                label.Draw(canvas, labelX, labelY, p.Ink);
+                keep.Add((x + 9, y + dy - 1, 18, 18));
+                keep.Add((labelX - 1, labelY - 1, label.Width + 2, label.Height + 2));
             }
         }
     }
 
-    private static void DrawEmpty(PixelCanvas canvas, PixelPalette p, CardPlan plan, int top)
+    private static void DrawEmpty(PixelCanvas canvas, PixelPalette p, CardPlan plan, int top, List<(int X, int Y, int W, int H)> keep)
     {
         int x0 = 7, y0 = top + 5, x1 = plan.Width - 8, y1 = plan.Height - 8;
         DottedRect(canvas, x0, y0, x1, y1, p.Faint);
@@ -196,6 +214,8 @@ internal static class FolderPixelScene
         int y = y0 + (y1 - y0 - block) / 2 + 1;
         canvas.Draw(DropArrow, (plan.Width - 7) / 2, y, _ => p.Soft);
         text.Draw(canvas, x0, y + 11, p.Soft, PixelAlign.Center, x1 - x0 + 1);
+        keep.Add(((plan.Width - 7) / 2 - 1, y - 1, 9, 9));
+        keep.Add((x0 + (x1 - x0 + 1 - text.Width) / 2 - 1, y + 10, text.Width + 2, text.Height + 2));
     }
 
     private static void DrawMissing(PixelCanvas canvas, PixelPalette p, FolderPixelView view, CardPlan plan, int top)
@@ -207,19 +227,20 @@ internal static class FolderPixelScene
         text.Draw(canvas, 8, y + 17, p.Ink, PixelAlign.Center, plan.Width - 16);
         if (view.Size == WidgetSize.Large)
         {
-            var path = PixelText.Layout(NameShortener.Path(view.Path, plan.Width - 16, Measure(PixelFonts.Small)), PixelFonts.Small);
+            var pathFont = FontFor(view.Path, PixelFonts.Small);
+            var path = PixelText.Layout(NameShortener.Path(view.Path, plan.Width - 16, Measure(pathFont)), pathFont);
             path.Draw(canvas, 8, y + 17 + text.Height + 6, p.Soft, PixelAlign.Center, plan.Width - 16);
         }
     }
 
     /// <summary>Drop hover: every other panel-coloured pixel turns Select (icons and names stay crisp), then a Select plate with the label.</summary>
-    private static void DrawDrop(PixelCanvas canvas, PixelPalette p, string label)
+    private static void DrawDrop(PixelCanvas canvas, PixelPalette p, string label, List<(int X, int Y, int W, int H)> keep)
     {
         for (int y = 2; y < canvas.Height - 3; y += 2)
         {
             for (int x = 2; x < canvas.Width - 2; x += 2)
             {
-                if (canvas.Get(x, y) == p.Panel)
+                if (canvas.Get(x, y) == p.Panel && !keep.Any(k => x >= k.X && x < k.X + k.W && y >= k.Y && y < k.Y + k.H))
                     canvas.Set(x, y, p.Select);
             }
         }

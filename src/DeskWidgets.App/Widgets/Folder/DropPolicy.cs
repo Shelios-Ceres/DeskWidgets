@@ -40,6 +40,14 @@ internal sealed class DropPolicy
 
     private readonly Func<string, string?> _portableExe;
 
+    /// <summary>The portable exe of each dropped folder, found once: DragOver asks about the same items dozens of times a second.</summary>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<DropEntry, ExeFact> _exeFacts = new();
+
+    private sealed class ExeFact(string? exe)
+    {
+        public string? Exe { get; } = exe;
+    }
+
     /// <param name="protectedRoots">Everything under these becomes a shortcut, even with Shift (Program Files, Windows, ProgramData).</param>
     /// <param name="programOnlyRoots">Only programs under these become shortcuts (AppData); anything else follows the ordinary rules.</param>
     /// <param name="desktopRoots">The Desktop and the Public Desktop: shortcuts taken from there move into the folder.</param>
@@ -128,7 +136,7 @@ internal sealed class DropPolicy
             return false;
         if (!entry.IsFolder)
             return entry.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
-        exe = _portableExe(entry.Path);
+        exe = _exeFacts.GetValue(entry, e => new ExeFact(_portableExe(e.Path!))).Exe;
         return exe is not null;
     }
 

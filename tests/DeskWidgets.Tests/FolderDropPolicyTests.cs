@@ -217,4 +217,23 @@ public class FolderDropPolicyTests
         Assert.Equal(new DropKeys(true, true, true), DropKeys.FromOle(0x08 | 0x04 | 0x20 | 0x01));
         Assert.Equal(DropKeys.None, DropKeys.FromOle(0x01));
     }
+
+    [Fact]
+    public void ADroppedFolder_IsListedOnce_WhateverTheKeysAndHoverCount()
+    {
+        int listings = 0;
+        var policy = new DropPolicy([@"C:\Windows"], [@"C:\Users\asus\AppData\Local"], [@"C:\Users\asus\Desktop"], folder =>
+        {
+            listings++;
+            return Path.Combine(folder, "app.exe");
+        });
+        var folder = Dir(@"D:\src\Portable");
+        var other = Dir(@"D:\src\Other");
+        for (int hover = 0; hover < 50; hover++)
+        {
+            policy.Decide(folder, hover % 2 == 0 ? Ctrl : DropKeys.None, Folder);
+            policy.Decide(other, Shift, Folder);
+        }
+        Assert.Equal(2, listings); // one listing per dropped item, not one per DragOver
+    }
 }

@@ -274,6 +274,25 @@ internal static class PixelFolderSprites
         ".##wwwwwwwwww##.",
         "...##########...");
 
+    /// <summary>The plain page: a file with no extension (the Other sprite without its tag)</summary>
+    public static PixelSprite Page { get; } = new(
+        "...#######......",
+        "..#wwwwww##.....",
+        "..#wwwwww#g#....",
+        "..#wwwwww#gg#...",
+        "..#wwwwwww####..",
+        "..#wwwwwwwwww#..",
+        "..#wwwwwwwwww#..",
+        "..#wwwwwwwwww#..",
+        "..#wwwwwwwwww#..",
+        "..#wwwwwwwwww#..",
+        "..#wwwwwwwwww#..",
+        "..#wwwwwwwwww#..",
+        "..#wwwwwwwwww#..",
+        "..#wwwwwwwwww#..",
+        "..#wwwwwwwwww#..",
+        "...##########...");
+
     /// <summary>WeChat</summary>
     public static PixelSprite Wechat { get; } = new(
         "...##########...",

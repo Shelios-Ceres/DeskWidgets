@@ -21,6 +21,13 @@ internal sealed class FolderWidgetFactory : IWidgetFactory
     public IWidget Create(WidgetContext context) => new FolderWidget(context);
 }
 
+/// <summary>
+/// Design QA: the state a capture of the panel shows. <c>--folder-panel-search=text</c>, <c>-select=n</c> (the first n items),
+/// <c>-rename</c> (the first item), <c>-hover=n</c> and <c>-focus=n</c> (the keyboard's focus ring), and for the cards
+/// <c>--folder-card-drop=Move|Copy|Shortcut|Mixed</c>.
+/// </summary>
+internal sealed record FolderCapture(string Search = "", int Select = 0, bool Rename = false, int Hover = -1, int Focus = -1, DropVerb? Drop = null);
+
 /// <summary>What the panel (either theme's) offers the widget.</summary>
 internal interface IFolderPanel
 {
@@ -37,6 +44,9 @@ internal interface IFolderPanel
 
     /// <summary>The user changed language: redraw the words.</summary>
     void ApplyLanguage();
+
+    /// <summary>Design QA: puts the panel in a state a user would reach with the mouse and keyboard, so it can be captured.</summary>
+    void PrepareForCapture(FolderCapture state);
 
     /// <summary>Starts renaming one item in place.</summary>
     void BeginRename(string fileName);
@@ -211,6 +221,25 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
             return;
         OpenPanel();
     }
+
+    /// <summary>Design QA (<c>--pixel-ui-open=folder-panel</c>): the panel stays open when the window loses the focus, so it can be captured.</summary>
+    internal bool PanelPinned { get; private set; }
+
+    internal void OpenPanelForCapture(FolderCapture state)
+    {
+        PanelPinned = true;
+        OpenPanel().PrepareForCapture(state);
+    }
+
+    /// <summary>Design QA (<c>--pixel-ui-open=folder-cards</c>): shows the drop hint on the card, as if a drag were over it.</summary>
+    internal void ShowDropHintForCapture(DropVerb? verb)
+    {
+        if (AcceptsDrops) // a missing folder refuses drops: no tint, no label
+            ShowDropHint(verb);
+    }
+
+    /// <summary>Design QA (<c>--pixel-ui-open=folder-item-menu</c>): the first item's right-click menu.</summary>
+    internal IReadOnlyList<MenuEntry>? FirstItemMenuForCapture() => Model.Items.Count > 0 ? ItemMenu(Model.Items[0]) : null;
 
     internal IFolderPanel OpenPanel()
     {

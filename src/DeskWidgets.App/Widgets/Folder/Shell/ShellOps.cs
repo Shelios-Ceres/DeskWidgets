@@ -101,7 +101,8 @@ internal static class ShellOps
     {
         var sink = new OpSink();
         var op = CreateFileOperation();
-        op.SetOperationFlags(InteractiveFlags | ShellNative.FOFX_RECYCLEONDELETE | ShellNative.FOF_NOCONFIRMATION);
+        // No FOF_NOCONFIRMATION: an item that cannot be recycled (too big for the bin, a drive without one) must ask before it is destroyed.
+        op.SetOperationFlags(InteractiveFlags | ShellNative.FOFX_RECYCLEONDELETE | ShellNative.FOF_WANTNUKEWARNING);
         if (owner != 0)
             op.SetOwnerWindow(owner);
         foreach (var item in items)

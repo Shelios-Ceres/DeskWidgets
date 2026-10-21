@@ -20,6 +20,7 @@ internal sealed class GlassFolderCard : Canvas, IFolderCardView
     private static readonly FontFamily TextFont = new("Segoe UI Variable Text");
     private static readonly FontFamily IconFont = new("Segoe Fluent Icons");
     private static readonly TimeSpan FadeIn = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan FadeOut = TimeSpan.FromMilliseconds(150);
 
     private readonly IWidgetSite _site;
     private readonly List<(Rect Rect, double Radius, FolderHit Hit)> _regions = [];
@@ -98,9 +99,11 @@ internal sealed class GlassFolderCard : Canvas, IFolderCardView
         var palette = Palette;
         if (target.Kind == FolderHitKind.None || region.Rect.Width == 0)
         {
+            _plate.OpacityTransition = new ScalarTransition { Duration = FadeOut };
             _plate.Opacity = 0;
             return;
         }
+        _plate.OpacityTransition = new ScalarTransition { Duration = FadeIn };
         _plate.Fill = _pressed.Kind != FolderHitKind.None ? palette.Pressed : palette.Hover;
         _plate.RadiusX = _plate.RadiusY = region.Radius;
         _plate.Width = region.Rect.Width;
@@ -149,7 +152,7 @@ internal sealed class GlassFolderCard : Canvas, IFolderCardView
         };
         var measure = Measurer(12, FontWeights.SemiBold);
         double width = WidgetLayout.GetCardSize(_size).Width;
-        _labelText.Text = NameShortener.OneLine(text, width - 64 - 18 - 22, measure);
+        _labelText.Text = NameShortener.OneLine(text, width - 64, measure);
         _tint.Opacity = 1;
         _label.Opacity = 1;
         _label.UpdateLayout();

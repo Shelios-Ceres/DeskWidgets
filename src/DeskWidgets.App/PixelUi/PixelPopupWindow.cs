@@ -40,9 +40,14 @@ internal abstract class PixelPopupWindow : IDisposable
 
     public int Factor { get; protected set; } = 3;
 
+    /// <summary>Design QA (<c>--force-dark</c>, <c>--force-light</c>): a look to use whatever the system's mode is; null follows the system.</summary>
+    public static bool? Forced { get; set; }
+
     /// <summary>Whether the system's apps are in dark mode right now (read every time, so a switch shows at the next open).</summary>
     public static bool IsDark()
     {
+        if (Forced is { } forced)
+            return forced;
         var background = s_ui.GetColorValue(UIColorType.Background);
         return background.R + background.G + background.B < 3 * 128;
     }

@@ -14,6 +14,7 @@ internal sealed class GlassTileProvider
     private readonly Func<bool> _dark;
     private readonly Action _repaint;
     private readonly Dictionary<(IconImage Image, int Width, int Height, bool Cover), WriteableBitmap> _bitmaps = [];
+    private readonly HashSet<IconRequest> _pending = [];
 
     public GlassTileProvider(Func<double> scale, Func<bool> dark, Action repaint)
     {
@@ -24,6 +25,20 @@ internal sealed class GlassTileProvider
 
     public FrameworkElement Tile(GlassPalette palette, FolderItem item, double size)
     {
+        var tile = Build(palette, item, size, out var request);
+        if (request is not null && _pending.Remove(request))
+        {
+            // The picture was on its way when this view was drawn: it fades in over the plate that stood in for it.
+            tile.Opacity = 0;
+            tile.OpacityTransition = new Microsoft.UI.Xaml.ScalarTransition { Duration = TimeSpan.FromMilliseconds(150) };
+            tile.Loaded += (_, _) => tile.Opacity = 1;
+        }
+        return tile;
+    }
+
+    private FrameworkElement Build(GlassPalette palette, FolderItem item, double size, out IconRequest? request)
+    {
+        request = null;
         double scale = _scale();
         bool dark = _dark();
         var kind = item.Kind;
@@ -35,7 +50,7 @@ internal sealed class GlassTileProvider
         {
             bool app = kind == FolderItemKind.App;
             int pixels = app ? GlassTiles.IconPixels(size, scale) : (int)Math.Ceiling(size * scale);
-            var request = new IconRequest(item.IconPath, AskSize(pixels), app ? IconFlavor.AppIcon : IconFlavor.Thumbnail, StampOf(item), Fallback(item));
+            request = new IconRequest(item.IconPath, AskSize(pixels), app ? IconFlavor.AppIcon : IconFlavor.Thumbnail, StampOf(item), Fallback(item));
             var icons = IconService.Shared;
             if (icons.TryGet(request, out var image))
             {
@@ -50,6 +65,7 @@ internal sealed class GlassTileProvider
             else
             {
                 icons.Request(request, _repaint);
+                _pending.Add(request);
                 return GlassTiles.Loading(palette, size);
             }
         }
