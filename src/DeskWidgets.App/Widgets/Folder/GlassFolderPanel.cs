@@ -83,17 +83,41 @@ internal sealed class GlassFolderPanel : IFolderPanel
     private bool _destroying;
     private double _builtHeight;
     private MenuFlyout? _flyout;
-    private DateTime _openedAt;
+    private readonly PanelFocusGuard _guard;
     private GlassTileProvider? _tiles;
     private TextBox? _itemBox; // the box of the item being renamed
 
-    public GlassFolderPanel(FolderWidget widget) => _widget = widget;
+    public GlassFolderPanel(FolderWidget widget)
+    {
+        _widget = widget;
+        _guard = new PanelFocusGuard(() => _shown, () => _hwnd, () => _menuOpen || _widget.PanelPinned, Close, TakeForeground);
+    }
 
     public event Action? Closed;
 
     public bool IsOpen => _shown;
 
     public bool Reusable => true;
+
+    public nint Handle => _shown ? _hwnd : 0;
+
+    public IReadOnlyList<string> ViewFileNames => _view.Select(i => i.FileName).ToList();
+
+    public void Reclaim() => _guard.Reclaim(afterOperation: true);
+
+    /// <summary>Our own work is over (or the card's menu started a rename here): the panel takes the activation, and the keyboard focus goes back to where it belongs.</summary>
+    private void TakeForeground()
+    {
+        if (!_shown || _window is null)
+            return;
+        _window.Activate();
+        if (_renamingFolder)
+            _rename.Focus(FocusState.Programmatic);
+        else if (_renaming is not null)
+            _itemBox?.Focus(FocusState.Programmatic);
+        else if (_search.FocusState == FocusState.Unfocused)
+            _gridFocus.Focus(FocusState.Programmatic);
+    }
 
     private FolderModel Model => _widget.Model;
 
@@ -128,7 +152,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
         _window.AppWindow.Resize(new SizeInt32(width, height));
         _glass!.SetLayout(new Vector2(width, height), (float)(WidgetLayout.CornerRadius * _scale));
 
-        _openedAt = DateTime.UtcNow;
+        _guard.Touch();
         _shown = true;
         if (!first)
         {
@@ -257,9 +281,9 @@ internal sealed class GlassFolderPanel : IFolderPanel
 
     private void OnActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
     {
-        // A click outside deactivates the panel, and closes it. Not while one of its own menus or dialogs is up, nor in its first moments.
-        if (_shown && args.WindowActivationState == Microsoft.UI.Xaml.WindowActivationState.Deactivated && !_menuOpen && !_widget.PanelPinned && (DateTime.UtcNow - _openedAt).TotalMilliseconds > 400)
-            Close();
+        // Leaving for another program closes the panel; our own menus, dialogs and Shell windows, and the panel's first moments, do not (see PanelFocusPolicy).
+        if (_shown && args.WindowActivationState == Microsoft.UI.Xaml.WindowActivationState.Deactivated)
+            _guard.OnDeactivated();
     }
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
@@ -479,7 +503,18 @@ internal sealed class GlassFolderPanel : IFolderPanel
         _selected.IntersectWith(_view.Select(i => i.FileName));
         if (_focus >= _view.Count)
             _focus = _view.Count - 1;
+        // The result of the panel's own work: the renamed item, or the item after a removed one, gets the selection.
+        int pick = _widget.Aftermath.Resolve(_view.Select(i => i.FileName).ToList(), DateTime.UtcNow) is { } name
+            ? _view.FindIndex(i => i.FileName.Equals(name, StringComparison.OrdinalIgnoreCase)) : -1;
+        if (pick >= 0)
+        {
+            _selected.Clear();
+            _selected.Add(_view[pick].FileName);
+            _focus = _anchor = pick;
+        }
         Paint();
+        if (pick >= 0)
+            ScrollTo(pick);
     }
 
     public void ApplyLanguage()
@@ -925,12 +960,13 @@ internal sealed class GlassFolderPanel : IFolderPanel
         flyout.Closed += (_, _) => _root?.DispatcherQueue.TryEnqueue(() =>
         {
             _menuOpen = false;
-            _openedAt = DateTime.UtcNow; // the click that closed the menu must not close the panel as well
+            _guard.Touch(); // the click that closed the menu must not close the panel as well
             // "Rename" from the menu: the closing menu took the focus back from the box it had just opened.
             if (_renamingFolder)
                 _rename.Focus(FocusState.Programmatic);
             else if (_renaming is not null)
                 _itemBox?.Focus(FocusState.Programmatic);
+            _guard.Reclaim();
         });
         _flyout = flyout;
         flyout.ShowAt(anchor, new FlyoutShowOptions { Position = position });
@@ -1054,7 +1090,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
                 BeginRename(_view[_focus].FileName);
                 break;
             case VirtualKey.Delete when _selected.Count > 0:
-                _widget.Report(FolderActions.Recycle(Model, SelectedItems(), Site.WindowHandle));
+                _widget.RecycleItems(SelectedItems());
                 break;
             default:
                 return;
@@ -1119,6 +1155,8 @@ internal sealed class GlassFolderPanel : IFolderPanel
 
     public void BeginRenameFolder()
     {
+        if (_shown)
+            _window?.Activate(); // started from the card's menu while the panel was already open
         _renamingFolder = true;
         _rename.Text = Model.Name;
         _rename.Visibility = Visibility.Visible;
@@ -1171,12 +1209,11 @@ internal sealed class GlassFolderPanel : IFolderPanel
         _renamingFolder = false;
         _rename.Visibility = Visibility.Collapsed;
         string typed = _rename.Text;
-        string? newPath = FolderActions.RenameFolder(Model.Path, typed, Site.WindowHandle, out string? error);
-        if (error is not null)
-            Site.ShowWarning(Strings.FolderOperationFailed(error));
-        else if (newPath is not null && !string.Equals(newPath, Model.Path, StringComparison.OrdinalIgnoreCase))
+        string? newPath = FolderActions.RenameFolder(Model.Path, typed, _widget.OwnerHandle, out string? error);
+        if (error is null && newPath is not null && !string.Equals(newPath, Model.Path, StringComparison.OrdinalIgnoreCase))
             Model.FolderRenamed(newPath);
         Paint();
+        _widget.Report(error); // the warning, if any, and the focus back to the panel
     }
 
     private void CommitItemRename(string typed)
@@ -1186,7 +1223,8 @@ internal sealed class GlassFolderPanel : IFolderPanel
         var item = _view.FirstOrDefault(i => i.FileName.Equals(_renaming, StringComparison.OrdinalIgnoreCase));
         _renaming = null;
         if (item is not null && typed.Trim() != item.DisplayName)
-            _widget.Report(FolderActions.Rename(Model, item, typed, Site.WindowHandle));
+            _widget.RenameItem(item, typed);
         Paint();
+        _guard.Reclaim(); // Enter in the box: it is gone now, and the keys should work on the grid
     }
 }

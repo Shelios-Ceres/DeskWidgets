@@ -241,6 +241,11 @@ internal static class Win32
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
 
+    /// <summary>The window the user is working in right now, or 0 while Windows switches between windows.</summary>
+    public static nint ForegroundWindow() => GetForegroundWindow();
+
+    public static bool IsVisible(nint window) => IsWindowVisible(window);
+
     [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(nint hWnd);
 

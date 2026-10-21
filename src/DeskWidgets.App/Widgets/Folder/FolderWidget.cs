@@ -56,6 +56,15 @@ internal interface IFolderPanel
 
     void Close();
 
+    /// <summary>The panel's window, which owns the dialogs and Shell windows its actions bring up (so the focus comes back to it); 0 while it has none.</summary>
+    nint Handle { get; }
+
+    /// <summary>The file names the panel shows now, in order (the search filter applied).</summary>
+    IReadOnlyList<string> ViewFileNames { get; }
+
+    /// <summary>Our own work (an operation, a menu, a dialog) is over: take the focus back, or close if the user has gone to another program.</summary>
+    void Reclaim();
+
     /// <summary>Whether <see cref="Close"/> only hides the panel, so the same instance opens again (the Glass panel). Otherwise a new panel is made for each open.</summary>
     bool Reusable { get; }
 
@@ -77,6 +86,7 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
     private readonly IFolderCardView _view;
     private WidgetSize _size = WidgetSize.Medium;
     private IFolderPanel? _panel;
+    private readonly PanelAftermath _aftermath = new();
     private DateTime _panelClosedAt = DateTime.MinValue;
     private FolderHit _pressedHit = FolderHit.None;
 
@@ -158,6 +168,7 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
 
     public void CardPointerPressed(Point position)
     {
+
         _pressedHit = _view.HitTest(position);
         _view.SetPressed(_pressedHit);
     }
@@ -208,9 +219,8 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
 
     public string? DropItems(IReadOnlyList<Dropped> items, DropKeys keys)
     {
-        string? error = FolderActions.ExecuteDrop(Model, _policy, items, keys, _site.WindowHandle);
-        if (error is not null)
-            _site.ShowWarning(Strings.FolderOperationFailed(error));
+        string? error = FolderActions.ExecuteDrop(Model, _policy, items, keys, OwnerHandle);
+        Report(error);
         return error;
     }
 
@@ -257,13 +267,18 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
         if (_panel is not { Reusable: true })
         {
             IFolderPanel made = _context.Theme == WidgetTheme.Pixel ? new PixelFolderPanel(this) : new GlassFolderPanel(this);
-            made.Closed += () => _panelClosedAt = DateTime.UtcNow;
+            made.Closed += () =>
+            {
+                _panelClosedAt = DateTime.UtcNow;
+                FolderPanels.Closed(this);
+            };
             _panel = made;
         }
         var panel = _panel;
         try
         {
             panel.Open();
+            FolderPanels.Opened(this);
         }
         catch (Exception ex)
         {
@@ -276,11 +291,52 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
 
     // ----- actions the card and the panel share -----
 
-    internal void Open(FolderItem item) => Report(FolderActions.Open(item, _site.WindowHandle));
+    /// <summary>The window that owns the dialogs and Shell windows an action brings up: the panel while it is open (the focus then comes back to it), else the card.</summary>
+    internal IntPtr OwnerHandle => _panel is { IsOpen: true, Handle: not 0 } panel ? panel.Handle : _site.WindowHandle;
 
+    /// <summary>What the panel should select once the list shows the result of an action (the renamed item, the item after a removed one).</summary>
+    internal PanelAftermath Aftermath => _aftermath;
+
+    /// <summary>A press on another card of the desktop (<see cref="FolderPanels.CardPressed"/>).</summary>
+    internal void ClosePanelFromOutside() => _panel?.Close();
+
+    internal void Open(FolderItem item) => Opened(FolderActions.Open(item, OwnerHandle));
+
+    internal void RunAsAdministrator(FolderItem item) => Opened(FolderActions.RunAsAdministrator(item, OwnerHandle));
+
+    internal void ShowInExplorer(FolderItem item) => Opened(FolderActions.ShowInExplorer(item));
+
+    internal void OpenFileLocation(FolderItem item) => Opened(FolderActions.OpenFileLocation(item));
+
+    /// <summary>Something was opened (an item, Explorer): the panel has done its job and goes, unless opening failed, when the user sees why and keeps working in it.</summary>
+    private void Opened(string? error)
+    {
+        if (error is null)
+            _panel?.Close();
+        else
+            Report(error);
+    }
+
+    /// <summary>Tells the user if an action failed, and hands the focus back to the panel (our dialogs and Explorer's windows took it).</summary>
     internal void Report(string? error)
     {
         if (error is not null)
             _site.ShowWarning(Strings.FolderOperationFailed(error));
+        _panel?.Reclaim();
+    }
+
+    internal void RenameItem(FolderItem item, string typed)
+    {
+        string? error = FolderActions.Rename(Model, item, typed, OwnerHandle, out string? newFileName);
+        if (newFileName is not null)
+            _aftermath.Renamed(newFileName, DateTime.UtcNow);
+        Report(error);
+    }
+
+    /// <summary>Move to Recycle Bin / Remove from folder. The item after the last removed one gets the selection, as in Explorer.</summary>
+    internal void RecycleItems(IReadOnlyList<FolderItem> items)
+    {
+        _aftermath.Removing(_panel is { IsOpen: true } panel ? panel.ViewFileNames : [], items.Select(i => i.FileName), DateTime.UtcNow);
+        Report(FolderActions.Recycle(Model, items, OwnerHandle));
     }
 }

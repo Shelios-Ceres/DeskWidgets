@@ -16,7 +16,6 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
 {
     private const int VkShift = 0x10, VkControl = 0x11, VkAlt = 0x12, VkApps = 0x5D, VkF2 = 0x71, VkF4 = 0x73, VkDelete = 0x2E, VkA = 0x41;
     private const uint OpenItemMessage = Win32.WM_APP + 21, OpenSortMessage = Win32.WM_APP + 22;
-    private const int GuardMilliseconds = 400;
 
     private readonly FolderWidget _widget;
     private readonly PixelFolderIcons _icons;
@@ -39,11 +38,12 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     private char _highSurrogate;
     private bool _swallowChar;
     private bool _menuOpen, _closing, _dragging;
-    private DateTime _openedAt;
+    private readonly PanelFocusGuard _guard;
 
     public PixelFolderPanel(FolderWidget widget)
     {
         _widget = widget;
+        _guard = new PanelFocusGuard(() => IsOpen, () => Hwnd, () => _menuOpen || _dragging || _widget.PanelPinned, CloseFromGuard, TakeForeground);
         _icons = new PixelFolderIcons(Redraw);
         _accessible = new PanelAccessible(this);
         CreateWindow(noActivate: false);
@@ -85,7 +85,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         Factor = factor;
         RecomputeView();
         Draw(x, y);
-        _openedAt = DateTime.UtcNow;
+        _guard.Touch();
         ShowWindow(activate: true);
         Win32.SetForegroundWindow(Hwnd);
         Native.SetFocus(Hwnd);
@@ -93,6 +93,28 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     }
 
     public bool Reusable => false;
+
+    public nint Handle => IsOpen ? Hwnd : 0;
+
+    public IReadOnlyList<string> ViewFileNames => _view.Select(i => i.FileName).ToList();
+
+    public void Reclaim() => _guard.Reclaim(afterOperation: true);
+
+    /// <summary>The user left the panel for another program: a rename in progress is committed, then the panel goes.</summary>
+    private void CloseFromGuard()
+    {
+        CommitEdit();
+        Close();
+    }
+
+    /// <summary>Our own work is over (or the card's menu started a rename here): the panel takes the activation and the keyboard focus.</summary>
+    private void TakeForeground()
+    {
+        if (!IsOpen)
+            return;
+        Win32.SetForegroundWindow(Hwnd);
+        Native.SetFocus(Hwnd);
+    }
 
     public void Destroy() => Close();
 
@@ -152,6 +174,13 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         string filter = _search.Text.Trim();
         _view = Model.Items.Where(i => filter.Length == 0 || i.DisplayName.Contains(filter, StringComparison.CurrentCultureIgnoreCase)).ToList();
         _selection.SetView(_view);
+        // The result of the panel's own work: the renamed item, or the item after a removed one, gets the selection.
+        if (_widget.Aftermath.Resolve(_view.Select(i => i.FileName).ToList(), DateTime.UtcNow) is { } picked)
+        {
+            _selection.SelectOnly(picked);
+            if (_selection.Focus >= 0)
+                _firstRow = PanelSelection.FirstRowFor(_selection.Focus, FolderPixelPanelScene.Columns, _firstRow, VisibleRows);
+        }
         if (_hover >= _view.Count)
             _hover = -1;
         if (_edit is { Target: PanelEditTarget.Item } && _renamingFile is not null)
@@ -364,6 +393,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     {
         if (Hwnd == 0)
             return;
+        TakeForeground(); // started from the card's menu while the panel was already open
         _renamingFile = null;
         _edit = new PanelEdit(PanelEditTarget.Folder, new LineEditor(Model.Name, selectAll: true), -1);
         Redraw();
@@ -387,19 +417,19 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         string typed = edit.Editor.Text;
         if (edit.Target == PanelEditTarget.Folder)
         {
-            string? newPath = FolderActions.RenameFolder(Model.Path, typed, Site.WindowHandle, out string? error);
-            if (error is not null)
-                Site.ShowWarning(Strings.FolderOperationFailed(error));
-            else if (newPath is not null && !string.Equals(newPath, Model.Path, StringComparison.OrdinalIgnoreCase))
+            string? newPath = FolderActions.RenameFolder(Model.Path, typed, _widget.OwnerHandle, out string? error);
+            if (error is null && newPath is not null && !string.Equals(newPath, Model.Path, StringComparison.OrdinalIgnoreCase))
                 Model.FolderRenamed(newPath);
+            _widget.Report(error); // the warning, if any, and the focus back to the panel
         }
         else if (renaming is not null)
         {
             var item = Model.Items.FirstOrDefault(i => i.FileName.Equals(renaming, StringComparison.OrdinalIgnoreCase));
             if (item is not null && typed.Trim() != item.DisplayName)
-                _widget.Report(FolderActions.Rename(Model, item, typed, Site.WindowHandle));
+                _widget.RenameItem(item, typed);
         }
         Redraw();
+        _guard.Reclaim();
     }
 
     private void EditKey(int key, bool ctrl)
@@ -500,7 +530,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
                 BeginRename(_view[_selection.Focus].FileName);
                 break;
             case VkDelete when _selection.Count > 0:
-                _widget.Report(FolderActions.Recycle(Model, _selection.Items(), Site.WindowHandle));
+                _widget.RecycleItems(_selection.Items());
                 break;
             case Native.VK_BACK:
                 if (_search.Backspace())
@@ -526,20 +556,12 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     private void OnMenuClosed()
     {
         _menuOpen = false;
-        _openedAt = DateTime.UtcNow; // the click that closed the menu must not close the panel as well
+        _guard.Touch(); // the click that closed the menu must not close the panel as well
         if (Hwnd == 0 || _closing)
             return;
-        nint foreground = Native.GetForegroundWindow();
-        if (foreground == 0 || foreground == Hwnd)
-        {
-            Win32.SetForegroundWindow(Hwnd);
-            return;
-        }
-        Win32.GetWindowThreadProcessId(foreground, out uint processId);
-        if (processId == (uint)Environment.ProcessId)
-            Win32.SetForegroundWindow(Hwnd);
-        else
-            Close(); // another program took the foreground while the menu was up
+        // The menu's command may have opened a window of ours (Properties, a dialog); the panel takes the focus back only if none has it.
+        // Another program in the foreground means the user went there while the menu was up: the panel goes.
+        _guard.Reclaim();
     }
 
     private void ShowSortMenu(bool fromKeyboard = false)
@@ -705,8 +727,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         if (Hwnd == 0 || _closing)
             return;
         Redraw();
-        if (Native.GetForegroundWindow() != Hwnd && !_menuOpen)
-            Close(); // dropped into another program, which took the foreground
+        _guard.Reclaim(); // dropped into another program, which took the foreground: the panel goes; otherwise it stays
     }
 
     // ----- messages -----
@@ -788,13 +809,11 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         return base.OnMessage(msg, wParam, lParam);
     }
 
-    /// <summary>A click outside deactivates the panel, and closes it. Not while one of its own menus is up, while items are dragged out, nor in its first moments.</summary>
+    /// <summary>Leaving for another program closes the panel; our own menus, dialogs and Shell windows, a drag out and the panel's first moments do not (see <see cref="PanelFocusPolicy"/>).</summary>
     private void OnDeactivated()
     {
-        if (_menuOpen || _dragging || _closing || _widget.PanelPinned || (DateTime.UtcNow - _openedAt).TotalMilliseconds < GuardMilliseconds)
-            return;
-        CommitEdit();
-        Close();
+        if (!_closing)
+            _guard.OnDeactivated();
     }
 }
 

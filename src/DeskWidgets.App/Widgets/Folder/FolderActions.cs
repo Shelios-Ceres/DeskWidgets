@@ -36,6 +36,7 @@ internal static class FolderActions
     /// </summary>
     public static string? ExecuteDrop(FolderModel model, DropPolicy policy, IReadOnlyList<Dropped> items, DropKeys keys, IntPtr owner)
     {
+        using var busy = PanelBusy.Enter(); // the operation, the conflict windows and the shortcut writes: the panel stays up through all of it
         try
         {
             var decisions = items.Select(d => (d, decision: policy.Decide(d.Entry, keys, model.Path))).ToList();
@@ -220,8 +221,9 @@ internal static class FolderActions
     /// Renames an item to what the user typed. A name typed without the extension keeps it (shortcuts are always .lnk), so the
     /// extension cannot be lost by editing the name Explorer would show.
     /// </summary>
-    public static string? Rename(FolderModel model, FolderItem item, string typed, IntPtr owner)
+    public static string? Rename(FolderModel model, FolderItem item, string typed, IntPtr owner, out string? newFileName)
     {
+        newFileName = null;
         string name = typed.Trim();
         if (name.Length == 0 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
             return Strings.FolderOperationFailed(name);
@@ -233,7 +235,8 @@ internal static class FolderActions
         {
             var (hr, _) = ShellOps.Rename(Shell.FromPath(item.Path), newName, owner);
             if (hr < 0)
-                return $"0x{hr:X8}";
+                return hr == ErrorCancelled ? null : $"0x{hr:X8}";
+            newFileName = newName;
             model.Origins.Rename(item.FileName, newName);
             model.SaveOrigins();
             model.Rescan();

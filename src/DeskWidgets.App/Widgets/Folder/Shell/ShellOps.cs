@@ -78,6 +78,7 @@ internal static class ShellOps
     /// <summary>Moves or copies items into a folder (one undo step).</summary>
     public static (int Hr, OpSink Sink) Perform(DropEffect effect, IEnumerable<IShellItem> sources, IShellItem destFolder, uint flags, IntPtr owner = default)
     {
+        using var busy = PanelBusy.Enter(); // Explorer's progress and conflict windows must not close the panel
         var sink = new OpSink();
         var op = CreateFileOperation();
         op.SetOperationFlags(flags);
@@ -99,6 +100,7 @@ internal static class ShellOps
     /// <summary>Sends items to the Recycle Bin, with an undo record.</summary>
     public static (int Hr, OpSink Sink) Recycle(IEnumerable<IShellItem> items, IntPtr owner = default)
     {
+        using var busy = PanelBusy.Enter();
         var sink = new OpSink();
         var op = CreateFileOperation();
         // No FOF_NOCONFIRMATION: an item that cannot be recycled (too big for the bin, a drive without one) must ask before it is destroyed.
@@ -112,6 +114,7 @@ internal static class ShellOps
 
     public static (int Hr, OpSink Sink) Rename(IShellItem item, string newName, IntPtr owner = default)
     {
+        using var busy = PanelBusy.Enter();
         var sink = new OpSink();
         var op = CreateFileOperation();
         op.SetOperationFlags(InteractiveFlags);
@@ -193,6 +196,7 @@ internal static class ShellOps
     /// <summary>ShellExecuteEx on a file, a shortcut or a "shell:AppsFolder\..." name; <paramref name="verb"/> null means the default.</summary>
     public static (bool Ok, int Win32Error) Open(string file, string? verb = null, string? workingDirectory = null, IntPtr owner = default)
     {
+        using var busy = PanelBusy.Enter(); // a "runas" brings up the UAC prompt, an unknown type the "Open with" box
         var info = new ShellNative.SHELLEXECUTEINFO
         {
             cbSize = Marshal.SizeOf<ShellNative.SHELLEXECUTEINFO>(),
@@ -210,6 +214,7 @@ internal static class ShellOps
     /// <summary>The system's folder picker; null when cancelled.</summary>
     public static string? PickFolder(IntPtr owner, string title, string? startIn)
     {
+        using var busy = PanelBusy.Enter();
         var clsid = ShellNative.CLSID_FileOpenDialog;
         var iid = typeof(IFileOpenDialog).GUID;
         if (ShellNative.CoCreateInstance(ref clsid, IntPtr.Zero, 1, ref iid, out var obj) < 0)

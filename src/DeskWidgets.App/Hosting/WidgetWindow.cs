@@ -294,6 +294,8 @@ internal sealed class WidgetWindow : Window, IWidgetSite
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         var point = e.GetCurrentPoint(_frame);
+        // Cards never take the activation, so a press on one does not deactivate a Big Folder's open panel by itself: close it here.
+        Widgets.Folder.FolderPanels.CardPressed(Widget);
         if (!point.Properties.IsLeftButtonPressed)
             return;
         // A widget that takes clicks hears the press even on a locked card; only the drag is locked.
