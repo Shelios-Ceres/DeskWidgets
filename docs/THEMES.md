@@ -51,10 +51,16 @@ A theme may change how information is presented (rings ↔ battery bars, full ci
 | Battery | One device: icon, charge percentage and charging state, plus the name when "Show device names" is on<br>Several devices: 2×2, each cell is an icon + charge (graphic or number) + charging state | Up to 4 devices: icon, charge (graphic + number), charging state, name (can be turned off) | Up to 6 rows: icon, name, connection type and state, charge percentage |
 | Clock | Weekday, time, date | Same as small | Not supported |
 | World clock | 4 dials + a city label (full name or three-letter code) | 4 dials, each with city name, time and local date | One row per city: dial, city name, time difference from local time (including today/yesterday/tomorrow), time, local date |
+| Big Folder | Header with the folder's name and item count; 2×2 cells | Same header; 4×2 cells | Same header; 4×4 cells |
 
 - With no devices, show the empty-state text (`Strings.NoDevices`).
 - When "Show disconnected devices" is on, disconnected devices must be clearly dimmed, with "—" in place of the charge.
 - The options in the right-click menu (show device names, show second hand, change cities, …) do the same thing in every theme.
+- Big Folder:
+  - Each cell is the item's icon and a one-line name. When there are more items than cells, the last cell is the stack: four small icons of the next items and "+K", where K = items − (cells − 1). A folder with exactly 4, 8 or 16 items has no stack. Items follow the folder's sort order (Newest, Name, Type or Manual).
+  - States: empty ("Drop files here"); folder not found ("Folder not found": the header can't be clicked and drops are refused); drop hover (a tint and a label saying what the drop will do: Move to, Copy to, Create shortcut in, or Add to for a mixed drop).
+  - A click on an item opens it; a click on the header or the stack opens the panel. In the panel a click selects (Ctrl and Shift extend the selection), a double-click or Enter opens, typing anywhere searches, the first Esc clears the search and the second closes the panel, and the footer shows the path and "{n} selected". The selection can be dragged out.
+  - A name that doesn't fit is shortened by one shared function, `NameShortener`, measured in the theme's own font (2.9).
 
 ### 2.4 What colors mean
 
@@ -84,6 +90,7 @@ Each theme's exact values are in section 8.
 ### 2.7 Interaction and legibility
 
 - **Must**: the whole card can be dragged, so content must not intercept pointer events. No buttons, text boxes or scroll areas on the card; all settings go in the right-click menu.
+  - **Exception (approved 2026-10-21, Big Folder only):** the Big Folder's cells and header take a click: a press and release that stay within the system's drag threshold. A press that moves farther is still a drag of the card, wherever it starts. The Big Folder card also accepts dropped files. It still has no buttons, text boxes or scroll areas: searching, selecting, sorting and renaming happen in the panel, which is a separate window.
 - **Must**: purely decorative layers set `IsHitTestVisible = false`.
 - **Must** (opaque themes): contrast between body text and background ≥ 4.5:1, and ≥ 3:1 for big numbers. The faint colors used only for tick marks and separators (Pixel's `Faint`) must not be used for body text.
 - Glass's background is live, so contrast can't be guaranteed; see "Known trade-off" in 4.1.
@@ -143,6 +150,14 @@ Font sizes (current values; new widgets pick the nearest):
 
 **Known trade-off**: the glass is very thin, so on a very dark wallpaper the contrast of light mode's dark text drops (and the other way round). The direction for improvement (not implemented yet): pick the text color from the brightness behind the card, instead of thickening the tint.
 
+**Big Folder** (added 2026-10-21; sizes in DIP):
+
+- **Card:** the usual Glass card. Header from y 12 to 30: the folder name (Text 13 SemiBold, middle-shortened), the count (Text 12, Secondary) and a chevron. Cells: Small 2×2 (column 70, row 60, tile 40), Medium 4×2 (column 80, row 60, tile 40), Large 4×4 (column 80, row 75, tile 48). Names are one line in Text 11 (12 on Large), 74 wide (64 on Small).
+- **Icons:** every item sits on a rounded tile (radius 0.225 × its size) with a faint sheen. The 14 file types and the 13 first-batch apps are our own drawings (a color and a motif, never a logo; path data in the design's `ICONS.md`, drawn through `SvgPath`). Any other app shows its real icon on a `Tile plate` at 0.68 of the tile, or edge to edge when the icon already fills its square. Images and videos show their real thumbnail clipped to the tile (a video adds a play mark). A cloud-only file never downloads: its type tile stays until a cached thumbnail exists.
+- **States:** hover and pressed plates (`Hover`, `Pressed`) fade in over 100 ms and out over 150 ms; an app whose target is gone is at 40 % opacity with a Secondary name; empty shows a disc with a download glyph; folder not found shows a warning glyph, the path on every size and the hint "Right-click › Choose folder…" on Medium and Large; a drop tints the card (`Drop tint`) and shows a `Select` pill with the verb.
+- **Panel:** a 440 × 500 glass window 12 DIP beside the card (right if it fits with 8 to spare, else left; moved up if it would run off the bottom). Title and count, the sort button, the search field, five columns of 80 × 92 cells with two-line names, and a footer with the path and "{n} selected". Selection is Finder-style: a `Pressed` plate under the tile and a `Select` pill under each name line; the keyboard focus is a 2 DIP `Select` ring. Renaming is a one-line text box in place of the name.
+- **Menus:** `MenuEntry` rows through `MenuFlyout`, as for the other widgets.
+
 ### 4.2 Pixel
 
 Added 2026-10-13.
@@ -156,12 +171,17 @@ Added 2026-10-13.
   - 5×7 (`PixelFonts.Regular`): values, titles; big numbers use it ×2 or ×3.
   - Lowercase letters are turned into capitals automatically and accents are dropped (São → SAO).
   - Text the pixel fonts can't spell is set entirely in the 12 px SimSun bitmap font (`PixelFonts.System`), so layouts must leave a 12 px line height for Chinese.
+  - Both fonts have a backslash, so a path such as `C:\Users\asus\Work` needs no fallback.
+  - A line of Chinese never ends with an opening mark (“ （ 「 『 《): the mark comes down with the text it opens.
 - **Icons**: hand-drawn sprites in `PixelSprites`; disconnected devices are dimmed; while charging, an outlined lightning bolt is laid over the battery bar.
 - **Layout**: all coordinates are in art pixels; content stays at least 7 pixels from the card edge; dotted lines (`PixelCanvas.DottedLine`) are used for separation.
 - **Motion**: no tweening; state changes swap frames directly; the second hand ticks once a second.
 - **Recorded compressions**:
   - The small world clock uses three-letter city codes (NYC, LAX, STJ, PEK, …).
   - The Chinese date is written as "10/13". SimSun's "10月13日" is about 48 pixels wide and doesn't fit the 39-pixel column of the medium size.
+  - Big Folder, SimSun metric set: when the folder name or any visible item name needs SimSun, the whole card uses the SimSun metrics, so the 12-pixel-tall header sits at y 5 on the Small and Medium cards (a 5-pixel margin instead of the usual 7) and the cell rows move to y 19 and 48.
+  - Big Folder, shortening: a shortened name keeps at least 2 characters (3 in Latin) before the "…". With fewer, the tail is dropped and the name is cut at the end ("腾讯会议" becomes "腾讯…").
+  - Big Folder, folder not found: no hint line, and the path only on Large.
 - **Menus and dialogs** (added 2026-10-20): everything the app draws itself, not only the cards, looks like the cards under Pixel. Glass keeps its `MenuFlyout`, Win32 tray menu and MessageBoxes. The items, order, words and effects stay the same (section 2); only the look changes.
   - **How it is drawn:** the widget menu, the tray menu and both dialogs are our own borderless popup windows (`PixelUi/`) that show a `PixelCanvas` 1:1 at the same factor as the cards. Text uses the hand-drawn fonts through `PixelText`, with the SimSun fallback. The widget menu and the tray menu are built from one list of `MenuEntry` rows, which Glass turns into WinUI flyout items or a Win32 menu.
   - **Frame:** `PixelCard`'s panel algorithm on any rectangle: 1 px outline, fill, 1 px highlight at the top, 2 px shade lip at the bottom. Corner stair: menus [2, 1], dialogs [4, 2, 1, 1], buttons [1]. A hard shadow under menus and dialogs only (the panel's own shape, 2 art pixels down and right, role `Shadow`, no blur). Cards keep no shadow.
@@ -172,6 +192,14 @@ Added 2026-10-13.
   - **Motion:** none. Menus, submenus and dialogs appear and disappear in one frame.
   - **Keyboard and Narrator:** arrows, Home/End, Enter/Space, Esc and Left/Right work as in a native menu; the popups expose UI Automation roles (menu, menu items with Toggle, SelectionItem or ExpandCollapse patterns, dialog with buttons).
   - **Tray icon:** the Pixel theme has its own (a dark stepped tile with a hard-edged ring and a pixel mouse), drawn at the exact small-icon size for the display's scale and swapped live on a theme or scale change. The exe's own icon stays as it is.
+- **Big Folder** (added 2026-10-21; all numbers in art pixels):
+  - **Card:** the usual panel. The header has the folder name in `PixelFonts.Regular` (`Ink`) at x 7 and the count (`Soft`) right-aligned 7 from the edge. Cells are 36 wide: a 16×16 icon over a one-line name in `PixelFonts.Small`. Columns at x 4 and 42 (Small) or 5, 47, 89 and 131 (Medium, Large); rows at y 19 and 52 (Small, Medium) or 19, 60, 101 and 142 (Large). The stack is four 7×7 minis (the icon's signature color inside a 1 px ink outline) and "+K".
+  - **States:** hover `Open fill`, pressed `Shade` with the contents 1 px lower; the header takes the same plates. A missing target dims its icon (ink to `Faint`, every other color to `Track`) and its name (`Faint`). Empty: a dotted rectangle with a drop arrow and "Drop files here". Folder not found: a warning sprite and "Folder not found". Drop hover: every other panel-colored pixel turns `Select`, and a `Select` plate shows the verb.
+  - **Icons:** 14 file-type sprites and 13 app sprites, 16×16, in the 16 fixed sprite colors of section 8. Any other app: its real icon shrunk to 14×14 ("tier 2": box filter, nearest Sweetie color by redmean distance, no dithering, a 1 px ink outline round the shape). Photos and videos: the center square shrunk to 12×12 with 4×4 Bayer dithering, inside a white print border and an ink outline with the corner pixels cut (a video adds a play mark). Until the real picture arrives, the type's sprite shows.
+  - **Panel:** 220 × 196 art pixels in a `PixelPopupWindow` (corner stair [4, 2, 1, 1] and the hard shadow of the dialogs), 4 art pixels from the card (right if it fits, else left, else over it). One row with the folder name and "{n} items"; one row with the search field (well, magnifier, 1 px caret) and the sort button (label and chevron); then five columns of cells (pitch 41 across and 33 down, or 45 down in the SimSun set) with two-line names in `PixelFonts.Small`, a 3 px scrollbar, a dotted rule, and the footer (the path in `Soft`, "{n} selected" in `Ink`). Selected cells are `Select` plates with `OnSelect` text; the keyboard focus is a dotted ring; the wheel scrolls a row per notch.
+  - **Behavior:** the same as Glass (2.3). Typing anywhere searches (a Backspace removes a character); F2 renames in place, with a field in the cell or the title row; Delete sends the selection to the Recycle Bin; F4 or Alt+Down opens the sort list. Esc cancels a rename, then clears the search, then closes the panel. A click outside closes the panel, but not while one of its own menus is open. The selection drags out through OLE, so Explorer and the desktop accept it as they accept Explorer's own drags.
+  - **Keyboard and Narrator:** the panel is a window with the search field (Edit with the Value pattern), the sort button (ExpandCollapse) and one list item per shown item (Invoke and SelectionItem).
+  - **Menus:** the item menu and the widget's own rows use the Pixel menu described above.
 
 ---
 
@@ -204,9 +232,9 @@ Added 2026-10-13.
 ### 6.2 Other rules
 
 - **Compatibility**: identifiers already saved in `settings.json` must never be renamed or removed:
-  - `TypeId`: battery, clock, worldclock
+  - `TypeId`: battery, clock, worldclock, folder
   - Enum names: `WidgetTheme`, `WidgetSize`, `AppLanguage`
-  - Option keys: showNames, showDisconnected, cities, showSeconds
+  - Option keys: showNames, showDisconnected, cities, showSeconds; for the Big Folder, `path`, `sort` (newest, name, type or manual) and `order` (a JSON array of file names, used by Manual)
 
   The default of a new option must keep the existing behavior.
 - **Working together**: several sessions may be changing this repository at once.
@@ -245,6 +273,7 @@ Added 2026-10-13.
 **How to check**
 
 - Pixel theme: `DeskWidgets.exe --pixel-preview <new folder>` exports four overview sheets (day/night × Chinese/English). It also works while the app is running.
+- Big Folder in the Pixel theme: `DeskWidgets.exe --pixel-folder-preview <new folder>` exports its sheets (cards at every size, states, icons and the panel; day/night × Chinese/English). It also works while the app is running.
 - A test layout:
   1. First back up `%LOCALAPPDATA%\DeskWidgets\settings.json`.
   2. Start with an "always on top" test layout and take screenshots.
@@ -286,6 +315,29 @@ Roles added by the Pixel menus and dialogs (Glass keeps its system menus, so it 
 | Button, top, hover, pressed | The secondary button's face, top row, hover face and pressed face | `#FFFFFF`, `#FFFFFF`, `#E3E9ED`, `#C5D3DC` / `#333C57`, `#566C86`, `#566C86`, `#1A1C2C` |
 | Shadow | The hard shadow under menus and dialogs | `#1A1C2C` at 40 % / `#000000` at 60 % |
 
+Roles added by the Big Folder:
+
+| Role | Used for | Glass (light / dark) |
+|---|---|---|
+| Hover | Hover plates, the stack's plate, the empty-state disc, the loading plate, the search field | black 8 % `#14000000` / white 12 % `#1FFFFFFF` |
+| Pressed | A pressed plate, the selected item's tile plate, the focused search field | black 14 % `#24000000` / white 24 % `#3DFFFFFF` |
+| Select | The drop label, the selected name's pill, the keyboard focus ring | `#007AFF` / `#0A84FF` |
+| On select | Text and glyphs on Select | `#FFFFFF` / `#FFFFFF` |
+| Drop tint | The tint over the whole card while a drop hovers | Select at 22 % `#38007AFF` / at 30 % `#4D0A84FF` |
+| Tile plate | The plate under a real app icon | `#FFFFFF` / `#E9E9EE` |
+| Tile sheen | Over every designed tile, under its symbol | white 16 % at the top to 0 % at the bottom, both modes |
+
+The file-type tile colors (light and dark pairs) are in the Glass design's `ICONS.md` and in `GlassTiles`. Under Pixel, the Big Folder uses the roles above (Select, Open fill, Shade and so on) and the sprite roles below.
+
+Pixel sprite roles: 16 fixed colors, the same by day and by night, for the Big Folder's file-type and app sprites (`PixelPalette.Sprite(symbol)`; the symbols are those of `sprites.txt`):
+
+| Symbol | Color | Symbol | Color | Symbol | Color | Symbol | Color |
+|---|---|---|---|---|---|---|---|
+| `#` ink | `#1A1C2C` | `p` purple | `#5D275D` | `r` red | `#B13E53` | `o` orange | `#EF7D57` |
+| `y` yellow | `#FFCD75` | `L` lime | `#A7F070` | `G` green | `#38B764` | `t` teal | `#257179` |
+| `n` navy | `#29366F` | `b` blue | `#3B5DC9` | `l` sky | `#41A6F6` | `c` cyan | `#73EFF7` |
+| `w` white | `#F4F4F4` | `g` silver | `#94B0C2` | `s` slate | `#566C86` | `d` dusk | `#333C57` |
+
 ---
 
 ## Appendix A: design brief template for a new theme
@@ -317,6 +369,13 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-13 | The interface language defaults to English and can be switched to Chinese, taking effect immediately |
 | 2026-10-13 | The world clock defaults to New York, Los Angeles, St. John's (Newfoundland) and Beijing; city names are always in English; the full time is shown under the city name and the local date under the time |
 | 2026-10-13 | Add a switchable Pixel theme |
+| 2026-10-20 | Under Pixel, the app's own menus, dialogs and tray icon are pixel art too; Glass keeps the system ones |
+| 2026-10-20 | Add a Big Folder widget: a phone-style card on a real folder, with a panel for the rest; files dropped on the card go into the folder |
+| 2026-10-21 | A new Big Folder makes its own folder under the user profile, on the Desktop's drive; "Change folder…" points it at any other. Glass uses the Tile look for icons; Pixel gets a full set of sprites too |
+| 2026-10-21 | A drop never moves a program: a program file, a portable app's folder, a Start menu or Store app, or anything under Program Files, Windows, ProgramData or AppData becomes a shortcut (a shortcut dragged from the desktop moves in). Ordinary files follow Explorer's rules |
+| 2026-10-21 | App icons: our own drawings (a color and a motif, never a logo) for the first 13 apps, the real icon for the rest |
+| 2026-10-21 | In the Big Folder panel a click selects (Ctrl and Shift extend), a double-click or Enter opens; on the card a click opens. Esc clears the search first, then closes |
+| 2026-10-21 | 2.7 amended: the Big Folder card takes clicks on its cells and header and accepts dropped files |
 
 ---
 
@@ -331,3 +390,6 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-13 | — | Wrote this spec, v1 | To make later theme design and changes easier |
 | 2026-10-19 | Glass | Moved the clocks' hard-coded colors into one palette, `GlassPalette` (which also took over `BatteryPalette`); every color keeps its exact value | Paid off the debt recorded in 2.9 |
 | 2026-10-20 | Pixel | Menus and dialogs now look Pixel too: the widget menu, the tray menu, Exit's question and the error box are our own popups with a hard shadow; new roles Select, Select pressed, Select light, On select, Open fill, Button, Button top, Button hover, Button pressed and Shadow; the Pixel tray icon; Chinese text no longer starts a line with closing punctuation | The user asked for the whole app, not only the cards, to be Pixel |
+| 2026-10-21 | All | Added the Big Folder widget (TypeId `folder`) in both themes; 2.3 and 2.7 changed (a Folder row; clicks and drops on its card); the name shortening of 2.9 and the panel behavior are shared | The user asked for a phone-style folder on the desktop |
+| 2026-10-21 | Glass | New roles Hover, Pressed, Select, On select, Drop tint, Tile plate and Tile sheen; the tile look and a 440 × 500 panel | The Big Folder |
+| 2026-10-21 | Pixel | 16 fixed sprite roles; a backslash in both pixel fonts; a Chinese line never ends with an opening mark; a 220 × 196 panel; recorded compressions for the SimSun metric set, name shortening and a missing folder | The Big Folder |
