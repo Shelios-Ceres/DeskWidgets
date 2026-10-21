@@ -120,6 +120,13 @@ public partial class App : Application
                 Enum.TryParse<Widgets.Folder.DropVerb>(Value("--folder-card-drop"), ignoreCase: true, out var verb) ? verb : null);
             _host.OpenForCapture(open[(open.IndexOf('=') + 1)..], Has(commandLine, "--pixel-ui-zh"), state);
         }
+        string? cycle = commandLine.FirstOrDefault(a => a.StartsWith("--folder-panel-cycle=", StringComparison.OrdinalIgnoreCase));
+        if (cycle is not null && int.TryParse(cycle[(cycle.IndexOf('=') + 1)..], out int cycles))
+        {
+            // Leak check: open and close every Big Folder's panel this many times, logging the process's handle counts to --cycle-out=<file>.
+            string? file = commandLine.FirstOrDefault(a => a.StartsWith("--cycle-out=", StringComparison.OrdinalIgnoreCase)) is { } found ? found[(found.IndexOf('=') + 1)..] : null;
+            _host.CyclePanels(cycles, file, Has(commandLine, "--cycle-dirty"), Has(commandLine, "--cycle-hold"));
+        }
     }
 
     private static bool Has(string[] commandLine, string flag) => commandLine.Any(a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));

@@ -30,6 +30,8 @@ namespace DeskWidgets.Widgets.Folder;
 /// and count, a sort button, a search field, every item with a two-line name, Finder-style selection, and a footer with the path.
 /// A click selects (Ctrl and Shift extend), a double-click or Enter opens, Esc clears the search and then closes, typing anywhere
 /// searches, and the selection drags out to Explorer and the desktop. It closes on a click outside.
+/// The window is made on the first open and only hidden on close, then reset as if new on the next open: a WinUI window that is created
+/// and destroyed over and over leaves about four kernel handles behind each time (Phase 6). <see cref="Destroy"/> ends it for good.
 /// </summary>
 internal sealed class GlassFolderPanel : IFolderPanel
 {
@@ -43,11 +45,13 @@ internal sealed class GlassFolderPanel : IFolderPanel
     private static readonly FontFamily IconFont = new("Segoe Fluent Icons");
 
     private readonly FolderWidget _widget;
-    private readonly GlassBackdrop _glass = new();
+    private static readonly TimeSpan FadeTime = TimeSpan.FromMilliseconds(120);
+
     private readonly HashSet<string> _selected = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<int, Grid> _cells = [];
     private readonly Canvas _canvas = new();
     private readonly Canvas _content = new();
+    private readonly UserControl _gridFocus = new() { Width = 1, Height = 1, IsTabStop = true, UseSystemFocusVisuals = false, Opacity = 0 };
     private readonly ScrollViewer _scroll = new();
     private readonly TextBlock _title = new() { FontFamily = DisplayFont, FontSize = 17, FontWeight = FontWeights.SemiBold };
     private readonly TextBlock _count = new() { FontFamily = TextFont, FontSize = 12 };
@@ -60,7 +64,9 @@ internal sealed class GlassFolderPanel : IFolderPanel
     private readonly TextBox _search = new();
     private readonly TextBox _rename = new();
     private readonly Border _clear = new() { Width = 24, Height = 24, Visibility = Visibility.Collapsed };
+    private GlassBackdrop? _glass;
     private Window? _window;
+    private WidgetFrame? _frame;
     private Grid? _root;
     private nint _hwnd;
     private Win32.SubclassProc? _subclass;
@@ -73,15 +79,21 @@ internal sealed class GlassFolderPanel : IFolderPanel
     private bool _keyboardFocus;
     private bool _collapseOnRelease;
     private bool _menuOpen;
-    private bool _closing;
+    private bool _shown; // the window is up (it may exist, hidden, while this is false)
+    private bool _destroying;
+    private double _builtHeight;
+    private MenuFlyout? _flyout;
     private DateTime _openedAt;
     private GlassTileProvider? _tiles;
+    private TextBox? _itemBox; // the box of the item being renamed
 
     public GlassFolderPanel(FolderWidget widget) => _widget = widget;
 
     public event Action? Closed;
 
-    public bool IsOpen => _window is not null && !_closing;
+    public bool IsOpen => _shown;
+
+    public bool Reusable => true;
 
     private FolderModel Model => _widget.Model;
 
@@ -95,6 +107,8 @@ internal sealed class GlassFolderPanel : IFolderPanel
 
     public void Open()
     {
+        if (_shown)
+            return;
         _scale = Site.Scale;
         var card = Site.CardRect;
         var center = new Win32.POINT { X = (card.Left + card.Right) / 2, Y = (card.Top + card.Bottom) / 2 };
@@ -102,13 +116,61 @@ internal sealed class GlassFolderPanel : IFolderPanel
         double workHeight = work.Height / _scale;
         _height = workHeight < 516 ? Math.Max(344, workHeight - 16) : 500;
 
+        bool first = _window is null;
+        if (first)
+            CreateWindow();
+        else
+            ResetForReopen();
+
+        int width = (int)Math.Round(PanelWidth * _scale), height = (int)Math.Round(_height * _scale);
+        var position = Place(card, work, width, height);
+        _window!.AppWindow.Move(position);
+        _window.AppWindow.Resize(new SizeInt32(width, height));
+        _glass!.SetLayout(new Vector2(width, height), (float)(WidgetLayout.CornerRadius * _scale));
+
+        _openedAt = DateTime.UtcNow;
+        _shown = true;
+        if (!first)
+        {
+            _root!.OpacityTransition = new ScalarTransition { Duration = FadeTime };
+            _window.AppWindow.Show();
+        }
+        _window.Activate();
+        Win32.MakeTransparentToolWindow(_hwnd); // activation may re-apply presenter styles
+        if (first)
+        {
+            _root!.Loaded += (_, _) =>
+            {
+                Refresh();
+                _root.Opacity = 1;
+                _search.Focus(FocusState.Programmatic);
+            };
+            return;
+        }
+        // The fade starts once the window is up, as on the first open.
+        _root!.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_shown)
+                return;
+            _root.Opacity = 1;
+            _search.Focus(FocusState.Programmatic);
+        });
+    }
+
+    /// <summary>The first open: the window, its content, the glass and the hooks.</summary>
+    private void CreateWindow()
+    {
+        _glass = new GlassBackdrop();
         _window = new Window { Title = Strings.AppName + " · " + Model.Name, SystemBackdrop = _glass };
-        var frame = new WidgetFrame { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Width = PanelWidth, Height = _height };
-        frame.SetCard(WidgetTheme.Glass, WidgetSize.Large);
+        _frame = new WidgetFrame { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Width = PanelWidth, Height = _height };
+        _frame.SetCard(WidgetTheme.Glass, WidgetSize.Large);
         BuildContent();
-        frame.SetContent(_canvas);
-        _root = new Grid { Opacity = 0, OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(120) } };
-        _root.Children.Add(frame);
+        _builtHeight = _height;
+        _frame.SetContent(_canvas);
+        _root = new Grid { Opacity = 0, OpacityTransition = new ScalarTransition { Duration = FadeTime } };
+        _root.Children.Add(_frame);
+        _root.KeyDown += OnGridKey;
+        _root.CharacterReceived += OnCharacter;
         _window.Content = _root;
 
         _hwnd = WindowNative.GetWindowHandle(_window);
@@ -125,24 +187,42 @@ internal sealed class GlassFolderPanel : IFolderPanel
         _subclass = Procedure;
         Win32.SetWindowSubclass(_hwnd, _subclass, 7, 0);
 
-        int width = (int)Math.Round(PanelWidth * _scale), height = (int)Math.Round(_height * _scale);
-        var position = Place(card, work, width, height);
-        _window.AppWindow.Move(position);
-        _window.AppWindow.Resize(new SizeInt32(width, height));
-        _glass.SetLayout(new Vector2(width, height), (float)(WidgetLayout.CornerRadius * _scale));
-
         _window.Activated += OnActivated;
         _window.Closed += OnWindowClosed;
         _tiles = new GlassTileProvider(() => _scale, () => Dark, RepaintSoon);
-        _openedAt = DateTime.UtcNow;
-        _window.Activate();
-        Win32.MakeTransparentToolWindow(_hwnd); // activation may re-apply presenter styles
-        _root.Loaded += (_, _) =>
-        {
-            Refresh();
-            _root.Opacity = 1;
-            _search.Focus(FocusState.Programmatic);
-        };
+    }
+
+    /// <summary>The next open of the hidden window: everything as in a new panel (empty search, no selection, the top of the list, fresh items).</summary>
+    private void ResetForReopen()
+    {
+        _window!.Title = Strings.AppName + " · " + Model.Name;
+        if (Math.Abs(_height - _builtHeight) > 0.5)
+            ApplyHeight();
+        _renaming = null;
+        _renamingFolder = false;
+        _rename.Visibility = Visibility.Collapsed;
+        _selected.Clear();
+        _hover = _pressed = _focus = _anchor = -1;
+        _keyboardFocus = false;
+        _collapseOnRelease = false;
+        _menuOpen = false;
+        _search.Text = "";
+        _scroll.ChangeView(null, 0, null, disableAnimation: true);
+        _tiles = new GlassTileProvider(() => _scale, () => Dark, RepaintSoon);
+        _shown = true; // Refresh does nothing while the panel is hidden
+        Refresh();
+        _shown = false;
+    }
+
+    /// <summary>The work area is shorter or taller than when the window was built: the card, the list and the footer follow.</summary>
+    private void ApplyHeight()
+    {
+        _builtHeight = _height;
+        _frame!.Height = _height;
+        _canvas.Height = _height;
+        _scroll.Height = _height - ViewportTop - 44;
+        Canvas.SetTop(_path, _height - 36 + 1);
+        Canvas.SetTop(_selectedText, _height - 36 + 1);
     }
 
     /// <summary>Beside the card, 12 away, tops aligned: on the right if it fits (8 to spare), else on the left; up if it would run off the bottom; centred over the card if neither side fits.</summary>
@@ -178,31 +258,66 @@ internal sealed class GlassFolderPanel : IFolderPanel
     private void OnActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
     {
         // A click outside deactivates the panel, and closes it. Not while one of its own menus or dialogs is up, nor in its first moments.
-        if (args.WindowActivationState == Microsoft.UI.Xaml.WindowActivationState.Deactivated && !_menuOpen && !_widget.PanelPinned && (DateTime.UtcNow - _openedAt).TotalMilliseconds > 400)
+        if (_shown && args.WindowActivationState == Microsoft.UI.Xaml.WindowActivationState.Deactivated && !_menuOpen && !_widget.PanelPinned && (DateTime.UtcNow - _openedAt).TotalMilliseconds > 400)
             Close();
     }
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        if (!_destroying)
+        {
+            args.Handled = true; // Alt+F4 and the like only hide the panel
+            Close();
+            return;
+        }
         Win32.RemoveWindowSubclass(_hwnd, _subclass!, 7);
-        _glass.Dispose();
+        _glass?.Dispose();
+        _glass = null;
         _window = null;
-        Closed?.Invoke();
     }
 
+    /// <summary>Hides the window, as if it were closed; the next <see cref="Open"/> shows it again, reset.</summary>
     public void Close()
     {
-        if (_closing || _window is null)
+        if (!_shown || _window is null)
             return;
-        _closing = true;
+        _shown = false;
         try
         {
-            _window.Close();
+            _flyout?.Hide();
+            _root!.OpacityTransition = null; // gone at once, not faded out
+            _root.Opacity = 0;
+            _window.AppWindow.Hide();
+            _content.Children.Clear(); // the tiles go; the next open builds fresh ones
+            _cells.Clear();
+            _tiles = null;
         }
         catch (Exception ex)
         {
             Log.Warn("Closing the Big Folder panel failed", ex);
         }
+        Closed?.Invoke();
+    }
+
+    /// <summary>The card is going away: closes the window for good.</summary>
+    public void Destroy()
+    {
+        bool wasShown = _shown;
+        _shown = false;
+        _destroying = true;
+        if (_window is not null)
+        {
+            try
+            {
+                _window.Close();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Closing the Big Folder panel failed", ex);
+            }
+        }
+        if (wasShown)
+            Closed?.Invoke();
     }
 
     // ----- the parts -----
@@ -226,7 +341,11 @@ internal sealed class GlassFolderPanel : IFolderPanel
         Canvas.SetLeft(_rename, 20);
         Canvas.SetTop(_rename, 14);
         _rename.KeyDown += OnRenameKey;
-        _rename.LostFocus += (_, _) => CommitRename();
+        _rename.LostFocus += (_, _) =>
+        {
+            if (!_menuOpen)
+                CommitRename();
+        };
         _canvas.Children.Add(_rename);
 
         _sortButton.Child = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center, Children = { _sortText, new FontIcon { Glyph = "", FontSize = 8, FontFamily = IconFont } } };
@@ -286,15 +405,14 @@ internal sealed class GlassFolderPanel : IFolderPanel
         Canvas.SetTop(_selectedText, _height - 36 + 1);
         _canvas.Children.Add(_selectedText);
 
-        // Typing anywhere searches; keys that move or act on the grid are handled at the top.
-        _canvas.KeyDown += OnGridKey;
-        _canvas.CharacterReceived += OnCharacter;
-        _canvas.IsTabStop = true;
+        // Typing anywhere searches; keys that move or act on the grid are handled at the root (see CreateWindow): a click on an item
+        // leaves no element with the focus, and the keys then go straight to the root.
+        _canvas.Children.Add(_gridFocus);
         _canvas.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         _canvas.PointerPressed += (_, e) =>
         {
             if (e.OriginalSource is not TextBox)
-                _canvas.Focus(FocusState.Programmatic);
+                _gridFocus.Focus(FocusState.Programmatic);
         };
     }
 
@@ -354,7 +472,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
 
     public void Refresh()
     {
-        if (_window is null || _root is null)
+        if (!_shown || _window is null || _root is null)
             return;
         string filter = _search.Text.Trim();
         _view = Model.Items.Where(i => filter.Length == 0 || i.DisplayName.Contains(filter, StringComparison.CurrentCultureIgnoreCase)).ToList();
@@ -364,7 +482,11 @@ internal sealed class GlassFolderPanel : IFolderPanel
         Paint();
     }
 
-    public void ApplyLanguage() => Paint();
+    public void ApplyLanguage()
+    {
+        if (_shown)
+            Paint();
+    }
 
     public void PrepareForCapture(FolderCapture state)
     {
@@ -389,7 +511,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
 
     private void RepaintSoon() => _root?.DispatcherQueue.TryEnqueue(() =>
     {
-        if (_window is not null)
+        if (_shown)
             UpdateVisible(rebuild: true);
     });
 
@@ -457,14 +579,24 @@ internal sealed class GlassFolderPanel : IFolderPanel
 
     private void UpdateVisible(bool rebuild = false)
     {
-        if (_window is null)
+        if (!_shown || _window is null)
             return;
         double viewport = _scroll.Height;
         _content.Height = RowCount * CellHeight + 8;
         if (rebuild)
         {
-            _content.Children.Clear();
-            _cells.Clear();
+            foreach (int index in _cells.Keys.ToList())
+            {
+                if (index < _view.Count)
+                {
+                    FillCell(_cells[index], index);
+                }
+                else
+                {
+                    _content.Children.Remove(_cells[index]);
+                    _cells.Remove(index);
+                }
+            }
         }
         int firstRow = Math.Max(0, (int)Math.Floor(_scroll.VerticalOffset / CellHeight) - 1);
         int lastRow = Math.Min(RowCount - 1, (int)Math.Ceiling((_scroll.VerticalOffset + viewport) / CellHeight) + 1);
@@ -493,12 +625,8 @@ internal sealed class GlassFolderPanel : IFolderPanel
 
     private void RestyleCell(int index)
     {
-        if (!_cells.TryGetValue(index, out var old))
-            return;
-        var cell = BuildCell(index);
-        _content.Children.Remove(old);
-        _cells[index] = cell;
-        _content.Children.Add(cell);
+        if (_cells.TryGetValue(index, out var cell) && index < _view.Count && _renaming != _view[index].FileName)
+            FillCell(cell, index);
     }
 
     private void RestyleAll()
@@ -507,15 +635,53 @@ internal sealed class GlassFolderPanel : IFolderPanel
             RestyleCell(index);
     }
 
+    /// <summary>
+    /// A cell is made once per index and keeps its place in the tree (and so the pointer's target); <see cref="FillCell"/> draws and redraws what is in it.
+    /// Replacing the element under the pointer on every hover and press made the real mouse miss its clicks.
+    /// </summary>
     private Grid BuildCell(int index)
+    {
+        var cell = new Grid { Width = CellWidth, Height = CellHeight, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), CanDrag = true, Tag = index };
+        Canvas.SetLeft(cell, 20 + index % Columns * CellWidth);
+        Canvas.SetTop(cell, index / Columns * CellHeight);
+        FillCell(cell, index);
+
+        cell.PointerEntered += (_, _) =>
+        {
+            int old = _hover;
+            _hover = index;
+            RestyleCell(old);
+            RestyleCell(index);
+        };
+        cell.PointerExited += (_, _) =>
+        {
+            if (_hover == index)
+            {
+                _hover = -1;
+                RestyleCell(index);
+            }
+        };
+        // CanDrag elements mark the press as handled for the ones that listen the usual way.
+        cell.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnCellPressed), handledEventsToo: true);
+        cell.PointerReleased += OnCellReleased;
+        cell.DoubleTapped += (_, e) =>
+        {
+            OpenSelection();
+            e.Handled = true;
+        };
+        cell.RightTapped += OnCellRightTapped;
+        cell.DragStarting += OnDragStarting;
+        return cell;
+    }
+
+    private void FillCell(Grid cell, int index)
     {
         var palette = Palette;
         var item = _view[index];
         bool selected = _selected.Contains(item.FileName);
         bool hover = index == _hover, pressed = index == _pressed;
-        var cell = new Grid { Width = CellWidth, Height = CellHeight, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), CanDrag = true, Tag = index };
-        Canvas.SetLeft(cell, 20 + index % Columns * CellWidth);
-        Canvas.SetTop(cell, index / Columns * CellHeight);
+        cell.Children.Clear();
+        ToolTipService.SetToolTip(cell, null);
         var layer = new Canvas { Width = CellWidth, Height = CellHeight, IsHitTestVisible = false };
 
         if (hover || pressed)
@@ -556,7 +722,12 @@ internal sealed class GlassFolderPanel : IFolderPanel
             box.SelectionHighlightColor = palette.Select;
             HideDeleteButton(box);
             box.KeyDown += OnItemRenameKey;
-            box.LostFocus += (_, _) => CommitItemRename(box.Text);
+            box.LostFocus += (_, _) =>
+            {
+                if (!_menuOpen)
+                    CommitItemRename(box.Text);
+            };
+            _itemBox = box;
             box.Loaded += (_, _) =>
             {
                 box.Focus(FocusState.Programmatic);
@@ -596,35 +767,9 @@ internal sealed class GlassFolderPanel : IFolderPanel
                 ToolTipService.SetToolTip(cell, item.DisplayName);
         }
         cell.Children.Add(layer);
-        // The cell being renamed draws over its neighbours: its box may be wider than the cell. Cells are rebuilt, so this resets itself.
+        // The cell being renamed draws over its neighbours: its box may be wider than the cell. Cells are refilled, so this resets itself.
         Canvas.SetZIndex(cell, _renaming == item.FileName ? 1 : 0);
         AutomationProperties.SetName(cell, item.DisplayName);
-
-        cell.PointerEntered += (_, _) =>
-        {
-            int old = _hover;
-            _hover = index;
-            RestyleCell(old);
-            RestyleCell(index);
-        };
-        cell.PointerExited += (_, _) =>
-        {
-            if (_hover == index)
-            {
-                _hover = -1;
-                RestyleCell(index);
-            }
-        };
-        cell.PointerPressed += OnCellPressed;
-        cell.PointerReleased += OnCellReleased;
-        cell.DoubleTapped += (_, e) =>
-        {
-            OpenSelection();
-            e.Handled = true;
-        };
-        cell.RightTapped += OnCellRightTapped;
-        cell.DragStarting += OnDragStarting;
-        return cell;
     }
 
     private static Rectangle Plate(double x, double y, double width, double height, double radius, Brush fill)
@@ -644,7 +789,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
         int index = IndexOf(sender);
         if (index < 0 || !e.GetCurrentPoint((UIElement)sender).Properties.IsLeftButtonPressed)
             return;
-        _canvas.Focus(FocusState.Pointer);
+        _gridFocus.Focus(FocusState.Pointer);
         _keyboardFocus = false;
         var modifiers = e.KeyModifiers;
         bool ctrl = modifiers.HasFlag(VirtualKeyModifiers.Control), shift = modifiers.HasFlag(VirtualKeyModifiers.Shift);
@@ -781,7 +926,13 @@ internal sealed class GlassFolderPanel : IFolderPanel
         {
             _menuOpen = false;
             _openedAt = DateTime.UtcNow; // the click that closed the menu must not close the panel as well
+            // "Rename" from the menu: the closing menu took the focus back from the box it had just opened.
+            if (_renamingFolder)
+                _rename.Focus(FocusState.Programmatic);
+            else if (_renaming is not null)
+                _itemBox?.Focus(FocusState.Programmatic);
         });
+        _flyout = flyout;
         flyout.ShowAt(anchor, new FlyoutShowOptions { Position = position });
     }
 
@@ -817,7 +968,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
                 e.Handled = true;
                 break;
             case VirtualKey.Down when _view.Count > 0:
-                _canvas.Focus(FocusState.Keyboard);
+                _gridFocus.Focus(FocusState.Keyboard);
                 MoveFocus(0, extend: false, keepSelection: false, first: true);
                 e.Handled = true;
                 break;
@@ -948,7 +1099,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
 
     public void BeginRename(string fileName)
     {
-        if (_window is null)
+        if (!_shown || _window is null)
         {
             Refresh();
             return;
@@ -1010,7 +1161,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
         _renamingFolder = false;
         _rename.Visibility = Visibility.Collapsed;
         Paint();
-        _canvas.Focus(FocusState.Programmatic);
+        _gridFocus.Focus(FocusState.Programmatic);
     }
 
     private void CommitRename()

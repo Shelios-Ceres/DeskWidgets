@@ -55,6 +55,12 @@ internal interface IFolderPanel
     void BeginRenameFolder();
 
     void Close();
+
+    /// <summary>Whether <see cref="Close"/> only hides the panel, so the same instance opens again (the Glass panel). Otherwise a new panel is made for each open.</summary>
+    bool Reusable { get; }
+
+    /// <summary>The card is going away: releases the window for good.</summary>
+    void Destroy();
 }
 
 /// <summary>
@@ -137,7 +143,8 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
 
     public void Dispose()
     {
-        _panel?.Close();
+        _panel?.Destroy();
+        _panel = null;
         Model.Changed -= OnModelChanged;
         Model.Dispose();
     }
@@ -231,6 +238,8 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
         OpenPanel().PrepareForCapture(state);
     }
 
+    internal void ClosePanelForCapture() => _panel?.Close();
+
     /// <summary>Design QA (<c>--pixel-ui-open=folder-cards</c>): shows the drop hint on the card, as if a drag were over it.</summary>
     internal void ShowDropHintForCapture(DropVerb? verb)
     {
@@ -245,9 +254,13 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
     {
         if (_panel is { IsOpen: true } open)
             return open;
-        IFolderPanel panel = _context.Theme == WidgetTheme.Pixel ? new PixelFolderPanel(this) : new GlassFolderPanel(this);
-        panel.Closed += () => _panelClosedAt = DateTime.UtcNow;
-        _panel = panel;
+        if (_panel is not { Reusable: true })
+        {
+            IFolderPanel made = _context.Theme == WidgetTheme.Pixel ? new PixelFolderPanel(this) : new GlassFolderPanel(this);
+            made.Closed += () => _panelClosedAt = DateTime.UtcNow;
+            _panel = made;
+        }
+        var panel = _panel;
         try
         {
             panel.Open();
@@ -256,7 +269,7 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
         {
             Log.Warn("Opening the Big Folder panel failed", ex);
             _panel = null;
-            panel.Close();
+            panel.Destroy();
         }
         return panel;
     }

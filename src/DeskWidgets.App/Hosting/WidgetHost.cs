@@ -383,6 +383,46 @@ internal sealed class WidgetHost
         }
     }
 
+    /// <summary>
+    /// Leak check (<c>--folder-panel-cycle=n --cycle-out=file</c>): opens and closes every Big Folder's panel <paramref name="cycles"/> times, as
+    /// a click on the header and an Esc would (<c>--cycle-dirty</c> leaves a search and a selection behind each time, <c>--cycle-hold</c> keeps the
+    /// last open up for a capture), and appends the process's handle, GDI and USER counts to <paramref name="file"/> after each round.
+    /// </summary>
+    internal async void CyclePanels(int cycles, string? file, bool dirty, bool hold)
+    {
+        await Task.Delay(2500);
+        var folders = _windows.Select(w => w.FolderWidget).OfType<Widgets.Folder.FolderWidget>().ToList();
+        void Report(string line)
+        {
+            var self = Process.GetCurrentProcess();
+            string text = $"{line}: handles={self.HandleCount} gdi={PixelUi.Native.GetGuiResources(self.Handle, 0)} user={PixelUi.Native.GetGuiResources(self.Handle, 1)} private={self.PrivateMemorySize64 / 1024 / 1024} MB threads={self.Threads.Count}";
+            if (file is not null)
+                File.AppendAllText(file, text + Environment.NewLine);
+        }
+        Report($"start ({folders.Count} folder cards)");
+        for (int round = 1; round <= cycles; round++)
+        {
+            foreach (var folder in folders)
+            {
+                var panel = folder.OpenPanel();
+                if (dirty) // leave a search, a selection and a hover behind, for the next open to clear
+                    panel.PrepareForCapture(new Widgets.Folder.FolderCapture(Search: "note", Select: 2, Hover: 1));
+                await Task.Delay(700);
+                folder.ClosePanelForCapture();
+                await Task.Delay(500);
+            }
+            if (round % 5 == 0 || round == cycles)
+                Report($"round {round}");
+        }
+        await Task.Delay(3000);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Report("done, after a GC");
+        if (hold) // one more open, which stays up for a capture of the reset panel
+            folders[^1].OpenPanelForCapture(new Widgets.Folder.FolderCapture());
+    }
+
     /// <summary>The tray menu as a model: both themes show these rows, in this order.</summary>
     private List<MenuEntry> BuildTrayMenu() =>
     [

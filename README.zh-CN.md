@@ -43,6 +43,7 @@ dotnet run --project D:/Widget/src/DeskWidgets.App -- --pixel-preview D:/Widget/
 - `--icons-inspect <文件>`：只读检查桌面图标，把当前位置、小组件占用的区域，以及开启排列后会移动哪些图标写成 JSON。不移动图标，也不写别的文件
 - `--pixel-menu-preview <文件夹>`：把像素主题的全部菜单、对话框和托盘图标（浅色/深色 × 中/英，150% 和 100%）画成 PNG 总览图后退出，和 `--pixel-preview` 对卡片的作用一样。`--pixel-ui-open=widget|cities|tray|exit|warn|folder-panel`（加 `--pixel-ui-zh` 用中文）启动程序时直接打开其中一个，用来截取真实窗口。`folder-panel` 在两个主题下都会打开第一个大文件夹的面板并一直开着（加 `--folder-panel-search=文字` 和 `--folder-panel-select=n` 可以显示搜索和选中状态）。
 - `--pixel-folder-preview <文件夹>`：把像素主题的大文件夹（各个尺寸的卡片、它们的状态、图标和面板；浅色/深色 × 中/英）画成 PNG 总览图后退出。
+- `--folder-panel-cycle=<n> --cycle-out=<文件>`：泄漏检查。它把每个大文件夹的面板开关 n 次（和点标题、按 Esc 一样），每轮把进程的句柄、GDI 和 USER 对象数追加到文件里（`--cycle-dirty` 每次留下搜索和选中，`--cycle-hold` 让最后一次保持打开）。数字应该一轮一轮保持平稳；句柄数一直涨，说明有东西创建了没释放。
 - `--enable-startup` / `--disable-startup`：开启或关闭开机启动
 
 编译好的程序在 `src\DeskWidgets.App\bin\Debug\net10.0-windows10.0.19041.0\win-x64\DeskWidgets.exe`，整个文件夹可以复制到任意位置直接运行。发布版：

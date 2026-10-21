@@ -92,6 +92,10 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         _accessible.RaiseOpened(UiaNative.EventWindowOpened);
     }
 
+    public bool Reusable => false;
+
+    public void Destroy() => Close();
+
     public void Close()
     {
         if (_closing || Hwnd == 0)
