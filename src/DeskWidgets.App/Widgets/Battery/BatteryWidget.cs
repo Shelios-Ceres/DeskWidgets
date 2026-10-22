@@ -1,4 +1,5 @@
 using DeskWidgets.Core.Devices;
+using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
 using DeskWidgets.PixelUi;
 using Microsoft.UI.Dispatching;
@@ -32,6 +33,9 @@ internal sealed class BatteryWidget : UserControl, IWidget
     private readonly PixelSurface? _pixel;
     private WidgetSize _size = WidgetSize.Medium;
     private int _renderQueued;
+    private readonly BatteryMotion? _motion; // Pixel B6: the gauge's step and the bolt's pop
+    private readonly Dictionary<string, bool> _charged = []; // Glass B6: who showed a bolt in the last render, so a change can fade it
+    private bool _rendered;
 
     public BatteryWidget(WidgetContext context)
     {
@@ -39,7 +43,10 @@ internal sealed class BatteryWidget : UserControl, IWidget
         _dispatcher = context.Services.Dispatcher;
         _options = context.Options;
         if (context.Theme == WidgetTheme.Pixel)
-            Content = _pixel = new PixelSurface((canvas, palette) => BatteryPixelScene.Draw(canvas, palette, _size, VisibleDevices(), ShowNames));
+        {
+            _motion = new BatteryMotion();
+            Content = _pixel = new PixelSurface((canvas, palette) => BatteryPixelScene.Draw(canvas, palette, _size, VisibleDevices(), ShowNames, _motion));
+        }
         else
             Content = _root;
         _hub.DevicesChanged += OnDevicesChanged;
@@ -79,7 +86,11 @@ internal sealed class BatteryWidget : UserControl, IWidget
 
     public void ApplyLanguage() => Render();
 
-    public void Dispose() => _hub.DevicesChanged -= OnDevicesChanged;
+    public void Dispose()
+    {
+        _hub.DevicesChanged -= OnDevicesChanged;
+        _motion?.Dispose();
+    }
 
     private void OnDevicesChanged(object? sender, EventArgs e)
     {
@@ -118,6 +129,9 @@ internal sealed class BatteryWidget : UserControl, IWidget
     {
         if (_pixel is not null)
         {
+            if (_motion is not null && _motion.Observe(VisibleDevices(), _pixel.RenderNow)) // the first look only notes the devices
+                return; // the motion paints its own first frame
+            _rendered = true;
             _pixel.Invalidate();
             return;
         }
@@ -150,6 +164,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
         var visible = devices.Select(d => d.Id).ToHashSet();
         foreach (var key in _rings.Keys.Where(k => !visible.Contains(k.Id)).ToList())
             _rings.Remove(key);
+        _rendered = true;
     }
 
     /// <summary>Small, one device: ring (and its name) top-left, big percentage bottom-left.</summary>
@@ -346,15 +361,32 @@ internal sealed class BatteryWidget : UserControl, IWidget
             FontWeight = FontWeights.SemiBold,
             Foreground = known ? palette.Primary : palette.Secondary,
         });
-        if (known && device.IsCharging)
+        bool charging = known && device.IsCharging;
+        _charged.TryGetValue(device.Id, out bool was);
+        _charged[device.Id] = charging;
+        bool change = _rendered && was != charging && MotionSettings.Enabled;
+        if (charging || (change && was))
         {
-            line.Children.Add(new FontIcon
+            var bolt = new FontIcon
             {
                 Glyph = "",
                 FontSize = Math.Round(fontSize * 0.62),
                 Foreground = palette.Primary,
                 VerticalAlignment = VerticalAlignment.Center,
-            });
+            };
+            line.Children.Add(bolt);
+            if (change && charging)
+            {
+                // B6: the bolt fades in (Quick).
+                GlassMotion.Preset(bolt, 0, 1, default);
+                GlassMotion.FadeTo(bolt, 1, GlassMotion.Quick, GlassEase.Out);
+            }
+            else if (change)
+            {
+                // B6: charging stopped: the bolt fades out (Exit), then gives its room back.
+                GlassMotion.FadeTo(bolt, 0, GlassMotion.Exit, GlassEase.In);
+                FrameClock.After((int)GlassMotion.LeaveDuration.TotalMilliseconds, () => line.Children.Remove(bolt));
+            }
         }
         return line;
     }

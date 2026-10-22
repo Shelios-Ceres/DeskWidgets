@@ -135,6 +135,24 @@ internal sealed record MenuDrawing(PixelCanvas Panel, List<MenuRowRect> Rows, in
 
 internal static class MenuPainter
 {
+    /// <summary>
+    /// B5's row WIPE, first frame: the right half of the row in <paramref name="target"/> (a panel drawn with the row current) is taken from
+    /// <paramref name="plain"/> (the same panel with the row not current), so its bar is half the width and the label stays readable on both halves.
+    /// </summary>
+    public static void WipeRow(MenuDrawing target, MenuDrawing plain, int index, int width)
+    {
+        foreach (var row in target.Rows)
+        {
+            if (row.Index != index)
+                continue;
+            int cut = MenuLayout.BarInset + (width - 2 * MenuLayout.BarInset) / 2;
+            for (int y = row.Y; y < row.Y + row.Height; y++)
+                for (int x = cut; x < width; x++)
+                    target.Panel.Set(x, y, plain.Panel.Get(x, y));
+            return;
+        }
+    }
+
     public static MenuDrawing Draw(PixelPalette p, MenuLayout layout, MenuPaint state)
     {
         int width = layout.Width, height = state.PanelHeight;

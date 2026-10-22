@@ -63,6 +63,16 @@ internal sealed class WindowFader : IDisposable
             done?.Invoke();
     }
 
+    /// <summary>Full alpha and no layering: the window is drawn the plain way again once a fade has finished.</summary>
+    public void Clear()
+    {
+        Cancel(runDone: false);
+        Alpha = 255;
+        int style = GetWindowLong(_hwnd, GwlExStyle);
+        if ((style & WsExLayered) != 0)
+            SetWindowLong(_hwnd, GwlExStyle, style & ~WsExLayered);
+    }
+
     /// <summary>Clicks pass through the window (while it fades out, so a "closed" panel takes none).</summary>
     public void SetClickThrough(bool through)
     {

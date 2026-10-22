@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using DeskWidgets.Interop;
+using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
 using Windows.UI.ViewManagement;
 
@@ -149,8 +150,79 @@ internal abstract class PixelPopupWindow : IDisposable
     /// <summary>Palette for the system's current light or dark mode.</summary>
     protected static PixelPalette CurrentPalette() => PixelPalette.For(IsDark());
 
+    // ----- B5: GROW and SHRINK (menus, submenus, dialogs opt in) -----
+
+    private StepAnimator? _grow;
+
+    /// <summary>Set when the popup is shrinking away: it takes no input and nothing redraws it.</summary>
+    public bool Leaving { get; private set; }
+
+    /// <summary>The popup's empty frame (its own panel at a share of its size, with its shadow) for GROW and SHRINK; null where a popup has none.</summary>
+    protected virtual PixelCanvas? EmptyFrame(GrowFrom from, double share) => null;
+
+    /// <summary>Draws the whole popup, content included, at a screen position (the last GROW frame).</summary>
+    protected virtual void DrawFinal(int factor, int x, int y)
+    {
+    }
+
+    /// <summary>
+    /// GROW. The window is at its final place and size from the first frame, with a transparent canvas outside the growing panel: the empty
+    /// frames in turn (each 40 ms), then the whole popup. With motion off the whole popup comes at once.
+    /// </summary>
+    public void GrowIn(GrowSpec spec, int factor, int x, int y)
+    {
+        _grow ??= new StepAnimator();
+        _grow.Start(spec.Shares.Length + 1, frame =>
+        {
+            if (frame < spec.Shares.Length && EmptyFrame(spec.From, spec.Shares[frame]) is { } empty)
+                Present(empty, factor, x, y);
+            else
+                DrawFinal(factor, x, y);
+        });
+    }
+
+    /// <summary>A new state (input) cuts a running GROW short: the whole popup is drawn by the caller next.</summary>
+    public void CancelGrow() => _grow?.Cancel();
+
+    /// <summary>
+    /// SHRINK, then the window is disposed (after the last frame, so the popup is not cut off mid-shrink). The window takes no clicks
+    /// meanwhile. With motion off it is disposed at once.
+    /// </summary>
+    public void ShrinkOut(GrowSpec spec)
+    {
+        if (Leaving || Hwnd == 0)
+            return;
+        Leaving = true;
+        if (!MotionSettings.Enabled || EmptyFrame(spec.From, 0.5) is null)
+        {
+            Dispose();
+            return;
+        }
+        SetWindowLong(Hwnd, -20, GetWindowLong(Hwnd, -20) | 0x20 /* WS_EX_TRANSPARENT */ | Native.WS_EX_NOACTIVATE);
+        _grow ??= new StepAnimator();
+        var origin = Origin;
+        int factor = Factor;
+        _grow.Start(spec.Shares.Length + 1, frame =>
+        {
+            if (Hwnd == 0)
+                return;
+            if (frame < spec.Shares.Length && EmptyFrame(spec.From, spec.Shares[spec.Shares.Length - 1 - frame]) is { } empty)
+                Present(empty, factor, origin.X, origin.Y);
+            else
+                Dispose();
+        });
+    }
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    private static extern int GetWindowLong(nint hwnd, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+    private static extern int SetWindowLong(nint hwnd, int index, int value);
+
     public virtual void Dispose()
     {
+        _grow?.Dispose();
+        _grow = null;
         if (Hwnd != 0)
         {
             Win32.DestroyWindow(Hwnd);

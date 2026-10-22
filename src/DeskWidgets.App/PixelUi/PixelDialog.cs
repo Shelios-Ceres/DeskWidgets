@@ -1,5 +1,6 @@
 using DeskWidgets.Core.Diagnostics;
 using DeskWidgets.Interop;
+using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
 
 namespace DeskWidgets.PixelUi;
@@ -111,7 +112,7 @@ internal sealed class PixelDialog : PixelPopupWindow
         int factor = PixelCard.Factor(Win32.GetScaleAt(anchor));
         var work = Win32.GetWorkArea(anchor);
         int width = (DialogLayout.Width + DialogLayout.ShadowOffset) * factor, height = (_layout.Height + DialogLayout.ShadowOffset) * factor;
-        Draw(factor, work.Left + (work.Width - width) / 2, work.Top + (work.Height - height) / 2);
+        GrowIn(GrowSpec.Dialog(), factor, work.Left + (work.Width - width) / 2, work.Top + (work.Height - height) / 2); // B5: GROW from the centre
 
         if (_owner != 0)
             Native.EnableWindow(_owner, false);
@@ -133,10 +134,18 @@ internal sealed class PixelDialog : PixelPopupWindow
 
     private void Redraw()
     {
+        if (Leaving || Hwnd == 0)
+            return;
+        CancelGrow(); // input wins: a dialog still growing is drawn whole
         // The strip may have been dragged: the window's own position is the truth.
         if (Native.GetWindowRect(Hwnd, out var rect))
             Draw(Factor, rect.Left, rect.Top);
     }
+
+    protected override PixelCanvas? EmptyFrame(GrowFrom from, double share)
+        => PixelMotion.EmptyPanel(PixelPalette.For(IsDark()), DialogLayout.Width, _layout.Height, PixelFrame.DialogCorner, DialogLayout.ShadowOffset, from, share);
+
+    protected override void DrawFinal(int factor, int x, int y) => Draw(factor, x, y);
 
     private int ButtonAt(int screenX, int screenY)
     {
@@ -168,7 +177,7 @@ internal sealed class PixelDialog : PixelPopupWindow
         Native.NotifyWinEvent(Native.EVENT_SYSTEM_DIALOGEND, Hwnd, Native.OBJID_CLIENT, 0);
         if (_owner != 0)
             Native.EnableWindow(_owner, true); // before the dialog goes, or the owner loses the foreground to another app
-        Dispose();
+        ShrinkOut(GrowSpec.Dialog()); // B5: SHRINK to the centre, then the window goes
         try
         {
             _done(index);

@@ -45,6 +45,29 @@ internal static class PixelMotion
     }
 
     /// <summary>
+    /// A popup's empty frame for GROW and SHRINK: its own outline, fill, highlight and shade with its corner stair and its hard shadow, at
+    /// <paramref name="share"/> of its size along the growing axis, anchored where it grows from, on a transparent canvas of the whole popup.
+    /// </summary>
+    public static PixelCanvas EmptyPanel(PixelPalette p, int panelWidth, int panelHeight, int[] corner, int shadowOffset, GrowFrom from, double share)
+    {
+        bool horizontal = from is GrowFrom.Left or GrowFrom.Right or GrowFrom.Center;
+        bool vertical = from is GrowFrom.Top or GrowFrom.Bottom or GrowFrom.Center;
+        int width = horizontal ? Math.Clamp((int)Math.Round(panelWidth * share), 8, panelWidth) : panelWidth;
+        int height = vertical ? Math.Clamp((int)Math.Round(panelHeight * share), 8, panelHeight) : panelHeight;
+        var panel = new PixelCanvas(width, height);
+        PixelFrame.Draw(panel, 0, 0, width, height, corner, p.Outline, p.Panel, p.Highlight, p.Shade, 2);
+        var framed = PixelFrame.WithShadow(panel, p.Shadow, shadowOffset);
+        var full = new PixelCanvas(panelWidth + shadowOffset, panelHeight + shadowOffset);
+        int left = from switch { GrowFrom.Right => panelWidth - width, GrowFrom.Center => (panelWidth - width) / 2, _ => 0 };
+        int top = from switch { GrowFrom.Bottom => panelHeight - height, GrowFrom.Center => (panelHeight - height) / 2, _ => 0 };
+        for (int y = 0; y < framed.Height; y++)
+            for (int x = 0; x < framed.Width; x++)
+                if (framed.Get(x, y) != 0)
+                    full.Set(left + x, top + y, framed.Get(x, y));
+        return full;
+    }
+
+    /// <summary>
     /// GROW and SHRINK's empty frame: the target's own outline, fill, highlight and shade with the same corner stair, at the given
     /// share of its width and full height, anchored at its left or right edge (the edge next to the card), on a transparent canvas of the final size.
     /// </summary>
@@ -62,6 +85,32 @@ internal static class PixelMotion
                     full.Set(offset + x, y, framed.Get(x, y));
         return full;
     }
+}
+
+/// <summary>The edge a popup grows from (and shrinks back to): a menu from the pointer's corner, a submenu from its parent, a dialog from its centre.</summary>
+internal enum GrowFrom
+{
+    Top,
+    Bottom,
+    Left,
+    Right,
+    Center,
+}
+
+/// <summary>
+/// B5's GROW and SHRINK for a popup: the shares of its size (of its height for Top and Bottom, of its width for Left and Right, of both for
+/// Center) shown before the whole popup comes on. GROW plays the shares in order and then the popup; SHRINK plays them back to front and then it is gone.
+/// </summary>
+internal sealed record GrowSpec(GrowFrom From, double[] Shares)
+{
+    /// <summary>A menu: height 1/3, 2/3, then the rows.</summary>
+    public static GrowSpec Menu(bool above) => new(above ? GrowFrom.Bottom : GrowFrom.Top, [1.0 / 3, 2.0 / 3]);
+
+    /// <summary>A submenu: half its width, then all of it.</summary>
+    public static GrowSpec Submenu(bool toTheLeft) => new(toTheLeft ? GrowFrom.Right : GrowFrom.Left, [0.5]);
+
+    /// <summary>A dialog: from the centre on both axes, 1/3, 2/3, then all of it.</summary>
+    public static GrowSpec Dialog() => new(GrowFrom.Center, [1.0 / 3, 2.0 / 3]);
 }
 
 internal enum CellEffect

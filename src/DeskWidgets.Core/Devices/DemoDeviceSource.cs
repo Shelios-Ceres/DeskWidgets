@@ -18,9 +18,15 @@ public sealed class DemoDeviceSource : IDeviceSource
         _count = Math.Clamp(count, 1, 7);
     }
 
+    /// <summary>Design QA (<c>--motion-qa</c>): changes what the sample devices report, so that a level change or charging can be shown.</summary>
+    public static Func<DeviceStatus, DeviceStatus>? Tweak { get; set; }
+
+    /// <summary>Design QA (<c>--demo-wiggle</c>): the mouse's level steps down and the headphones start and stop charging every few seconds, so a trial can see the battery's motion.</summary>
+    public static bool Wiggle { get; set; }
+
     public string Name => "Demo";
 
-    public TimeSpan PollInterval => TimeSpan.FromMinutes(5);
+    public TimeSpan PollInterval => Wiggle ? TimeSpan.FromSeconds(6) : TimeSpan.FromMinutes(5);
 
     public event EventHandler? Invalidated
     {
@@ -41,7 +47,17 @@ public sealed class DemoDeviceSource : IDeviceSource
             new() { Id = "demo:speaker", Name = zh ? "蓝牙音箱" : "Bluetooth Speaker", Kind = DeviceKind.Speaker, Connection = ConnectionKind.Bluetooth, BatteryPercent = 34, Source = Name },
             new() { Id = "demo:phone", Name = zh ? "手机" : "Phone", Kind = DeviceKind.Phone, Connection = ConnectionKind.Bluetooth, BatteryPercent = 71, Source = Name },
         ];
-        devices = [.. devices.Take(_count)];
+        if (Wiggle)
+        {
+            long step = DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond / 6;
+            devices = [.. devices.Select(d => d.Id switch
+            {
+                "demo:mouse" => d with { BatteryPercent = 90 - (int)(step % 6) * 14 },
+                "demo:headphones" => d with { IsCharging = step % 2 == 0 },
+                _ => d,
+            })];
+        }
+        devices = [.. devices.Take(_count).Select(d => Tweak?.Invoke(d) ?? d)];
         return Task.FromResult(devices);
     }
 

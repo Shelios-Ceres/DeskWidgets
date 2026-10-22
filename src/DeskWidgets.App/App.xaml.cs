@@ -114,6 +114,7 @@ public partial class App : Application
         string? demoCount = commandLine.FirstOrDefault(a => a.StartsWith("--demo-devices=", StringComparison.OrdinalIgnoreCase));
         int demoDevices = demoCount is not null && int.TryParse(demoCount[(demoCount.IndexOf('=') + 1)..], out int n) ? n : Has(commandLine, "--demo") ? 4 : 0;
         bool demo = demoDevices > 0;
+        Core.Devices.DemoDeviceSource.Wiggle = demo && Has(commandLine, "--demo-wiggle");
         string start = demo ? "starting (demo devices)" : Has(commandLine, "--autostart") ? "starting (sign-in task)" : "starting";
         Log.Info(DataRoot.IsTestInstance ? $"{start}, test instance, data in {DataRoot.Path}" : start);
         // Design QA: --motion-off behaves as if "Animation effects" were off; --motion-qa=<folder> --motion-run=<moments> records the motion.

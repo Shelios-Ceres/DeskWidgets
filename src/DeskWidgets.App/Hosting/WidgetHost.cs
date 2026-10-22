@@ -148,15 +148,25 @@ internal sealed class WidgetHost
         var position = GetDefaultPosition(factory.DefaultSize, except: null);
         var placement = new WidgetPlacement { Type = factory.TypeId, Size = factory.DefaultSize, X = position.X, Y = position.Y };
         _settings.Current.Widgets.Add(placement);
-        Open(placement);
+        Open(placement, enter: true);
         RequestSave();
+    }
+
+    /// <summary>Design QA: adds a widget at a fixed place, always on top (over the QA stage), as the menu would add one.</summary>
+    internal WidgetWindow? AddForCapture(IWidgetFactory factory, int x, int y)
+    {
+        var placement = new WidgetPlacement { Type = factory.TypeId, Size = factory.DefaultSize, X = x, Y = y, AlwaysOnTop = true };
+        _settings.Current.Widgets.Add(placement);
+        Open(placement, enter: true);
+        RequestSave();
+        return _windows.LastOrDefault();
     }
 
     public void RemoveWidget(WidgetWindow window)
     {
         _settings.Current.Widgets.Remove(window.Placement);
         _windows.Remove(window);
-        window.CloseFromHost();
+        window.Remove();
         RequestSave();
     }
 
@@ -258,7 +268,7 @@ internal sealed class WidgetHost
         Application.Current.Exit();
     }
 
-    private void Open(WidgetPlacement placement)
+    private void Open(WidgetPlacement placement, bool enter = false)
     {
         var factory = WidgetCatalog.Find(placement.Type);
         if (factory is null)
@@ -272,9 +282,13 @@ internal sealed class WidgetHost
         {
             var window = new WidgetWindow(this, factory, placement);
             _windows.Add(window);
+            if (enter)
+                window.PrepareEnter();
             window.Show();
             if (_overDesktop)
                 window.SetOverDesktop(true);
+            if (enter)
+                window.PlayEnter();
         }
         catch (Exception ex)
         {

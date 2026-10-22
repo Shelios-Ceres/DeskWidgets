@@ -67,6 +67,17 @@ internal sealed class GlassBackdrop : SystemBackdrop, IDisposable
         _clipGeometry.CornerRadius = new Vector2(cornerRadius);
     }
 
+    /// <summary>B7, a size change: the frost's visual at the union of the two sizes, its clip still at the old one (it then animates to the new).</summary>
+    public void SetMorphStart(Vector2 union, Vector2 clip, float cornerRadius)
+    {
+        if (_glass is null || _clipGeometry is null)
+            return;
+        _glass.Size = union;
+        _clipGeometry.StopAnimation("Size");
+        _clipGeometry.Size = clip;
+        _clipGeometry.CornerRadius = new Vector2(cornerRadius);
+    }
+
     protected override void OnTargetConnected(ICompositionSupportsSystemBackdrop connectedTarget, XamlRoot xamlRoot)
     {
         base.OnTargetConnected(connectedTarget, xamlRoot);
@@ -91,10 +102,20 @@ internal sealed class GlassBackdrop : SystemBackdrop, IDisposable
 
     public void Dispose()
     {
+        // Every Composition object holds a kernel handle until it is disposed: dispose all of them, not just the target and the visual.
         if (_target is not null)
             _target.Root = null;
+        if (_glass is not null)
+        {
+            _glass.Brush?.Dispose();
+            _glass.Brush = null;
+            _glass.Clip?.Dispose();
+            _glass.Clip = null;
+        }
+        _clipGeometry?.Dispose();
         _target?.Dispose();
         _glass?.Dispose();
+        _clipGeometry = null;
         _target = null;
         _glass = null;
     }

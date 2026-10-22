@@ -14,8 +14,12 @@ internal static class BatteryPixelScene
     private const int Slots = 4;
     private const int ListRows = 6;
 
-    public static void Draw(PixelCanvas canvas, PixelPalette palette, WidgetSize size, IReadOnlyList<DeviceStatus> devices, bool showNames)
+    /// <param name="motion">While a level change runs (B6): the fill's step, the old number and colour until its last frame, the bolt's POP.</param>
+    public static void Draw(PixelCanvas canvas, PixelPalette palette, WidgetSize size, IReadOnlyList<DeviceStatus> devices, bool showNames, BatteryMotion? motion = null)
     {
+        _motion = motion;
+        if (motion is not null)
+            devices = devices.Select(motion.Display).ToList();
         if (devices.Count == 0)
             DrawEmpty(canvas, palette);
         else if (size == WidgetSize.Small && devices.Count == 1)
@@ -26,7 +30,11 @@ internal static class BatteryPixelScene
             DrawRow(canvas, palette, devices, showNames);
         else
             DrawList(canvas, palette, devices);
+        _motion = null;
     }
+
+    [ThreadStatic]
+    private static BatteryMotion? _motion; // the motion of the widget being drawn (drawing is on the UI thread, one widget at a time)
 
     /// <summary>Small, one device: slot and big percentage on top, name, then a wide gauge.</summary>
     private static void DrawSingle(PixelCanvas canvas, PixelPalette palette, DeviceStatus device, bool showNames)
@@ -194,13 +202,24 @@ internal static class BatteryPixelScene
         {
             int percent = Math.Clamp(device.BatteryPercent!.Value, 0, 100);
             int filled = percent == 0 ? 0 : Math.Max(1, (int)Math.Round(innerWidth * percent / 100.0));
+            if (_motion is not null)
+                filled = _motion.FillPx(device.Id, innerWidth, filled);
             canvas.Fill(x + 2, y + 2, filled, innerHeight, LevelColor(device, palette));
         }
         if (known && device.IsCharging)
         {
             var bolt = height >= 10 ? PixelSprites.Bolt : PixelSprites.SmallBolt;
             int bodyWidth = width - 2;
-            canvas.DrawOutlined(bolt, x + (bodyWidth - bolt.Width) / 2, y + (height - bolt.Height) / 2, palette.Yellow, palette.Outline);
+            if (_motion?.BoltFrame(device.Id) == 1)
+            {
+                // POP, frame 1: the small bolt, plain; frame 2 is the outlined full bolt.
+                var small = PixelSprites.SmallBolt;
+                canvas.Draw(small, x + (bodyWidth - small.Width) / 2, y + (height - small.Height) / 2, _ => palette.Yellow);
+            }
+            else
+            {
+                canvas.DrawOutlined(bolt, x + (bodyWidth - bolt.Width) / 2, y + (height - bolt.Height) / 2, palette.Yellow, palette.Outline);
+            }
         }
     }
 

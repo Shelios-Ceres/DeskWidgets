@@ -2,6 +2,7 @@ using System.Numerics;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Hosting;
+using DeskWidgets.Hosting;
 
 namespace DeskWidgets.Motion;
 
@@ -79,6 +80,43 @@ internal static class GlassMotion
         animation.Duration = duration;
         animation.DelayTime = delay;
         visual.StartAnimation("Scale", animation);
+    }
+
+    /// <summary>
+    /// B8: scales a whole Glass window about its centre, from the scale it has now to <paramref name="to"/>: the frost on the system
+    /// compositor (pixels) and the card on the WinUI compositor (DIPs), the same curve on both, in step within a frame.
+    /// </summary>
+    public static void ScaleWindow(GlassBackdrop glass, UIElement card, Vector2 sizeDip, double dipToPx, float to, TimeSpan duration, GlassEase ease)
+    {
+        var xaml = VisualOf(card);
+        xaml.CenterPoint = new Vector3(sizeDip / 2, 0);
+        var frost = glass.Visual;
+        if (frost is not null)
+            frost.CenterPoint = new Vector3((float)(sizeDip.X * dipToPx) / 2, (float)(sizeDip.Y * dipToPx) / 2, 0);
+        if (!MotionSettings.Enabled || duration <= TimeSpan.Zero)
+        {
+            xaml.StopAnimation("Scale");
+            xaml.Scale = new Vector3(to, to, 1);
+            if (frost is not null)
+            {
+                frost.StopAnimation("Scale");
+                frost.Scale = new Vector3(to, to, 1);
+            }
+            return;
+        }
+        var curve = Curve(ease);
+        if (frost is not null)
+        {
+            var compositor = GlassBackdrop.Compositor;
+            var animation = compositor.CreateVector3KeyFrameAnimation();
+            animation.InsertKeyFrame(1f, new Vector3(to, to, 1), compositor.CreateCubicBezierEasingFunction(new Vector2((float)curve.X1, (float)curve.Y1), new Vector2((float)curve.X2, (float)curve.Y2)));
+            animation.Duration = duration;
+            frost.StartAnimation("Scale", animation);
+        }
+        var xamlAnimation = xaml.Compositor.CreateVector3KeyFrameAnimation();
+        xamlAnimation.InsertKeyFrame(1f, new Vector3(to, to, 1), Easing(xaml.Compositor, ease));
+        xamlAnimation.Duration = duration;
+        xaml.StartAnimation("Scale", xamlAnimation);
     }
 
     /// <summary>Puts the visual's opacity and scale at their starting values without a frame in between (call it before the element is shown).</summary>

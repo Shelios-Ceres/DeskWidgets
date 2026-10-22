@@ -1,3 +1,4 @@
+using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
 using DeskWidgets.PixelUi;
 using Microsoft.UI.Dispatching;
@@ -37,7 +38,7 @@ internal sealed class WorldClockWidget : UserControl, IWidget
     private const int CityCount = 4;
 
     private readonly WidgetOptions _options;
-    private readonly DispatcherQueueTimer _timer;
+    private FrameClock.Ticket? _timer; // the next beat, on the shared clock: a timer of its own leaked two handles with every clock made
     private readonly Grid _root = new();
     private readonly List<CityView> _views = [];
     private readonly List<WorldCity> _cities;
@@ -56,9 +57,6 @@ internal sealed class WorldClockWidget : UserControl, IWidget
             Content = _pixel = new PixelSurface((canvas, palette) => WorldClockPixelScene.Draw(canvas, palette, _size, _cities, DateTimeOffset.UtcNow, ShowSeconds));
         else
             Content = _root;
-        _timer = context.Services.Dispatcher.CreateTimer();
-        _timer.IsRepeating = false;
-        _timer.Tick += (_, _) => Tick();
         ActualThemeChanged += (_, _) => Render();
     }
 
@@ -101,7 +99,7 @@ internal sealed class WorldClockWidget : UserControl, IWidget
     public void Dispose()
     {
         _disposed = true;
-        _timer.Stop();
+        _timer?.Stop();
     }
 
     private List<WorldCity> LoadCities()
@@ -259,9 +257,8 @@ internal sealed class WorldClockWidget : UserControl, IWidget
         // Wake just after the next whole second (or minute) so the hands move on the beat.
         var wallClock = DateTime.Now;
         double wait = seconds ? 1000 - wallClock.Millisecond : (60 - wallClock.Second) * 1000 - wallClock.Millisecond;
-        _timer.Stop();
-        _timer.Interval = TimeSpan.FromMilliseconds(wait + 15);
-        _timer.Start();
+        _timer?.Stop();
+        _timer = FrameClock.After((int)Math.Max(1, wait + 15), Tick);
     }
 
     private TextBlock Label(string text, double fontSize, Windows.UI.Text.FontWeight weight, Brush foreground, bool centered = true) => new()

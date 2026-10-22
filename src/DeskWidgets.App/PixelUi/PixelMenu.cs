@@ -1,5 +1,6 @@
 using DeskWidgets.Core.Diagnostics;
 using DeskWidgets.Interop;
+using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
 
 namespace DeskWidgets.PixelUi;
@@ -83,7 +84,7 @@ internal sealed class PixelMenu
     /// </summary>
     public static PixelMenu Show(IReadOnlyList<MenuEntry> items, int anchorX, int anchorY, bool fromKeyboard = false, Action? closed = null)
     {
-        Active?.CloseAll(restoreForeground: false);
+        Active?.CloseAll(restoreForeground: false, animate: false);
         var anchor = new Win32.POINT { X = anchorX, Y = anchorY };
         var menu = new PixelMenu(closed) { _previousForeground = Native.GetForegroundWindow() };
 
@@ -97,7 +98,9 @@ internal sealed class PixelMenu
         Active = menu;
         if (fromKeyboard)
             root.Selected = MenuNav.First(items);
-        root.Draw(factor, x, y);
+        root.Spec = GrowSpec.Menu(above: y < anchorY);
+        root.Prepare();
+        root.GrowIn(root.Spec, factor, x, y); // B5: GROW from the pointer's corner (the whole menu at once with motion off)
         root.ShowWindow(activate: true);
         Win32.SetForegroundWindow(root.Hwnd);
         Native.SetFocus(root.Hwnd);
@@ -319,7 +322,7 @@ internal sealed class PixelMenu
             CloseAll(restoreForeground: false);
     }
 
-    public void CloseAll(bool restoreForeground)
+    public void CloseAll(bool restoreForeground, bool animate = true)
     {
         if (_closing)
             return;
@@ -336,7 +339,12 @@ internal sealed class PixelMenu
             Native.NotifyWinEvent(Native.EVENT_SYSTEM_MENUEND, rootHwnd, Native.OBJID_CLIENT, 0);
         }
         for (int i = _levels.Count - 1; i >= 0; i--)
-            _levels[i].Dispose();
+        {
+            if (animate)
+                _levels[i].ShrinkOut(_levels[i].Spec); // B5: SHRINK, then the window goes
+            else
+                _levels[i].Dispose();
+        }
         _levels.Clear();
         if (restoreForeground && _previousForeground != 0 && Native.IsWindow(_previousForeground))
         {
@@ -352,7 +360,7 @@ internal sealed class PixelMenu
         var level = Top;
         Native.NotifyWinEvent(Native.EVENT_SYSTEM_MENUPOPUPEND, level.Hwnd, Native.OBJID_CLIENT, 0);
         _levels.Remove(level);
-        level.Dispose();
+        level.ShrinkOut(level.Spec);
         if (_levels.Count > 0)
         {
             Top.ChildFocused = false;
@@ -449,7 +457,9 @@ internal sealed class PixelMenu
             child.EnsureVisible(child.Selected);
         }
         _levels.Add(child);
-        child.Draw(factor, x, y);
+        child.Spec = GrowSpec.Submenu(toTheLeft: x < parent.Origin.X);
+        child.Prepare();
+        child.GrowIn(child.Spec, factor, x, y); // B5: GROW sideways from the parent's edge
         child.ShowWindow(activate: false);
         child.AnnounceOpened(submenu: true);
         if (child.Selected >= 0)

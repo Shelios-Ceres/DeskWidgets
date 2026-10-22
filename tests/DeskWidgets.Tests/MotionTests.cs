@@ -1,5 +1,6 @@
 using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
+using DeskWidgets.Widgets.Battery;
 using DeskWidgets.Widgets;
 using DeskWidgets.Widgets.Folder;
 
@@ -73,6 +74,102 @@ public class MotionTests
         Assert.Equal(0u, right.Get(10, 20));
         Assert.NotEqual(0u, right.Get(80, 20));
     }
+
+    // ----- Build B: GROW, SHRINK, DISSOLVE, STEP -----
+
+    [Fact]
+    public void ACardsEmptyFrame_IsTheCardAtAShare_CentredOnATransparentCanvas()
+    {
+        var palette = PixelPalette.For(dark: false);
+        var whole = new PixelCanvas(82, 82);
+        PixelCard.DrawShare(whole, palette, 1);
+        var plain = new PixelCanvas(82, 82);
+        PixelCard.Draw(plain, palette);
+        Assert.Equal(plain.Pixels, whole.Pixels);
+
+        var third = new PixelCanvas(82, 82);
+        PixelCard.DrawShare(third, palette, 1.0 / 3);
+        Assert.NotEqual(0u, third.Get(41, 41)); // the middle of the small card
+        Assert.Equal(0u, third.Get(5, 5)); // the original corner is empty
+        Assert.Equal(0u, third.Get(77, 77));
+        Assert.Equal(0u, third.Get(41, 5));
+        Assert.Equal(third.Get(30, 41), third.Get(82 - 1 - 30, 41) == 0 ? 0u : third.Get(30, 41)); // symmetric about the centre
+    }
+
+    [Theory]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, true)]
+    public void AMenusEmptyFrame_GrowsFromTheEdgeItOpensFrom(bool above, bool topFilled, bool bottomFilled)
+    {
+        var from = GrowSpec.Menu(above).From;
+        var palette = PixelPalette.For(dark: false);
+        var frame = PixelMotion.EmptyPanel(palette, 80, 90, PixelFrame.MenuCorner, 2, from, 1.0 / 3);
+        Assert.Equal((82, 92), (frame.Width, frame.Height));
+        Assert.Equal(topFilled, frame.Get(40, 10) != 0);
+        Assert.Equal(bottomFilled, frame.Get(40, 80) != 0);
+        Assert.NotEqual(0u, frame.Get(5, topFilled ? 10 : 80)); // the whole width, from the first frame
+        Assert.NotEqual(0u, frame.Get(74, topFilled ? 10 : 80));
+    }
+
+    [Fact]
+    public void ASubmenusEmptyFrame_IsHalfTheWidth_NextToItsParent_AndADialogsGrowsOnBothAxes()
+    {
+        var palette = PixelPalette.For(dark: false);
+        var right = PixelMotion.EmptyPanel(palette, 80, 60, PixelFrame.MenuCorner, 2, GrowFrom.Left, 0.5);
+        Assert.NotEqual(0u, right.Get(10, 30));
+        Assert.Equal(0u, right.Get(60, 30));
+        var left = PixelMotion.EmptyPanel(palette, 80, 60, PixelFrame.MenuCorner, 2, GrowFrom.Right, 0.5);
+        Assert.Equal(0u, left.Get(10, 30));
+        Assert.NotEqual(0u, left.Get(70, 30));
+        var centre = PixelMotion.EmptyPanel(palette, 120, 80, PixelFrame.DialogCorner, 2, GrowFrom.Center, 1.0 / 3);
+        Assert.NotEqual(0u, centre.Get(60, 40));
+        Assert.Equal(0u, centre.Get(5, 40));
+        Assert.Equal(0u, centre.Get(60, 5));
+    }
+
+    [Fact]
+    public void ThePopupSpecs_AreTheDesigns()
+    {
+        Assert.Equal([1.0 / 3, 2.0 / 3], GrowSpec.Menu(above: false).Shares);
+        Assert.Equal(GrowFrom.Bottom, GrowSpec.Menu(above: true).From);
+        Assert.Equal([0.5], GrowSpec.Submenu(toTheLeft: false).Shares);
+        Assert.Equal(GrowFrom.Right, GrowSpec.Submenu(toTheLeft: true).From);
+        Assert.Equal(GrowFrom.Center, GrowSpec.Dialog().From);
+    }
+
+    [Fact]
+    public void ADissolvesFrame_ShowsTheNewPictureWhereTheMaskIsBelowFourTimesTheFrame()
+    {
+        for (int frame = 1; frame <= 4; frame++)
+        {
+            int shown = 0;
+            for (int y = 0; y < 4; y++)
+                for (int x = 0; x < 4; x++)
+                    if (PixelMotion.BayerAt(x, y) < 4 * frame)
+                        shown++;
+            Assert.Equal(4 * frame, shown); // a quarter more of the new picture each frame, all of it on frame 4
+        }
+    }
+
+    [Theory]
+    [InlineData(76, 40, 6, 1, 70)]
+    [InlineData(76, 40, 6, 3, 58)]
+    [InlineData(76, 40, 6, 6, 40)]
+    [InlineData(10, 25, 4, 1, 14)]
+    [InlineData(10, 25, 4, 3, 22)]
+    [InlineData(10, 25, 4, 4, 25)]
+    [InlineData(20, 20, 3, 1, 20)]
+    public void AGaugeFill_StepsInWholePixels_AndArrivesOnTheLastFrame(int from, int to, int frames, int frame, int expected)
+        => Assert.Equal(expected, BatteryMotion.StepTo(from, to, frames, frame));
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(4, 1)]
+    [InlineData(20, 5)]
+    [InlineData(36, 6)]
+    [InlineData(100, 6)]
+    public void ALevelChange_TakesAtMostSixFrames(int points, int frames)
+        => Assert.Equal(frames, BatteryMotion.FramesFor(points));
 
     // ----- what a changed list does -----
 

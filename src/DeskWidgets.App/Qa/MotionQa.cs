@@ -14,7 +14,7 @@ namespace DeskWidgets.Qa;
 /// over the noise stage). Each moment is triggered the way the app triggers it, recorded from the screen (contact sheets and frame
 /// times), and then repeated for a CPU and handle count. <c>--motion-off</c> runs the same moments with "Animation effects" off.
 /// </summary>
-internal static class MotionQa
+internal static partial class MotionQa
 {
     private static readonly Stopwatch Clock = Stopwatch.StartNew();
     private static readonly StringBuilder Report = new();
@@ -54,6 +54,8 @@ internal static class MotionQa
                 }
             }
             Line("done");
+            if (Environment.GetCommandLineArgs().Any(a => a.Equals("--motion-hold", StringComparison.OrdinalIgnoreCase)))
+                await Task.Delay(120000); // stay up, so that handles.ps1 can count the handles by type
         }
         catch (Exception ex)
         {
@@ -73,6 +75,19 @@ internal static class MotionQa
         "search-timing" => SearchTiming(host, WidgetTheme.Glass),
         "a3-pixel" => PanelHover(host, WidgetTheme.Pixel),
         "card-glass" => CardMoments(host, WidgetTheme.Glass),
+        "b5-pixel" => MenusAndDialogs(host),
+        "b6-glass" => BatteryChanges(host, WidgetTheme.Glass),
+        "b6-pixel" => BatteryChanges(host, WidgetTheme.Pixel),
+        "b7-glass" => SizeAndShade(host, WidgetTheme.Glass),
+        "b7-pixel" => SizeAndShade(host, WidgetTheme.Pixel),
+        "b7-switch" => ThemeSwitch(host),
+        "b8-glass" => WidgetAddRemove(host, WidgetTheme.Glass),
+        "b8-pixel" => WidgetAddRemove(host, WidgetTheme.Pixel),
+        "leak-widgets" => LeakWidgets(host),
+        "leak-bare" => LeakBare(),
+        "leak-clock" => LeakOne(host, "clock"),
+        "leak-folder" => LeakOne(host, "folder"),
+        "leak-theme" => LeakTheme(host),
         "card-hover-glass" => CardHover(host, WidgetTheme.Glass),
         "card-hover-pixel" => CardHover(host, WidgetTheme.Pixel),
         "card-pixel" => CardMoments(host, WidgetTheme.Pixel),
@@ -287,6 +302,89 @@ internal static class MotionQa
         await Recorded("hover ends", $"a3-{theme}-hover3", x, y, () => panel.PrepareForCapture(new FolderCapture(Hover: -1)), afterMs: 500, sheetFrames: 8);
         folder.ClosePanelForCapture();
         await Task.Delay(600);
+    }
+
+    // ----- handles over adding and removing widgets, and over theme switches (Phase 12 leaks 2 and 3) -----
+
+    private static async Task LeakWidgets(WidgetHost host)
+    {
+        host.SetTheme(WidgetTheme.Glass);
+        await Task.Delay(1500);
+        Line("## handles over adding and removing a widget (one of each kind per round)");
+        foreach (string type in new[] { "clock", "worldclock", "battery", "folder" })
+        {
+            var factory = WidgetCatalog.Find(type)!;
+            await Cycles($"add and remove a {type}", 25, async () =>
+            {
+                host.AddWidget(factory);
+                await Task.Delay(350);
+                host.RemoveWidget(host.Windows[^1]);
+                await Task.Delay(350);
+            });
+        }
+    }
+
+    // A bare WinUI window (no widget, no glass) made and closed: what WinUI itself leaves behind per window.
+    private static async Task LeakBare()
+    {
+        await Task.Delay(1500);
+        var weak = new List<WeakReference>();
+        await Cycles("make and close a bare WinUI window", 40, async () =>
+        {
+            var content = new Microsoft.UI.Xaml.Controls.Grid();
+            var window = new Microsoft.UI.Xaml.Window { Content = content };
+            weak.Add(new WeakReference(window));
+            weak.Add(new WeakReference(content));
+            window.Activate();
+            await Task.Delay(350);
+            window.Close();
+            await Task.Delay(350);
+        });
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Line($"  bare windows and their content still alive: {weak.Count(w => w.IsAlive)} of {weak.Count}");
+    }
+
+    private static async Task LeakOne(WidgetHost host, string type)
+    {
+        host.SetTheme(WidgetTheme.Glass);
+        await Task.Delay(1500);
+        var factory = WidgetCatalog.Find(type)!;
+        var weak = new List<WeakReference>();
+        await Cycles($"add and remove a {type}", 40, async () =>
+        {
+            host.AddWidget(factory);
+            await Task.Delay(350);
+            Remember(weak, host.Windows[^1]);
+            host.RemoveWidget(host.Windows[^1]);
+            await Task.Delay(350);
+        });
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Line($"  of {weak.Count / 3} removed: windows still alive {weak.Where((w, i) => i % 3 == 0).Count(w => w.IsAlive)}, widgets {weak.Where((w, i) => i % 3 == 1).Count(w => w.IsAlive)}, views {weak.Where((w, i) => i % 3 == 2).Count(w => w.IsAlive)}");
+    }
+
+    private static void Remember(List<WeakReference> weak, WidgetWindow window)
+    {
+        weak.Add(new WeakReference(window));
+        weak.Add(new WeakReference(window.Widget));
+        weak.Add(new WeakReference(window.Widget.View));
+    }
+
+    private static async Task LeakTheme(WidgetHost host)
+    {
+        host.SetTheme(WidgetTheme.Glass);
+        await Task.Delay(1500);
+        Line("## handles over theme switches (four widgets)");
+        await Cycles("Glass to Pixel and back", 30, async () =>
+        {
+            host.SetTheme(WidgetTheme.Pixel);
+            await Task.Delay(500);
+            host.SetTheme(WidgetTheme.Glass);
+            await Task.Delay(500);
+        });
     }
 
     // ----- the card -----

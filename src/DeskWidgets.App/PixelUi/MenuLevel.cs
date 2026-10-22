@@ -1,4 +1,5 @@
 using DeskWidgets.Interop;
+using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
 
 namespace DeskWidgets.PixelUi;
@@ -35,8 +36,28 @@ internal sealed class MenuLevel : PixelPopupWindow
     /// <summary>The row of the parent level that opened this one.</summary>
     public int ParentIndex { get; }
 
-    /// <summary>The current row: the one under the pointer or reached by the keyboard (one highlight per menu), or -1.</summary>
-    public int Selected { get; set; } = -1;
+    private int _selected = -1;
+    private StepAnimator? _wipe;
+    private int _wipeRow = -1; // while the first frame of a WIPE shows: the row whose bar is half drawn
+
+    /// <summary>
+    /// The current row: the one under the pointer or reached by the keyboard (one highlight per menu), or -1.
+    /// A new current row's bar WIPEs in from the left (B5): half its width, then all of it; a newer row cuts the last wipe short.
+    /// </summary>
+    public int Selected
+    {
+        get => _selected;
+        set
+        {
+            if (value == _selected)
+                return;
+            _selected = value;
+            BeginWipe(value);
+        }
+    }
+
+    /// <summary>How this panel grows and shrinks (B5): set by the menu when it opens it.</summary>
+    public GrowSpec Spec { get; set; } = GrowSpec.Menu(above: false);
 
     /// <summary>The row the mouse button is held on, or -1.</summary>
     public int Pressed { get; set; } = -1;
@@ -74,14 +95,61 @@ internal sealed class MenuLevel : PixelPopupWindow
         }
     }
 
+    private MenuDrawing Paint(PixelPalette palette)
+    {
+        var paint = new MenuPaint(_panelHeight, Scrollable, FirstRow, Selected, Pressed, ChildFocused);
+        var drawing = MenuPainter.Draw(palette, Layout, paint);
+        if (_wipeRow >= 0)
+            MenuPainter.WipeRow(drawing, MenuPainter.Draw(palette, Layout, paint with { Selected = -1 }), _wipeRow, Layout.Width);
+        return drawing;
+    }
+
+    /// <summary>Works out the rows' places without showing anything yet (the pointer can hit them from the first GROW frame).</summary>
+    public void Prepare() => _drawing = Paint(CurrentPalette());
+
     public void Draw(int factor, int screenX, int screenY)
     {
         var palette = CurrentPalette();
-        _drawing = MenuPainter.Draw(palette, Layout, new MenuPaint(_panelHeight, Scrollable, FirstRow, Selected, Pressed, ChildFocused));
+        _drawing = Paint(palette);
         Present(PixelFrame.WithShadow(_drawing.Panel, palette.Shadow, MenuLayout.ShadowOffset), factor, screenX, screenY);
     }
 
-    public void Redraw() => Draw(Factor, Origin.X, Origin.Y);
+    /// <summary>Draws the panel as it is now. A change in a panel that is still growing shows it whole at once: input wins.</summary>
+    public void Redraw()
+    {
+        if (Leaving || Hwnd == 0)
+            return;
+        CancelGrow();
+        Draw(Factor, Origin.X, Origin.Y);
+    }
+
+    protected override PixelCanvas? EmptyFrame(GrowFrom from, double share)
+        => PixelMotion.EmptyPanel(CurrentPalette(), Layout.Width, _panelHeight, PixelFrame.MenuCorner, MenuLayout.ShadowOffset, from, share);
+
+    protected override void DrawFinal(int factor, int x, int y) => Draw(factor, x, y);
+
+    private void BeginWipe(int row)
+    {
+        if (row < 0 || _drawing is null || Leaving || !MotionSettings.Enabled || !Items[row].Focusable)
+        {
+            EndWipe();
+            return;
+        }
+        _wipeRow = row;
+        _wipe ??= new StepAnimator();
+        _wipe.Start(2, frame =>
+        {
+            if (frame > 0)
+                _wipeRow = -1;
+            Redraw();
+        });
+    }
+
+    private void EndWipe()
+    {
+        _wipe?.Cancel();
+        _wipeRow = -1;
+    }
 
     /// <summary>Scrolls just enough to show row <paramref name="index"/>.</summary>
     public void EnsureVisible(int index)
@@ -252,6 +320,8 @@ internal sealed class MenuLevel : PixelPopupWindow
 
     public override void Dispose()
     {
+        _wipe?.Dispose();
+        _wipe = null;
         if (Hwnd != 0)
         {
             _accessible.RaiseOpened(UiaNative.EventMenuClosed);

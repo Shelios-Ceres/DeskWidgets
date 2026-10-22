@@ -1,3 +1,4 @@
+using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
 using DeskWidgets.PixelUi;
 using Microsoft.UI.Dispatching;
@@ -29,7 +30,7 @@ internal sealed class ClockWidgetFactory : IWidgetFactory
 
 internal sealed class ClockWidget : UserControl, IWidget
 {
-    private readonly DispatcherQueueTimer _timer;
+    private readonly FrameClock.Ticket _timer; // a ticket on the shared clock: a timer of its own leaked two handles with every clock made
     private readonly TextBlock _weekday = new() { FontWeight = FontWeights.SemiBold };
     private readonly TextBlock _time = new() { FontWeight = FontWeights.SemiBold };
     private readonly TextBlock _date = new();
@@ -52,10 +53,7 @@ internal sealed class ClockWidget : UserControl, IWidget
         else
             Content = _panel;
 
-        _timer = context.Services.Dispatcher.CreateTimer();
-        _timer.Interval = TimeSpan.FromSeconds(1);
-        _timer.Tick += (_, _) => Refresh();
-        _timer.Start();
+        _timer = FrameClock.Every(1000, _ => Refresh());
         ActualThemeChanged += (_, _) => ApplyTheme();
         ApplyTheme();
         Refresh();

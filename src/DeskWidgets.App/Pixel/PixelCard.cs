@@ -47,6 +47,28 @@ internal static class PixelCard
         }
     }
 
+    /// <summary>
+    /// GROW and SHRINK's empty frame for a card: the panel at <paramref name="share"/> of its width and height, centred on a transparent
+    /// canvas of the full size. A share of 1 or more is the card itself.
+    /// </summary>
+    public static void DrawShare(PixelCanvas canvas, PixelPalette palette, double share)
+    {
+        if (share >= 1)
+        {
+            Draw(canvas, palette);
+            return;
+        }
+        int width = Math.Clamp((int)Math.Round(canvas.Width * share), 8, canvas.Width);
+        int height = Math.Clamp((int)Math.Round(canvas.Height * share), 8, canvas.Height);
+        var small = new PixelCanvas(width, height);
+        Draw(small, palette);
+        int left = (canvas.Width - width) / 2, top = (canvas.Height - height) / 2;
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                if (small.Get(x, y) != 0)
+                    canvas.Set(left + x, top + y, small.Get(x, y));
+    }
+
     private static bool Inside(int x, int y, int width, int height)
     {
         if (x < 0 || y < 0 || x >= width || y >= height)

@@ -1,4 +1,5 @@
 using DeskWidgets.Core.Devices;
+using DeskWidgets.Motion;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -28,6 +29,8 @@ internal sealed class BatteryRing : Grid
     private double _target = double.NaN;
     private DateTime _animationStart;
     private bool _animating;
+    private bool _badgeOn, _updated;
+    private FrameClock.Ticket? _badgeHide;
 
     public BatteryRing(double diameter, double thickness)
     {
@@ -83,7 +86,8 @@ internal sealed class BatteryRing : Grid
         {
             _track.Stroke = palette.Placeholder;
             _glyph.Glyph = string.Empty;
-            _badge.Visibility = Visibility.Collapsed;
+            SetBadge(false);
+            _updated = true;
             SetTarget(0, animate: false);
             return;
         }
@@ -96,8 +100,38 @@ internal sealed class BatteryRing : Grid
         _glyph.Foreground = device.IsConnected ? palette.Primary : palette.Secondary;
         _badge.Background = level;
         _badgeGlyph.Foreground = palette.OnAccent;
-        _badge.Visibility = chargingBadge && known && device.IsCharging ? Visibility.Visible : Visibility.Collapsed;
+        SetBadge(chargingBadge && known && device.IsCharging);
+        _updated = true;
         SetTarget(known ? device.BatteryPercent!.Value / 100.0 : 0, animate: true);
+    }
+
+    /// <summary>B6: the charging badge fades in (Quick) and out (Exit) when charging starts and stops; the first look at a ring shows it at once.</summary>
+    private void SetBadge(bool on)
+    {
+        if (on == _badgeOn && _updated)
+            return;
+        bool animate = _updated && MotionSettings.Enabled;
+        _badgeOn = on;
+        _badgeHide?.Stop();
+        _badgeHide = null;
+        if (on)
+        {
+            if (animate)
+                GlassMotion.Preset(_badge, 0, 1, default);
+            _badge.Visibility = Visibility.Visible;
+            if (animate)
+                GlassMotion.FadeTo(_badge, 1, GlassMotion.Quick, GlassEase.Out);
+            else
+                GlassMotion.Rest(_badge);
+            return;
+        }
+        if (!animate || _badge.Visibility == Visibility.Collapsed)
+        {
+            _badge.Visibility = Visibility.Collapsed;
+            return;
+        }
+        GlassMotion.FadeTo(_badge, 0, GlassMotion.Exit, GlassEase.In);
+        _badgeHide = FrameClock.After((int)GlassMotion.LeaveDuration.TotalMilliseconds, () => _badge.Visibility = Visibility.Collapsed);
     }
 
     private void SetTarget(double target, bool animate)
@@ -106,7 +140,9 @@ internal sealed class BatteryRing : Grid
             return;
         bool first = double.IsNaN(_target);
         _target = target;
-        if (!animate)
+        // A ring built for new content (a size, a theme, a new widget, start-up) shows its level at once; the glide is for a level change of a
+        // ring already on screen, and "Animation effects" off takes the level at once too.
+        if (!animate || first || !MotionSettings.Enabled)
         {
             StopAnimation();
             _shown = target;

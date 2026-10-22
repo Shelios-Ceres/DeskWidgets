@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using DeskWidgets.Interop;
+using DeskWidgets.Motion;
 using DeskWidgets.PixelUi;
 using DeskWidgets.Widgets;
 using Microsoft.UI.Windowing;
@@ -19,7 +20,7 @@ namespace DeskWidgets.Hosting;
 /// its body, snaps to screen edges and neighbouring widgets, and keeps out of
 /// the taskbar and Alt+Tab.
 /// </summary>
-internal sealed class WidgetWindow : Window, IWidgetSite
+internal sealed partial class WidgetWindow : Window, IWidgetSite
 {
     private const double DragThreshold = 4;
     private const double EdgeGap = 16;
@@ -81,8 +82,8 @@ internal sealed class WidgetWindow : Window, IWidgetSite
         _frame.PointerPressed += OnPointerPressed;
         _frame.PointerMoved += OnPointerMoved;
         _frame.PointerReleased += OnPointerReleased;
-        _frame.PointerExited += (_, _) => (Widget as IPointerWidget)?.CardPointerMoved(null);
-        _frame.PointerCaptureLost += (_, _) => EndDrag();
+        _frame.PointerExited += OnPointerExited;
+        _frame.PointerCaptureLost += OnPointerCaptureLost;
         _frame.RightTapped += OnRightTapped;
         Closed += OnClosed;
 
@@ -124,8 +125,10 @@ internal sealed class WidgetWindow : Window, IWidgetSite
         ApplyZOrder();
         RegisterDropTarget();
         // WinUI creates its child windows lazily: register again once the content is up.
-        _frame.Loaded += (_, _) => RegisterDropTarget();
+        _frame.Loaded += OnFrameLoaded;
     }
+
+    private void OnFrameLoaded(object sender, RoutedEventArgs e) => RegisterDropTarget();
 
     private CardDropTarget? _dropTarget; // must outlive the registrations
 
@@ -157,22 +160,26 @@ internal sealed class WidgetWindow : Window, IWidgetSite
     {
         if (theme == _theme)
             return;
+        BeginThemeMotion(theme);
         _theme = theme;
         var previous = Widget;
-        Widget = CreateWidget();
+        // B7: a new Pixel card shows its frame at once and its content dissolves in from the empty card.
+        Pixel.PixelSurface.DissolveIn(() => Widget = CreateWidget());
         _frame.SetCard(theme, Placement.Size);
         _frame.SetContent(Widget.View);
         previous.Dispose();
         _glass.SetVisible(theme == WidgetTheme.Glass);
-        Widget.ApplySize(Placement.Size);
+        Pixel.PixelSurface.DissolveIn(() => Widget.ApplySize(Placement.Size));
         ResizeToCard();
         EnsureOnScreen();
+        EndThemeMotion();
     }
 
     /// <summary>Closes the window for good (removal or app exit); user close gestures are ignored.</summary>
     public void CloseFromHost()
     {
         _closingByHost = true;
+        SystemBackdrop = null;
         Close();
     }
 
@@ -299,6 +306,8 @@ internal sealed class WidgetWindow : Window, IWidgetSite
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
+        if (_leaving)
+            return;
         var point = e.GetCurrentPoint(_frame);
         // Cards never take the activation, so a press on one does not deactivate a Big Folder's open panel by itself: close it here.
         Widgets.Folder.FolderPanels.CardPressed(Widget);
@@ -447,6 +456,8 @@ internal sealed class WidgetWindow : Window, IWidgetSite
 
     private void OnRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
+        if (_leaving)
+            return;
         ShowContextMenu(e.GetPosition(_frame));
         e.Handled = true;
     }
@@ -470,6 +481,11 @@ internal sealed class WidgetWindow : Window, IWidgetSite
         {
             _menuOpen = true;
             Win32.SetWindowPos(_hwnd, Win32.HWND_TOP, 0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+        };
+        menu.Opened += (_, _) =>
+        {
+            FlyoutRaiser.Raise(_hwnd);
+            DispatcherQueue.TryEnqueue(() => FlyoutRaiser.Raise(_hwnd)); // the popup's window may come up a moment after the event
         };
         menu.Closed += (_, _) =>
         {
@@ -519,13 +535,30 @@ internal sealed class WidgetWindow : Window, IWidgetSite
         _ => Strings.SizeLarge,
     };
 
-    private void SetSize(WidgetSize size)
+    /// <summary>Design QA: forces the card's light or dark theme (as the system flipping would).</summary>
+    internal void ForceElementTheme(ElementTheme theme)
+    {
+        if (Content is FrameworkElement root)
+            root.RequestedTheme = theme;
+    }
+
+    internal void SetSize(WidgetSize size)
     {
         if (size == Placement.Size)
             return;
+        FinishMorph(); // a size change still running ends at its own size first
+        var old = WidgetLayout.GetCardPixels(Placement.Size, _theme, _scale);
         Placement.Size = size;
+        if (_theme == WidgetTheme.Glass && MotionSettings.Enabled)
+        {
+            MorphTo(size, old);
+            SnapAndSave();
+            return;
+        }
+        FinishMorph();
         _frame.SetCard(_theme, size);
-        Widget.ApplySize(size);
+        // B7, Pixel: the window takes the new size at once, the card's frame draws at once, and the content dissolves in from the empty card.
+        Pixel.PixelSurface.DissolveIn(() => Widget.ApplySize(size));
         ResizeToCard();
         SnapAndSave();
     }
@@ -547,9 +580,28 @@ internal sealed class WidgetWindow : Window, IWidgetSite
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        DisposeMotion();
         _dropTarget?.Revoke();
         Win32.RemoveWindowSubclass(_hwnd, _subclassProc, 1);
         Widget.Dispose();
         _glass.Dispose();
+        // WinUI keeps its side of a closed window alive, and every handler we hung on it keeps this object, the card and the widget alive
+        // too (a bare window with no handlers is collected): unhook them all, or each removed widget leaves its tree of Composition
+        // objects and events behind.
+        AppWindow.Closing -= OnAppWindowClosing;
+        Closed -= OnClosed;
+        _frame.Loaded -= OnFrameLoaded;
+        _frame.PointerPressed -= OnPointerPressed;
+        _frame.PointerMoved -= OnPointerMoved;
+        _frame.PointerReleased -= OnPointerReleased;
+        _frame.PointerExited -= OnPointerExited;
+        _frame.PointerCaptureLost -= OnPointerCaptureLost;
+        _frame.RightTapped -= OnRightTapped;
+        Content = null;
+        Widget = null!;
     }
+
+    private void OnPointerExited(object sender, PointerRoutedEventArgs e) => (Widget as IPointerWidget)?.CardPointerMoved(null);
+
+    private void OnPointerCaptureLost(object sender, PointerRoutedEventArgs e) => EndDrag();
 }
