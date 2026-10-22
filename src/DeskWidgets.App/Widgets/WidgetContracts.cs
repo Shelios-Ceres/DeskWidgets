@@ -91,6 +91,9 @@ internal interface IWidgetSite
 
     /// <summary>Saves the widget's options soon.</summary>
     void RequestSave();
+
+    /// <summary>The app-wide folder new Big Folders are made in (the <c>FolderRoot</c> setting); null when unset. Setting it saves soon.</summary>
+    string? FolderRoot { get; set; }
 }
 
 /// <summary>

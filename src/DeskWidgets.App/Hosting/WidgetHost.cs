@@ -59,6 +59,17 @@ internal sealed class WidgetHost
     /// <summary>The desktop grid at <paramref name="point"/>, sharing the icons' columns while they are arranged.</summary>
     public DesktopGrid GridAt(Win32.POINT point) => DesktopGrid.At(point, _icons.AnchorAt(point));
 
+    /// <summary>Where new Big Folders are made; null keeps the built-in default. Saved with the settings.</summary>
+    public string? FolderRoot
+    {
+        get => _settings.Current.FolderRoot;
+        set
+        {
+            _settings.Current.FolderRoot = string.IsNullOrWhiteSpace(value) ? null : value;
+            RequestSave();
+        }
+    }
+
     public WidgetTheme Theme => _settings.Current.Theme;
 
     /// <summary>Redraws every widget in <paramref name="theme"/> and saves it.</summary>

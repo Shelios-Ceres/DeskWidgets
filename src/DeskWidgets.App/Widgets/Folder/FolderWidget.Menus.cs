@@ -18,7 +18,18 @@ internal sealed partial class FolderWidget
         };
         if (Model.Exists)
             rows.Add(MenuEntry.Item(Strings.FolderRenameFolder, () => OpenPanel().BeginRenameFolder(), glyph: "", icon: PixelIcons.Pencil));
+        rows.Add(MenuEntry.Item(Strings.FolderRootRow, ChooseFolderRoot, glyph: "", icon: PixelIcons.Folder));
         return rows;
+    }
+
+    /// <summary>Picks the folder new Big Folders are made in. It starts in the current setting, else in the parent of this card's folder.</summary>
+    private void ChooseFolderRoot()
+    {
+        string? current = FolderActions.UsableRoot(_site.FolderRoot);
+        string? start = current is not null && Directory.Exists(current) ? current : Path.GetDirectoryName(Model.Path.TrimEnd('\\'));
+        string? chosen = ShellOps.PickFolder(OwnerHandle, Strings.FolderRootPickerTitle, start is not null && Directory.Exists(start) ? start : null);
+        if (chosen is not null)
+            _site.FolderRoot = chosen;
     }
 
     private void ChangeFolder()

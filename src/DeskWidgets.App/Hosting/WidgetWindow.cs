@@ -216,6 +216,12 @@ internal sealed class WidgetWindow : Window, IWidgetSite
 
     void IWidgetSite.RequestSave() => _host.RequestSave();
 
+    string? IWidgetSite.FolderRoot
+    {
+        get => _host.FolderRoot;
+        set => _host.FolderRoot = value;
+    }
+
     private void PlaceAt(int x, int y)
     {
         AppWindow.Move(new PointInt32(x, y));

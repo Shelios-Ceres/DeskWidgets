@@ -63,12 +63,51 @@ public class FolderDropPolicyTests
         Assert.Equal(DropEffect.Copy, Effect(File(path), Ctrl));
     }
 
-    [Fact]
-    public void OnlyShortcutsFromTheDesktopGetTheMoveRule()
+    [Theory]
+    [InlineData(@"C:\Users\asus\Desktop\note.txt", false)]
+    [InlineData(@"C:\Users\Public\Desktop\note.txt", false)]
+    [InlineData(@"C:\Users\asus\Desktop\Photos", true)]
+    public void OrdinaryItemsFromTheDesktop_AlwaysMove_EvenAcrossDrives(string path, bool folder)
     {
-        Assert.Equal(DropEffect.Copy, Effect(File(@"C:\Users\asus\Desktop\note.txt"), DropKeys.None)); // another drive: Explorer's copy
+        var entry = folder ? Dir(path) : File(path);
+        Assert.Equal(DropEffect.Move, Effect(entry, DropKeys.None)); // the folder is on D:, the desktop on C:: Explorer would copy
+        Assert.Equal(DropEffect.Move, Effect(entry, Shift));
+        Assert.Equal(DropEffect.Copy, Effect(entry, Ctrl));
+        Assert.Equal(DropEffect.Link, Effect(entry, Alt));
+        Assert.Equal(DropEffect.Link, Effect(entry, CtrlShift));
+    }
+
+    [Fact]
+    public void TheDesktopRule_DoesNotReachBeyondTheDesktopItself()
+    {
         Assert.Equal(DropEffect.Copy, Effect(File(@"C:\Users\asus\Documents\Tool.lnk"), DropKeys.None)); // not on the desktop
         Assert.Equal(DropEffect.Copy, Effect(File(@"C:\Users\asus\Desktop\Sub\Tool.lnk"), DropKeys.None)); // a subfolder of it is not the desktop
+        Assert.Equal(DropEffect.Copy, Effect(File(@"C:\Users\asus\Desktop\Sub\note.txt"), DropKeys.None));
+        Assert.Equal(DropEffect.Copy, Effect(File(@"C:\Users\asus\Documents\note.txt"), DropKeys.None)); // other drives still copy
+    }
+
+    [Fact]
+    public void ProgramsOnTheDesktop_KeepTheProgramRules()
+    {
+        var program = File(@"C:\Users\asus\Desktop\Tool.exe");
+        Assert.Equal(DropEffect.Link, Effect(program, DropKeys.None));
+        Assert.Equal(DropEffect.Move, Effect(program, Shift));
+        Assert.Equal(DropEffect.Copy, Effect(program, Ctrl));
+
+        var policy = Policy(@"C:\Users\asus\Desktop\Portable");
+        var portable = Dir(@"C:\Users\asus\Desktop\Portable");
+        Assert.Equal(DropEffect.Link, Effect(portable, DropKeys.None, policy));
+        Assert.Equal(DropEffect.Move, Effect(portable, Shift, policy));
+    }
+
+    [Fact]
+    public void AMixedDesktopDrop_IsNamedByItsItems()
+    {
+        var policy = Policy();
+        var note = policy.Decide(File(@"C:\Users\asus\Desktop\note.txt"), DropKeys.None, Folder);
+        var other = policy.Decide(File(@"C:\Users\asus\Documents\note.txt"), DropKeys.None, Folder);
+        Assert.Equal(DropVerb.Move, DropPolicy.Summarize([note]));
+        Assert.Equal(DropVerb.Mixed, DropPolicy.Summarize([note, other])); // move + copy
     }
 
     [Fact]

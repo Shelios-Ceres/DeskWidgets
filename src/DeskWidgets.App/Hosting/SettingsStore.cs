@@ -23,6 +23,10 @@ internal sealed class AppSettings
 
     public WidgetTheme Theme { get; set; } = WidgetTheme.Glass;
 
+    /// <summary>Where new Big Folders are made. Null (absent from the file) keeps the built-in default: under the user profile, on the Desktop's drive.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? FolderRoot { get; set; }
+
     public List<WidgetPlacement> Widgets { get; set; } = [];
 }
 

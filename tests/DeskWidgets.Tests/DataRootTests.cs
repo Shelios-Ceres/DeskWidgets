@@ -162,4 +162,46 @@ public class DataRootTests
         Assert.Equal(@"C:\Users\asus", FolderActions.DefaultFolderParent(@"C:\Users\asus", @"C:\Users\asus\Desktop", null));
         Assert.Equal(@"D:\Big Folders", FolderActions.DefaultFolderParent(@"C:\Users\asus", @"D:\Desktop", null));
     }
+
+    [Fact]
+    public void ANewBigFolder_GoesInTheFolderRoot_WhenOneIsSet()
+    {
+        Assert.Equal(@"D:\Widget\big folder", FolderActions.DefaultFolderParent(@"C:\Users\asus", @"C:\Users\asus\Desktop", null, @"D:\Widget\big folder"));
+        Assert.Equal(@"D:\Widget\big folder", FolderActions.DefaultFolderParent(@"C:\Users\asus", @"D:\Desktop", null, @"D:\Widget\big folder\")); // a trailing slash is dropped
+        Assert.Equal(@"E:\", FolderActions.DefaultFolderParent(@"C:\Users\asus", @"C:\Users\asus\Desktop", null, @"E:\"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(@"big folder")] // relative: it would depend on the working directory
+    [InlineData(@"\big folder")]
+    [InlineData(@"D:big folder")]
+    [InlineData("D:\\bad|name")]
+    public void AnUnusableFolderRoot_FallsBackToTheDefault(string? root)
+    {
+        Assert.Null(FolderActions.UsableRoot(root));
+        Assert.Equal(@"C:\Users\asus", FolderActions.DefaultFolderParent(@"C:\Users\asus", @"C:\Users\asus\Desktop", null, root));
+    }
+
+    [Fact]
+    public void ATestInstance_IgnoresAFolderRoot()
+    {
+        string testFolder = Path.Combine(TestSetup.DataFolder, "Big Folders");
+        // A seed copied from the user's settings must never send a test into the user's real folders.
+        Assert.Equal(testFolder, FolderActions.DefaultFolderParent(@"C:\Users\asus", @"C:\Users\asus\Desktop", testFolder, @"D:\Widget\big folder"));
+    }
+
+    [Fact]
+    public void TheFolderRoot_IsSavedOnlyWhenSet()
+    {
+        var settings = new AppSettings();
+        string unset = System.Text.Json.JsonSerializer.Serialize(settings);
+        Assert.DoesNotContain("FolderRoot", unset);
+
+        settings.FolderRoot = @"D:\Widget\big folder";
+        var back = System.Text.Json.JsonSerializer.Deserialize<AppSettings>(System.Text.Json.JsonSerializer.Serialize(settings));
+        Assert.Equal(@"D:\Widget\big folder", back!.FolderRoot);
+    }
 }

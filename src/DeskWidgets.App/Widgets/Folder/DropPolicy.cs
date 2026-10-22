@@ -30,7 +30,7 @@ internal enum DropVerb
 }
 
 /// <summary>
-/// The Big Folder's drop table: programs are never moved, everything else follows Explorer's rules.
+/// The Big Folder's drop table: programs are never moved, ordinary items from the desktop always move, everything else follows Explorer's rules.
 /// Pure logic; the only file-system question it asks (is there an exe directly inside this folder)
 /// goes through <c>portableExe</c> so tests can answer it.
 /// </summary>
@@ -50,7 +50,7 @@ internal sealed class DropPolicy
 
     /// <param name="protectedRoots">Everything under these becomes a shortcut, even with Shift (Program Files, Windows, ProgramData).</param>
     /// <param name="programOnlyRoots">Only programs under these become shortcuts (AppData); anything else follows the ordinary rules.</param>
-    /// <param name="desktopRoots">The Desktop and the Public Desktop: shortcuts taken from there move into the folder.</param>
+    /// <param name="desktopRoots">The Desktop and the Public Desktop: ordinary items taken from there move into the folder, even across drives.</param>
     public DropPolicy(IEnumerable<string> protectedRoots, IEnumerable<string> programOnlyRoots, IEnumerable<string> desktopRoots, Func<string, string?>? portableExe = null)
     {
         ProtectedRoots = Normalize(protectedRoots);
@@ -168,7 +168,18 @@ internal sealed class DropPolicy
                 return new Decision(DropEffect.Move, what + " with Shift: moves");
             return new Decision(DropEffect.Link, what + ": new shortcut, the original stays", exe);
         }
+        // Whatever sits on the desktop moves in, even from another drive (Explorer would copy). The user keeps their things in this folder instead of on the desktop.
+        if (IsOnDesktop(path))
+            return new Decision(DesktopDefault(keys), "ordinary item from the desktop: moves in, even across drives");
         return new Decision(ExplorerDefault(path, destinationFolder, keys), "ordinary item: Explorer's rule");
+    }
+
+    /// <summary>The rule for an ordinary item taken from the desktop: it moves whatever the drive; Ctrl copies, Alt or Ctrl+Shift makes a shortcut.</summary>
+    public static DropEffect DesktopDefault(DropKeys keys)
+    {
+        if (keys.Alt || (keys.Ctrl && keys.Shift))
+            return DropEffect.Link;
+        return keys.Ctrl ? DropEffect.Copy : DropEffect.Move;
     }
 
     /// <summary>What a whole drop is called: all items agree, or "Add to" for a mix. Items that need no work do not count.</summary>

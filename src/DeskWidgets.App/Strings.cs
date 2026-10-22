@@ -144,6 +144,8 @@ internal static class Strings
     public static string FolderRenameFolder => T("重命名文件夹…", "Rename folder…");
     public static string FolderPickerTitle => T("选择大文件夹要显示的文件夹", "Choose the folder this card shows");
     public static string FolderDefaultName => T("大文件夹", "Big Folder");
+    public static string FolderRootRow => T("新文件夹的默认位置…", "Default location for new folders…");
+    public static string FolderRootPickerTitle => T("选择新的大文件夹的默认位置", "Choose where new Big Folders are made");
     public static string FolderOperationFailed(string detail) => T($"没能完成操作：{detail}", $"That didn't work: {detail}");
 
     public static string IconsLegacyToolRunning => T("旧的「桌面图标靠右排列」程序还在运行，请先退出它", "The old DesktopRightAlign tool is still running; quit it first");

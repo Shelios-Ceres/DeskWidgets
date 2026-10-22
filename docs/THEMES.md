@@ -61,6 +61,7 @@ A theme may change how information is presented (rings ↔ battery bars, full ci
   - States: empty ("Drop files here"); folder not found ("Folder not found": the header can't be clicked and drops are refused); drop hover (a tint and a label saying what the drop will do: Move to, Copy to, Create shortcut in, or Add to for a mixed drop).
   - A click on an item opens it; a click on the header or the stack opens the panel. In the panel a click selects (Ctrl and Shift extend the selection), a double-click or Enter opens, typing anywhere searches, the first Esc clears the search and the second closes the panel, and the footer shows the path and "{n} selected". The selection can be dragged out. **The panel stays open while the user works in it** (a rename, Move to Recycle Bin, Put back, sort, search, selection, the item menu, the card's menu with "Rename folder…", Properties, a drop on the card, a drag out) **and through every window that work brings up**, ours or Explorer's: a dialog, a file operation's progress or conflict window, the UAC prompt. **It closes when the user leaves it:** Esc (the second one when there is search text), a click on the card's header or stack, a press on any other card, a click on the desktop or on another program's window, or switching to another program (Alt+Tab, the taskbar). **It also closes after opening something:** a double-click, Enter, Open, Run as administrator, Show in Explorer, Open file location. After a rename the renamed item is selected; after a removal the item after it is.
   - A name that doesn't fit is shortened by one shared function, `NameShortener`, measured in the theme's own font (2.9).
+  - Where a new card's folder is made: in the **default location** if the user has chosen one (the card's menu, "Default location for new folders…", saved as the top-level `FolderRoot` setting; the folder is created if it is missing), else under the user profile on the Desktop's drive. "Change folder…" still points one card at any folder.
 
 ### 2.4 What colors mean
 
@@ -239,6 +240,7 @@ Added 2026-10-13.
   - `TypeId`: battery, clock, worldclock, folder
   - Enum names: `WidgetTheme`, `WidgetSize`, `AppLanguage`
   - Option keys: showNames, showDisconnected, cities, showSeconds; for the Big Folder, `path`, `sort` (newest, name, type or manual) and `order` (a JSON array of file names, used by Manual)
+  - Top-level setting `FolderRoot` (optional text, the folder new Big Folders are made in; absent keeps the default)
 
   The default of a new option must keep the existing behavior.
 - **Working together**: several sessions may be changing this repository at once.
@@ -381,6 +383,7 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-21 | In the Big Folder panel a click selects (Ctrl and Shift extend), a double-click or Enter opens; on the card a click opens. Esc clears the search first, then closes |
 | 2026-10-21 | 2.7 amended: the Big Folder card takes clicks on its cells and header and accepts dropped files |
 | 2026-10-21 | The Big Folder panel stays open through its own work and every window that work brings up, and closes only when the user leaves it (Esc, a click on the header or stack, a press on another card, the desktop or another program, Alt+Tab) or after opening something |
+| 2026-10-21 | Ordinary items taken from the Desktop or the Public Desktop always move into a Big Folder, even across drives (Ctrl copies, Alt makes a shortcut); programs keep their rules, and items from anywhere else keep Explorer's. New Big Folders are made in the user's chosen default location (the `FolderRoot` setting, picked from the card's menu), else as before |
 
 ---
 
@@ -403,3 +406,4 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-21 | Pixel | The Big Folder panel's search and rename fields take text through the system's text services (TSF): the Pinyin IME, the emoji panel (Win+.) and Ctrl+V work, and an emoji stays whole in a name; nothing visible changes | The user: "the title takes no emoji" (Pinyin did not work in the field at all) |
 | 2026-10-21 | Glass | Big Folder names are smaller so more of them show: Text 10 on Small and Medium (68 and 78 wide), Text 10.5 on Large in two lines with a 44 tile and 17 minis, Text 11 in the panel; a visible extension wins over the shortening's minimum head | The user: "the file names are too big" |
 | 2026-10-21 | Pixel | The Big Folder's Chinese is set in Fusion Pixel Font 8 px (OFL-1.1, bundled with its license) before SimSun: four hanzi per cell, a third metric set (header 9, rows 19/49, panel cell 36, 3 panel rows), and a font order of pixel font, Fusion, SimSun; emoji are 7 × 7 tiles shrunk from Segoe UI Emoji; recorded compression: 4 hanzi per cell | The user: "the Pixel names are too big too" |
+| 2026-10-21 | All | Big Folder: a "Default location for new folders…" row in the card's menu (a folder picker; the `FolderRoot` setting), and an ordinary item dragged from the Desktop or the Public Desktop always moves in, even across drives; the hover label follows (Move to) | The user: new Big Folders should live in the workspace's `big folder` folder, and desktop items should simply move |

@@ -298,20 +298,44 @@ internal static class FolderActions
 
     // ----- the folder itself -----
 
-    /// <summary>A new, empty folder for a new card: under the user profile, on the Desktop's drive ("Big Folder", then "Big Folder (2)", ...). A test instance makes it under its own data folder instead.</summary>
-    public static string CreateDefaultFolder()
+    /// <summary>
+    /// A new, empty folder for a new card ("Big Folder", then "Big Folder (2)", ...). It goes in <paramref name="folderRoot"/> when the
+    /// user has set one (made if missing), else under the user profile on the Desktop's drive. A test instance makes it under its own data folder instead.
+    /// </summary>
+    public static string CreateDefaultFolder(string? folderRoot)
     {
         string desktop = Shell.KnownFolder(ShellNative.FOLDERID_Desktop) ?? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         string profile = Shell.KnownFolder(ShellNative.FOLDERID_Profile) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        string parent = DefaultFolderParent(profile, desktop, DataRoot.IsTestInstance ? DataRoot.BigFolders : null);
+        string parent = DefaultFolderParent(profile, desktop, DataRoot.IsTestInstance ? DataRoot.BigFolders : null, folderRoot);
+        Directory.CreateDirectory(parent);
         string path = ShellOps.UniquePath(parent, ShellOps.SafeFileName(Strings.FolderDefaultName), "");
         Directory.CreateDirectory(path);
         return path;
     }
 
-    /// <summary>The folder a new card's folder is made in: <paramref name="testFolder"/> for a test instance, else the profile if it is on the Desktop's drive, else "Big Folders" on that drive.</summary>
-    internal static string DefaultFolderParent(string profile, string desktop, string? testFolder)
-        => testFolder ?? (DropPolicy.SameVolume(profile, desktop) ? profile : Path.Combine(Path.GetPathRoot(desktop)!, "Big Folders"));
+    /// <summary>
+    /// The folder a new card's folder is made in: <paramref name="testFolder"/> for a test instance (a seeded FolderRoot must never
+    /// send a test into the user's real folders), else <paramref name="folderRoot"/> if it is a usable full path, else the profile
+    /// if it is on the Desktop's drive, else "Big Folders" on that drive.
+    /// </summary>
+    internal static string DefaultFolderParent(string profile, string desktop, string? testFolder, string? folderRoot = null)
+    {
+        if (testFolder is not null)
+            return testFolder;
+        if (UsableRoot(folderRoot) is { } root)
+            return root;
+        return DropPolicy.SameVolume(profile, desktop) ? profile : Path.Combine(Path.GetPathRoot(desktop)!, "Big Folders");
+    }
+
+    /// <summary>The setting as a full path, or null when it is empty or not a drive-letter or UNC path (a relative path would depend on the working directory).</summary>
+    internal static string? UsableRoot(string? folderRoot)
+    {
+        if (string.IsNullOrWhiteSpace(folderRoot) || !Path.IsPathFullyQualified(folderRoot) || folderRoot.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+            return null;
+        string full = Path.GetFullPath(folderRoot);
+        string trimmed = full.TrimEnd('\\');
+        return trimmed.Length == 2 && trimmed[1] == ':' ? full : trimmed; // keep "D:\" whole; drop a trailing slash elsewhere
+    }
 
     /// <summary>Renames the folder itself. Returns the new path, or null with <paramref name="error"/> set.</summary>
     public static string? RenameFolder(string folder, string typed, IntPtr owner, out string? error)

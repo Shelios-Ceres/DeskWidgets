@@ -103,7 +103,7 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
             // A new card makes its own folder, under the user profile on the Desktop's drive.
             try
             {
-                path = FolderActions.CreateDefaultFolder();
+                path = FolderActions.CreateDefaultFolder(_site.FolderRoot);
             }
             catch (Exception ex)
             {
