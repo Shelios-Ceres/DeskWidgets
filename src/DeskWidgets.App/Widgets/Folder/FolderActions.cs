@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using DeskWidgets.Core;
 using DeskWidgets.Core.Diagnostics;
 using IDataObject = System.Runtime.InteropServices.ComTypes.IDataObject;
 
@@ -297,16 +298,20 @@ internal static class FolderActions
 
     // ----- the folder itself -----
 
-    /// <summary>A new, empty folder for a new card: under the user profile, on the Desktop's drive ("Big Folder", then "Big Folder (2)", ...).</summary>
+    /// <summary>A new, empty folder for a new card: under the user profile, on the Desktop's drive ("Big Folder", then "Big Folder (2)", ...). A test instance makes it under its own data folder instead.</summary>
     public static string CreateDefaultFolder()
     {
         string desktop = Shell.KnownFolder(ShellNative.FOLDERID_Desktop) ?? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         string profile = Shell.KnownFolder(ShellNative.FOLDERID_Profile) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        string parent = DropPolicy.SameVolume(profile, desktop) ? profile : Path.Combine(Path.GetPathRoot(desktop)!, "Big Folders");
+        string parent = DefaultFolderParent(profile, desktop, DataRoot.IsTestInstance ? DataRoot.BigFolders : null);
         string path = ShellOps.UniquePath(parent, ShellOps.SafeFileName(Strings.FolderDefaultName), "");
         Directory.CreateDirectory(path);
         return path;
     }
+
+    /// <summary>The folder a new card's folder is made in: <paramref name="testFolder"/> for a test instance, else the profile if it is on the Desktop's drive, else "Big Folders" on that drive.</summary>
+    internal static string DefaultFolderParent(string profile, string desktop, string? testFolder)
+        => testFolder ?? (DropPolicy.SameVolume(profile, desktop) ? profile : Path.Combine(Path.GetPathRoot(desktop)!, "Big Folders"));
 
     /// <summary>Renames the folder itself. Returns the new path, or null with <paramref name="error"/> set.</summary>
     public static string? RenameFolder(string folder, string typed, IntPtr owner, out string? error)

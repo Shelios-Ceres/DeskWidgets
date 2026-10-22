@@ -10,8 +10,7 @@ public static class Log
     private const long MaxBytes = 1024 * 1024;
     private static readonly object Gate = new();
 
-    public static string LogDirectory { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeskWidgets", "logs");
+    public static string LogDirectory { get; } = DataRoot.LogsDirectory;
 
     private static readonly string FilePath = Path.Combine(LogDirectory, "app.log");
     private static readonly string OldFilePath = Path.Combine(LogDirectory, "app.old.log");

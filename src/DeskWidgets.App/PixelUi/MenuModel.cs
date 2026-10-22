@@ -49,11 +49,11 @@ internal sealed class MenuEntry
 
     public static MenuEntry Status(string text) => new() { Text = text, Kind = MenuKind.Status, Enabled = false };
 
-    public static MenuEntry Item(string text, Action click, string? glyph = null, PixelSprite? icon = null)
-        => new() { Text = text, Kind = MenuKind.Item, Click = click, Glyph = glyph, Icon = icon };
+    public static MenuEntry Item(string text, Action click, string? glyph = null, PixelSprite? icon = null, bool enabled = true)
+        => new() { Text = text, Kind = MenuKind.Item, Click = click, Glyph = glyph, Icon = icon, Enabled = enabled };
 
-    public static MenuEntry Toggle(string text, bool isChecked, Action click)
-        => new() { Text = text, Kind = MenuKind.Check, Checked = isChecked, Click = click };
+    public static MenuEntry Toggle(string text, bool isChecked, Action click, bool enabled = true)
+        => new() { Text = text, Kind = MenuKind.Check, Checked = isChecked, Click = click, Enabled = enabled };
 
     public static MenuEntry Radio(string text, bool isChecked, Action click, string? group = null)
         => new() { Text = text, Kind = MenuKind.Radio, Checked = isChecked, Click = click, Group = group };

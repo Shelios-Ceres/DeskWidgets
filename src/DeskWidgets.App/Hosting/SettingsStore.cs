@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DeskWidgets.Core;
 using DeskWidgets.Core.Diagnostics;
 using DeskWidgets.Widgets;
 
@@ -41,7 +42,7 @@ internal sealed class WidgetPlacement
     public Dictionary<string, string> Options { get; set; } = new();
 }
 
-/// <summary>JSON settings in %LOCALAPPDATA%\DeskWidgets\settings.json, written atomically.</summary>
+/// <summary>JSON settings in settings.json under the data root (%LOCALAPPDATA%\DeskWidgets unless --data-dir says otherwise), written atomically.</summary>
 internal sealed class SettingsStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -50,10 +51,9 @@ internal sealed class SettingsStore
         Converters = { new JsonStringEnumConverter() },
     };
 
-    private static readonly string Folder = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeskWidgets");
+    private static readonly string Folder = DataRoot.Path;
 
-    private static readonly string FilePath = Path.Combine(Folder, "settings.json");
+    private static readonly string FilePath = DataRoot.SettingsFile;
 
     public AppSettings Current { get; } = Load();
 

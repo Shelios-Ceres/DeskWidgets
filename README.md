@@ -44,6 +44,7 @@ Other maintenance commands (they exit when done and also work while the app is r
 - `--pixel-folder-preview <folder>`: draws the Big Folder in the Pixel theme (the cards at every size, their states, the icons and the panel; light/dark × English/Chinese) into PNG sheets and exits.
 - `--folder-panel-cycle=<n> --cycle-out=<file>`: a leak check. It opens and closes every Big Folder's panel n times, as a click on the header and an Esc would, and appends the process's handle, GDI and USER counts to the file (`--cycle-dirty` leaves a search and a selection behind each time; `--cycle-hold` keeps the last open up). The numbers stay flat from round to round; a growing handle count means something is created and not released.
 - `--enable-startup` / `--disable-startup`: turn Start with Windows on or off.
+- `--data-dir <folder>` (or the environment variable `DESKWIDGETS_DATA_DIR`; the flag wins): runs a **test instance**. All four data stores (settings, the icon order, the Big Folder origin logs and the log) live in that folder instead of `%LOCALAPPDATA%\DeskWidgets`, so a test never reads or writes your own settings. A test instance also stays off the things that belong to you: it can't read or change the `DeskWidgets` logon task ("Start with Windows" is greyed out), it doesn't arrange the desktop icons unless its own `settings.json` turns that on (the tray can only switch it off), it doesn't take over DesktopRightAlign's settings, and a new Big Folder is made in `<folder>\Big Folders\` instead of your profile. The tray menu's first line says "Test instance". An unusable value makes the app quit with exit code 2 instead of falling back to your data. The single-instance mutex is shared, so a test instance and your own app never run together.
 
 The built program is at `src\DeskWidgets.App\bin\Debug\net10.0-windows10.0.19041.0\win-x64\DeskWidgets.exe`, and the whole folder can be copied anywhere and run directly. For a release build:
 
@@ -66,7 +67,7 @@ dotnet publish D:/Widget/src/DeskWidgets.App -c Release -r win-x64 -o D:/Widget/
 | Open folder / add apps / sort / change or rename the folder | Big Folder's right-click menu |
 | Change cities / show the second hand | World clock's right-click menu |
 
-Settings are saved in `%LOCALAPPDATA%\DeskWidgets\settings.json` and the log is in `logs\app.log` (capped at 1 MB, rotated automatically). The order of the arranged desktop icons is in `desktop-icons.json` in the same folder. If the old DesktopRightAlign left settings behind, they are taken over the first time. `desktop-icons-original.json`, written by an older version (the backup for "Restore original layout", a feature that has been removed), is no longer used and can be deleted.
+Settings are saved in `%LOCALAPPDATA%\DeskWidgets\settings.json` and the log is in `logs\app.log` (capped at 1 MB, rotated automatically). `--data-dir` (above) moves all of it to another folder. The order of the arranged desktop icons is in `desktop-icons.json` in the same folder. If the old DesktopRightAlign left settings behind, they are taken over the first time. `desktop-icons-original.json`, written by an older version (the backup for "Restore original layout", a feature that has been removed), is no longer used and can be deleted.
 
 "Start with Windows" uses a per-user logon task named `DeskWidgets` in Task Scheduler (it starts 15 seconds after sign-in and needs neither a password nor administrator rights). It doesn't use the registry Run key: a Run entry written from a Claude session only landed in Claude's private registry (see "Developing inside a Claude session" below), so Explorer never saw it, which is why the app didn't start at boot on 2026-10-13. On this PC, "Start with Windows" is on, and this task is what starts the app. From 2026-10-14 to 10-19, a separate "AI Apps - Wait for TUN and Network" logon task started it instead; that task has since been removed.
 
@@ -77,6 +78,7 @@ The Claude desktop app is an MSIX-packaged app. Processes started from its sessi
 - A DeskWidgets started inside a session uses different settings, logs and icon data from the one started at sign-in, and the two don't affect each other.
 - The `%LOCALAPPDATA%\DeskWidgets` you see inside a session isn't necessarily the one really in use. To see the real files, open them in Explorer, or read them from a session through WMI (`Get-CimInstance CIM_DataFile`).
 - To try a new build in the real environment, double-click the exe in Explorer. From a session, start it through WMI (`Invoke-CimMethod Win32_Process -MethodName Create -Arguments @{ CommandLine = '"<path to exe>"' }`), and don't use `dotnet run`.
+- To try a build without touching your own settings, add `--data-dir <folder>` to that command line, with a folder outside `%LOCALAPPDATA%` (for example one under `D:\Widget\.scratch\`: the container shows a private copy of `%LOCALAPPDATA%`, but a D: folder is the same for everyone). `notes\tools\relaunch.ps1 -DataDir <folder>` does this. Stop your own app first; the single-instance mutex allows only one.
 
 ### Tests
 
@@ -84,7 +86,7 @@ The Claude desktop app is an MSIX-packaged app. Processes started from its sessi
 dotnet test D:/Widget/tests/DeskWidgets.Tests -c Release
 ```
 
-The tests cover logic that doesn't depend on the UI: desktop grid snapping, icon arrangement, pixel text layout, the world clock's time differences and dates, card sizes, `DeviceHub`'s summary and scan merging, and the Big Folder's drop table, name shortening, sorting, origin log and panel logic. They use the Release configuration, which compiles and runs even while the program is running (the Debug exe is locked then).
+The tests cover logic that doesn't depend on the UI: desktop grid snapping, icon arrangement, pixel text layout, the world clock's time differences and dates, card sizes, `DeviceHub`'s summary and scan merging, and the Big Folder's drop table, name shortening, sorting, origin log and panel logic. They use the Release configuration, which compiles and runs even while the program is running (the Debug exe is locked then). The test run uses its own data folder (`%TEMP%\DeskWidgets.Tests\data`, through `DESKWIDGETS_DATA_DIR`), so it never touches your settings or log.
 
 ## Layout
 
@@ -92,7 +94,7 @@ The tests cover logic that doesn't depend on the UI: desktop grid snapping, icon
 docs/
   THEMES.md                Theme design spec (read before adding or changing a theme)
 src/
-  DeskWidgets.Core/        Device model DeviceStatus, the IDeviceSource interface, DeviceHub (summary + polling), logging
+  DeskWidgets.Core/        Device model DeviceStatus, the IDeviceSource interface, DeviceHub (summary + polling), logging, DataRoot (the one place that decides the data folder)
   DeskWidgets.Devices/     Windows data sources
     Bluetooth/               Battery level of paired Bluetooth devices (reads the same device properties as the Windows Settings page; never talks to the device)
     Hid/                     2.4 GHz receivers: HID enumeration, feature report exchange, read-only listening, plug/unplug watching, per-vendor drivers

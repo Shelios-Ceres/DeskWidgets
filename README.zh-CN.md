@@ -45,6 +45,7 @@ dotnet run --project D:/Widget/src/DeskWidgets.App -- --pixel-preview D:/Widget/
 - `--pixel-folder-preview <文件夹>`：把像素主题的大文件夹（各个尺寸的卡片、它们的状态、图标和面板；浅色/深色 × 中/英）画成 PNG 总览图后退出。
 - `--folder-panel-cycle=<n> --cycle-out=<文件>`：泄漏检查。它把每个大文件夹的面板开关 n 次（和点标题、按 Esc 一样），每轮把进程的句柄、GDI 和 USER 对象数追加到文件里（`--cycle-dirty` 每次留下搜索和选中，`--cycle-hold` 让最后一次保持打开）。数字应该一轮一轮保持平稳；句柄数一直涨，说明有东西创建了没释放。
 - `--enable-startup` / `--disable-startup`：开启或关闭开机启动
+- `--data-dir <文件夹>`（或环境变量 `DESKWIDGETS_DATA_DIR`，命令行参数优先）：以**测试实例**运行。四类数据（设置、图标顺序、大文件夹的来源记录和日志）都放在这个文件夹里，不再用 `%LOCALAPPDATA%\DeskWidgets`，所以测试永远不会读写你自己的设置。测试实例也不碰属于你的东西：读不了也改不了 `DeskWidgets` 登录任务（「开机自动启动」是灰的）；除非它自己的 `settings.json` 打开了，否则不排列桌面图标（托盘里只能关，不能开）；不接管 DesktopRightAlign 的设置；新建的大文件夹放在 `<文件夹>\Big Folders\`，不放在你的用户目录里。托盘菜单第一行写着「测试实例」。参数不可用时程序会以退出码 2 退出，不会退回去用你的数据。单实例互斥量是共用的，所以测试实例和你自己的程序不会同时运行。
 
 编译好的程序在 `src\DeskWidgets.App\bin\Debug\net10.0-windows10.0.19041.0\win-x64\DeskWidgets.exe`，整个文件夹可以复制到任意位置直接运行。发布版：
 
@@ -67,7 +68,7 @@ dotnet publish D:/Widget/src/DeskWidgets.App -c Release -r win-x64 -o D:/Widget/
 | 打开文件夹 / 添加应用 / 排序 / 更换或重命名文件夹 | 大文件夹的右键菜单 |
 | 更换城市 / 显示秒针 | 世界时钟右键菜单 |
 
-设置保存在 `%LOCALAPPDATA%\DeskWidgets\settings.json`，日志在 `logs\app.log`（上限 1 MB，自动轮转）。
+设置保存在 `%LOCALAPPDATA%\DeskWidgets\settings.json`，日志在 `logs\app.log`（上限 1 MB，自动轮转）。`--data-dir`（见上）可以把这一切搬到别的文件夹。
 桌面图标的排列顺序在同一文件夹的 `desktop-icons.json`；如果旧的 DesktopRightAlign 留下了它的设置，第一次使用时会直接接管。旧版本写的 `desktop-icons-original.json`（「恢复原来的布局」的备份，该功能已移除）不再使用，可以删掉。
 
 「开机自动启动」用「任务计划程序」里当前用户的登录任务 `DeskWidgets`（登录 15 秒后启动，不需要密码和管理员权限），不用注册表的 Run 项：从 Claude 会话里写的 Run 项只进了 Claude 的私有注册表（见下文「在 Claude 会话里开发」），Explorer 看不到，2026-10-13 开机时就是这样没启动的。本机开着「开机自动启动」，程序就是由这个任务启动的。2026-10-14 到 10-19 期间曾改由单独的「AI Apps - Wait for TUN and Network」登录任务启动，那个任务现在已经删除。
@@ -78,7 +79,8 @@ Claude 桌面版是 MSIX 打包应用。从它的会话（包括 Claude Code 和
 
 - 在会话里启动的 DeskWidgets 用的是另一套设置、日志和图标数据，和登录时启动的那个互不影响；
 - 会话里看到的 `%LOCALAPPDATA%\DeskWidgets` 不一定是真正运行的那份。要看真实文件，用资源管理器打开，或在会话里通过 WMI 读（`Get-CimInstance CIM_DataFile`）；
-- 要在真实环境里试新版本，在资源管理器里双击 exe；会话里用 WMI 启动（`Invoke-CimMethod Win32_Process -MethodName Create -Arguments @{ CommandLine = '"<exe 路径>"' }`），不要用 `dotnet run`。
+- 要在真实环境里试新版本，在资源管理器里双击 exe；会话里用 WMI 启动（`Invoke-CimMethod Win32_Process -MethodName Create -Arguments @{ CommandLine = '"<exe 路径>"' }`），不要用 `dotnet run`；
+- 想试新版本又不碰自己的设置，在那条命令行后面加 `--data-dir <文件夹>`，文件夹放在 `%LOCALAPPDATA%` 之外（比如 `D:\Widget\.scratch\` 下面：容器看到的 `%LOCALAPPDATA%` 是私有副本，而 D: 盘上的文件夹对谁都一样）。`notes\tools\relaunch.ps1 -DataDir <文件夹>` 就是这么做的。先退出自己的程序，单实例互斥量只允许运行一个。
 
 ### 测试
 
@@ -86,7 +88,7 @@ Claude 桌面版是 MSIX 打包应用。从它的会话（包括 Claude Code 和
 dotnet test D:/Widget/tests/DeskWidgets.Tests -c Release
 ```
 
-测试覆盖不依赖界面的逻辑：桌面网格吸附、图标排列、像素字体排版、世界时钟的时差和日期、卡片尺寸、`DeviceHub` 的汇总和扫描合并，以及大文件夹的拖放规则表、名称缩短、排序、来源记录和面板逻辑。用 Release 配置，程序运行时（Debug 版 exe 被占用）也能编译和跑测试。
+测试覆盖不依赖界面的逻辑：桌面网格吸附、图标排列、像素字体排版、世界时钟的时差和日期、卡片尺寸、`DeviceHub` 的汇总和扫描合并，以及大文件夹的拖放规则表、名称缩短、排序、来源记录和面板逻辑。用 Release 配置，程序运行时（Debug 版 exe 被占用）也能编译和跑测试。测试运行用自己的数据文件夹（`%TEMP%\DeskWidgets.Tests\data`，通过 `DESKWIDGETS_DATA_DIR`），不会碰你的设置和日志。
 
 ## 目录结构
 
@@ -94,7 +96,7 @@ dotnet test D:/Widget/tests/DeskWidgets.Tests -c Release
 docs/
   THEMES.md                主题设计规范（新增或修改主题前必读）
 src/
-  DeskWidgets.Core/        设备模型 DeviceStatus、IDeviceSource 接口、DeviceHub（汇总+轮询）、日志
+  DeskWidgets.Core/        设备模型 DeviceStatus、IDeviceSource 接口、DeviceHub（汇总+轮询）、日志、DataRoot（唯一决定数据文件夹的地方）
   DeskWidgets.Devices/     Windows 数据源
     Bluetooth/               已配对蓝牙设备电量（读 Windows 设置页同款设备属性，不和设备通信）
     Hid/                     2.4G 接收器：HID 枚举、Feature Report 收发、只读监听、插拔监听、各厂商驱动

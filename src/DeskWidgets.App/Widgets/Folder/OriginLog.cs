@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DeskWidgets.Core;
 using DeskWidgets.Core.Diagnostics;
 
 namespace DeskWidgets.Widgets.Folder;
@@ -69,7 +70,7 @@ internal sealed class OriginLog
     public static string PathFor(string folder)
     {
         string key = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(folder.TrimEnd('\\').ToLowerInvariant())))[..16];
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeskWidgets", "folder-origins", key + ".json");
+        return Path.Combine(DataRoot.FolderOrigins, key + ".json");
     }
 
     public static OriginLog Load(string path)

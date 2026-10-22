@@ -1,3 +1,4 @@
+using DeskWidgets.Core;
 using DeskWidgets.Core.Diagnostics;
 using DeskWidgets.Desktop;
 using DeskWidgets.Hosting;
@@ -14,6 +15,10 @@ public partial class App : Application
 
     public App()
     {
+        // A bad --data-dir must not fall back to the user's own data: quit instead (exit code 2).
+        if (DataRoot.Error is not null)
+            Environment.Exit(2);
+
         // Design QA: capture either look without switching Windows (the cards, the Glass panel and our own popups all follow it).
         string[] arguments = Environment.GetCommandLineArgs();
         if (Has(arguments, "--force-dark") || Has(arguments, "--force-light"))
@@ -106,7 +111,8 @@ public partial class App : Application
         DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
 
         bool demo = Has(commandLine, "--demo");
-        Log.Info(demo ? "starting (demo devices)" : Has(commandLine, "--autostart") ? "starting (sign-in task)" : "starting");
+        string start = demo ? "starting (demo devices)" : Has(commandLine, "--autostart") ? "starting (sign-in task)" : "starting";
+        Log.Info(DataRoot.IsTestInstance ? $"{start}, test instance, data in {DataRoot.Path}" : start);
         _host = new WidgetHost(demo);
         _host.Start();
         string? open = commandLine.FirstOrDefault(a => a.StartsWith("--pixel-ui-open=", StringComparison.OrdinalIgnoreCase));

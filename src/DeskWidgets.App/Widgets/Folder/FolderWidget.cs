@@ -1,3 +1,4 @@
+using DeskWidgets.Core;
 using DeskWidgets.Core.Diagnostics;
 using DeskWidgets.PixelUi;
 using Microsoft.UI.Xaml;
@@ -107,7 +108,7 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
             catch (Exception ex)
             {
                 Log.Warn("Creating a Big Folder's folder failed", ex);
-                path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Strings.FolderDefaultName);
+                path = Path.Combine(DataRoot.IsTestInstance ? DataRoot.BigFolders : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Strings.FolderDefaultName);
             }
             _options.SetString(FolderOptions.PathKey, path);
         }

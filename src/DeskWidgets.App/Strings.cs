@@ -80,6 +80,11 @@ internal static class Strings
 
     public static string StartupFailed => T("没能设置开机自动启动：", "Couldn't change Start with Windows: ");
 
+    /// <summary>The tray's first line in a test instance (--data-dir): it is not the user's own app.</summary>
+    public static string TestInstanceStatus(string folder) => T($"测试实例 · 数据：{folder}", $"Test instance · data: {folder}");
+    public static string StartWithWindowsTest => T("开机自动启动（测试实例中不可用）", "Start with Windows (not in a test instance)");
+    public static string IconsTestOff => T("测试实例：只有测试设置能开启", "Test instance: only its settings file can turn this on");
+
     public static string IconsMenu => T("桌面图标", "Desktop icons");
     public static string IconsArrangeRight => T("靠右自动排列", "Keep arranged on the right");
     public static string IconsArrangeNow => T("立即整理", "Arrange now");

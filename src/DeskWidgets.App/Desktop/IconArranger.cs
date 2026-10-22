@@ -4,6 +4,7 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using DeskWidgets.Core;
 using DeskWidgets.Core.Diagnostics;
 using DeskWidgets.Hosting;
 using DeskWidgets.Interop;
@@ -86,11 +87,16 @@ internal sealed class IconArranger : IDisposable
     /// <summary>Raised on the arranger's thread when a monitor's grid margins become known (widgets should re-snap).</summary>
     public event Action? MarginsChanged;
 
+    /// <summary>Whether arranging may be switched on while the app runs: not in a test instance, which would move the user's real desktop icons (its settings file can still start it on).</summary>
+    internal static bool MaySwitchOn(bool testInstance) => !testInstance;
+
     public bool Enabled
     {
         get => _enabled;
         set
         {
+            if (value && !_enabled && !MaySwitchOn(DataRoot.IsTestInstance))
+                return;
             // Only the user's switching on adopts the icons' order (startup never does:
             // Explorer may have reflowed the icons while the app was not running).
             _adoptCurrentOrder = value && !_enabled;

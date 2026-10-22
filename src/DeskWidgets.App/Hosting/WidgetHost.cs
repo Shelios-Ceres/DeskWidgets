@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using DeskWidgets.Core;
 using DeskWidgets.Core.Devices;
 using DeskWidgets.Core.Diagnostics;
 using DeskWidgets.Desktop;
@@ -277,6 +278,8 @@ internal sealed class WidgetHost
     {
         if (on == ArrangeDesktopIcons)
             return;
+        if (on && !IconArranger.MaySwitchOn(DataRoot.IsTestInstance))
+            return; // moves the user's real desktop icons: a test instance only arranges if its settings file says so at startup
         _settings.Current.ArrangeDesktopIcons = on;
         _icons.Enabled = on;
         RequestSave();
@@ -311,13 +314,18 @@ internal sealed class WidgetHost
         _tray?.SetTooltip(TrayTooltip());
     }
 
-    private string TrayTooltip() => ArrangeDesktopIcons ? $"{Strings.AppName} · {IconStatusText()}" : Strings.AppName;
+    private string TrayTooltip()
+    {
+        string name = DataRoot.IsTestInstance ? Strings.AppName + " (test)" : Strings.AppName;
+        return ArrangeDesktopIcons ? $"{name} · {IconStatusText()}" : name;
+    }
 
     private string IconStatusText() => _iconStatus.State switch
     {
         IconArrangerState.Arranging when ArrangeDesktopIcons => Strings.IconsStatusArranging(_iconStatus.IconCount),
         IconArrangerState.Waiting when ArrangeDesktopIcons => _iconStatus.Problem ?? Strings.IconsDesktopNotReady,
-        _ => ArrangeDesktopIcons ? Strings.IconsStatusStarting : Strings.IconsStatusOff,
+        _ when ArrangeDesktopIcons => Strings.IconsStatusStarting,
+        _ => DataRoot.IsTestInstance ? Strings.IconsTestOff : Strings.IconsStatusOff,
     };
 
     /// <summary>Switches every widget, menu and the tray tooltip to <paramref name="language"/> and saves it.</summary>
@@ -426,6 +434,7 @@ internal sealed class WidgetHost
     /// <summary>The tray menu as a model: both themes show these rows, in this order.</summary>
     private List<MenuEntry> BuildTrayMenu() =>
     [
+        .. DataRoot.IsTestInstance ? new[] { MenuEntry.Status(Strings.TestInstanceStatus(DataRoot.Path)), MenuEntry.Separator() } : Array.Empty<MenuEntry>(),
         MenuEntry.Sub(Strings.AddWidget,
             [.. WidgetCatalog.All.Select(factory => MenuEntry.Item(factory.DisplayName, () => AddWidget(factory), glyph: factory.Glyph, icon: PixelIcons.ForWidget(factory.TypeId)))],
             icon: PixelIcons.Add),
@@ -441,14 +450,15 @@ internal sealed class WidgetHost
         [
             MenuEntry.Status(IconStatusText()),
             MenuEntry.Separator(),
-            MenuEntry.Toggle(Strings.IconsArrangeRight, ArrangeDesktopIcons, () => SetArrangeIcons(!ArrangeDesktopIcons)),
+            // A test instance can switch arranging off, never on: that would move the user's real desktop icons.
+            MenuEntry.Toggle(Strings.IconsArrangeRight, ArrangeDesktopIcons, () => SetArrangeIcons(!ArrangeDesktopIcons), enabled: IconArranger.MaySwitchOn(DataRoot.IsTestInstance) || ArrangeDesktopIcons),
             MenuEntry.Item(Strings.IconsArrangeNow, () =>
             {
                 SetArrangeIcons(true);
                 _icons.Invalidate();
-            }),
+            }, enabled: IconArranger.MaySwitchOn(DataRoot.IsTestInstance)),
         ]),
-        MenuEntry.Toggle(Strings.StartWithWindows, StartupRegistration.IsEnabled, ToggleStartup),
+        MenuEntry.Toggle(StartupRegistration.Available ? Strings.StartWithWindows : Strings.StartWithWindowsTest, StartupRegistration.IsEnabled, ToggleStartup, enabled: StartupRegistration.Available),
         MenuEntry.Sub(Strings.ThemeMenu,
             [.. Enum.GetValues<WidgetTheme>().Select(theme => MenuEntry.Radio(Strings.ThemeName(theme), theme == Theme, () => SetTheme(theme), group: "theme"))],
             icon: PixelIcons.Theme),

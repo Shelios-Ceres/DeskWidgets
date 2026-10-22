@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using DeskWidgets.Core;
 using DeskWidgets.Core.Diagnostics;
 using Microsoft.Win32;
 
@@ -20,10 +21,15 @@ internal static class StartupRegistration
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValue = "DeskWidgets";
 
-    public static bool IsEnabled => TaskEnabled() || HasRunEntry();
+    /// <summary>False in a test instance (--data-dir): it must never read or change the user's logon task.</summary>
+    public static bool Available => !DataRoot.IsTestInstance;
+
+    public static bool IsEnabled => Available && (TaskEnabled() || HasRunEntry());
 
     public static void SetEnabled(bool enabled)
     {
+        if (!Available)
+            throw new InvalidOperationException("Start with Windows is not available in a test instance (--data-dir).");
         if (enabled)
             RegisterTask();
         else
