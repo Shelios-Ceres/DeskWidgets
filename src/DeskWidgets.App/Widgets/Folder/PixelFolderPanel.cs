@@ -14,7 +14,7 @@ namespace DeskWidgets.Widgets.Folder;
 /// </summary>
 internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
 {
-    private const int VkShift = 0x10, VkControl = 0x11, VkAlt = 0x12, VkApps = 0x5D, VkF2 = 0x71, VkF4 = 0x73, VkDelete = 0x2E, VkA = 0x41;
+    private const int VkShift = 0x10, VkControl = 0x11, VkAlt = 0x12, VkApps = 0x5D, VkF2 = 0x71, VkF4 = 0x73, VkDelete = 0x2E, VkA = 0x41, VkV = 0x56;
     private const uint OpenItemMessage = Win32.WM_APP + 21, OpenSortMessage = Win32.WM_APP + 22;
 
     private readonly FolderWidget _widget;
@@ -39,6 +39,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     private bool _swallowChar;
     private bool _menuOpen, _closing, _dragging;
     private readonly PanelFocusGuard _guard;
+    private TextService? _text;
 
     public PixelFolderPanel(FolderWidget widget)
     {
@@ -47,6 +48,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         _icons = new PixelFolderIcons(Redraw);
         _accessible = new PanelAccessible(this);
         CreateWindow(noActivate: false);
+        _text = new TextService(Hwnd, () => _edit?.Editor ?? _search, ActiveFieldRect, OnTextServiceChanged);
     }
 
     public event Action? Closed;
@@ -89,6 +91,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         ShowWindow(activate: true);
         Win32.SetForegroundWindow(Hwnd);
         Native.SetFocus(Hwnd);
+        _text?.Focus();
         _accessible.RaiseOpened(UiaNative.EventWindowOpened);
     }
 
@@ -114,6 +117,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
             return;
         Win32.SetForegroundWindow(Hwnd);
         Native.SetFocus(Hwnd);
+        _text?.Focus();
     }
 
     public void Destroy() => Close();
@@ -134,6 +138,8 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         if (Hwnd != 0)
             UiaNative.UiaReturnRawElementProvider(Hwnd, 0, 0, null);
         _accessible.DisconnectUia();
+        _text?.Dispose();
+        _text = null;
         base.Dispose();
     }
 
@@ -212,6 +218,26 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
             return;
         if (Native.GetWindowRect(Hwnd, out var rect))
             Draw(rect.Left, rect.Top);
+        _text?.Sync(); // the field may have changed: the IME works from the same text
+    }
+
+    /// <summary>The input method or the emoji panel changed the field: the search follows its text; a rename only redraws.</summary>
+    private void OnTextServiceChanged()
+    {
+        if (_edit is null)
+            OnSearchChanged();
+        else
+            Redraw();
+    }
+
+    /// <summary>Where the field that takes the typed text is on the screen, so the IME's candidate window opens beside it.</summary>
+    private Win32.RECT ActiveFieldRect()
+    {
+        if (_edit is { Target: PanelEditTarget.Folder })
+            return ToScreen((6, 4, FolderPixelPanelScene.Width - 12, 14));
+        if (_edit is { Target: PanelEditTarget.Item } edit && _plan is not null && FolderPixelPanelScene.CellRect(_plan, edit.ItemIndex, _firstRow) is { } cell)
+            return ToScreen((cell.X, cell.Y + 2 + 16 + 1, cell.W, _plan.SimSun ? 16 : 14));
+        return SearchRect();
     }
 
     // ----- geometry -----
@@ -464,6 +490,9 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
             case VkA when ctrl:
                 editor.SelectAll();
                 break;
+            case VkV when ctrl:
+                editor.Insert(TextService.ReadClipboardText());
+                break;
             default:
                 return;
         }
@@ -525,6 +554,10 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
             case VkA when ctrl:
                 _selection.SelectAll();
                 Redraw();
+                break;
+            case VkV when ctrl:
+                if (_search.Insert(TextService.ReadClipboardText()))
+                    OnSearchChanged();
                 break;
             case VkF2 when _selection.Focus >= 0 && _selection.Focus < _view.Count:
                 BeginRename(_view[_selection.Focus].FileName);

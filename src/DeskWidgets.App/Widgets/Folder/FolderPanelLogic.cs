@@ -50,6 +50,28 @@ internal sealed class LineEditor
         return true;
     }
 
+    /// <summary>The selection as UTF-16 indexes: the whole text when it is all selected, else an empty range at the caret.</summary>
+    public (int Start, int End) Selection => AllSelected ? (0, Text.Length) : (Caret, Caret);
+
+    /// <summary>Replaces a range of the text (what a text service asks for), leaving the caret after the new text.</summary>
+    public void Replace(int start, int end, string text)
+    {
+        start = Math.Clamp(start, 0, Text.Length);
+        end = Math.Clamp(end, start, Text.Length);
+        Text = Text[..start] + text + Text[end..];
+        Caret = start + text.Length;
+        AllSelected = false;
+    }
+
+    /// <summary>Selects a range the way a text service asks for it. Only the whole text or an empty range is drawn, so another range puts the caret at its end.</summary>
+    public void SelectRange(int start, int end)
+    {
+        start = Math.Clamp(start, 0, Text.Length);
+        end = Math.Clamp(end, start, Text.Length);
+        AllSelected = start == 0 && end == Text.Length && end > 0;
+        Caret = end;
+    }
+
     public bool Backspace()
     {
         if (AllSelected)

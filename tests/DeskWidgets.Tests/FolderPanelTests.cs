@@ -70,6 +70,35 @@ public class FolderPanelTests
         Assert.Equal("", editor.Text);
     }
 
+    [Fact]
+    public void ReplacingARange_PutsTheCaretAfterTheNewText_AndKeepsAnEmojiWhole()
+    {
+        var editor = new LineEditor("ni'hao", selectAll: true);
+        editor.Replace(0, 6, "你好");
+        Assert.Equal("你好", editor.Text);
+        Assert.Equal(2, editor.Caret);
+        Assert.False(editor.AllSelected);
+        editor.Replace(2, 2, "😀");
+        Assert.Equal("你好😀", editor.Text);
+        Assert.Equal(4, editor.Caret);
+        editor.Backspace();
+        Assert.Equal("你好", editor.Text);
+    }
+
+    [Fact]
+    public void ASelectedRange_IsOnlyDrawnWhenItIsTheWholeText()
+    {
+        var editor = new LineEditor("abc");
+        editor.SelectRange(0, 3);
+        Assert.True(editor.AllSelected);
+        Assert.Equal((0, 3), editor.Selection);
+        editor.SelectRange(1, 1);
+        Assert.False(editor.AllSelected);
+        Assert.Equal((1, 1), editor.Selection);
+        editor.SelectRange(0, 99);
+        Assert.Equal(3, editor.Caret);
+    }
+
     // ----- PanelSelection -----
 
     [Fact]
