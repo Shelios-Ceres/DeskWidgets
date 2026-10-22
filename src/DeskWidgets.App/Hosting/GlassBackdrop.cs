@@ -28,6 +28,13 @@ internal sealed class GlassBackdrop : SystemBackdrop, IDisposable
     private SystemComposition.SpriteVisual? _glass;
     private SystemComposition.CompositionRoundedRectangleGeometry? _clipGeometry;
 
+    /// <summary>The system compositor the frost lives on, and the frost's visual and clip: what the panel's and the cards' motion drives.</summary>
+    internal static SystemComposition.Compositor Compositor => GetCompositor();
+
+    internal SystemComposition.SpriteVisual? Visual => _glass;
+
+    internal SystemComposition.CompositionRoundedRectangleGeometry? ClipGeometry => _clipGeometry;
+
     /// <summary>Creates the glass visual on the top-level window.</summary>
     public void Attach(nint hwnd)
     {

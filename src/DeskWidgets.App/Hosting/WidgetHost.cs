@@ -51,6 +51,9 @@ internal sealed class WidgetHost
         _icons.MarginsChanged += () => dispatcher.TryEnqueue(ResnapAll);
     }
 
+    /// <summary>Design QA (<c>--motion-qa</c>): the widgets' windows.</summary>
+    internal IReadOnlyList<WidgetWindow> Windows => _windows;
+
     public AppServices Services { get; }
 
     public bool SnapToDesktopGrid => _settings.Current.SnapToDesktopGrid;

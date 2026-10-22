@@ -336,6 +336,8 @@ internal sealed class WidgetWindow : Window, IWidgetSite
         int dy = cursor.Y - _dragCursorStart.Y;
         if (!_dragging && Math.Abs(dx) + Math.Abs(dy) < Px(DragThreshold))
             return;
+        if (!_dragging)
+            (Widget as IPointerWidget)?.CardDragStarted();
         _dragging = true;
         AppWindow.Move(new PointInt32(_dragWindowStart.X + dx, _dragWindowStart.Y + dy));
     }

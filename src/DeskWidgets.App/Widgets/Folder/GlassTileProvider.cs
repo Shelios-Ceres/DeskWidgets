@@ -26,7 +26,7 @@ internal sealed class GlassTileProvider
     public FrameworkElement Tile(GlassPalette palette, FolderItem item, double size)
     {
         var tile = Build(palette, item, size, out var request);
-        if (request is not null && _pending.Remove(request))
+        if (request is not null && _pending.Remove(request) && Motion.MotionSettings.Enabled)
         {
             // The picture was on its way when this view was drawn: it fades in over the plate that stood in for it.
             tile.Opacity = 0;

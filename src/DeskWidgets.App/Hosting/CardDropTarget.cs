@@ -175,7 +175,7 @@ internal sealed class CardDropTarget : IDropTarget
         var decisions = _items.Select(i => widget.DropPolicy.Decide(i.Entry, keys, widget.DropFolderPath)).ToList();
         var chosen = DropPolicy.CursorEffect(decisions, _allowed);
         _helper?.Drop(dataObject, ref point, (uint)chosen);
-        widget.ShowDropHint(null);
+        widget.DropHintSnap();
         var items = _items;
         // The work (which may raise Explorer's own dialogs) starts once the source has been let go.
         _ui.TryEnqueue(() =>

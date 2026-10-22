@@ -116,8 +116,18 @@ public partial class App : Application
         bool demo = demoDevices > 0;
         string start = demo ? "starting (demo devices)" : Has(commandLine, "--autostart") ? "starting (sign-in task)" : "starting";
         Log.Info(DataRoot.IsTestInstance ? $"{start}, test instance, data in {DataRoot.Path}" : start);
+        // Design QA: --motion-off behaves as if "Animation effects" were off; --motion-qa=<folder> --motion-run=<moments> records the motion.
+        if (Has(commandLine, "--motion-off"))
+            Motion.MotionSettings.ForcedOff = true;
+        string? motionQa = commandLine.FirstOrDefault(a => a.StartsWith("--motion-qa=", StringComparison.OrdinalIgnoreCase));
+        Qa.QaStage? qaStage = motionQa is not null ? Qa.MotionQa.MakeStage() : null;
         _host = new WidgetHost(demoDevices);
         _host.Start();
+        if (motionQa is not null)
+        {
+            string? Argument(string name) => commandLine.FirstOrDefault(a => a.StartsWith(name + "=", StringComparison.OrdinalIgnoreCase)) is { } found ? found[(found.IndexOf('=') + 1)..] : null;
+            Qa.MotionQa.Run(_host, motionQa[(motionQa.IndexOf('=') + 1)..], Argument("--motion-run") ?? "a1-glass", qaStage!);
+        }
         string? open = commandLine.FirstOrDefault(a => a.StartsWith("--pixel-ui-open=", StringComparison.OrdinalIgnoreCase));
         if (open is not null)
         {

@@ -118,11 +118,17 @@ internal interface IPointerWidget
 
     /// <summary>The menu for a right-click at <paramref name="position"/>, or null for the host's own widget menu.</summary>
     IReadOnlyList<PixelUi.MenuEntry>? CardContextMenu(Windows.Foundation.Point position);
+
+    /// <summary>The press turned into a drag of the card (a pressed tile lets go).</summary>
+    void CardDragStarted() { }
 }
 
 /// <summary>A widget that accepts files dropped on its card (through the card window's own OLE drop target).</summary>
 internal interface IDropWidget
 {
+    /// <summary>A drop was accepted: the hint goes at once (the arrival that follows is what shows it). The default is an ordinary <c>ShowDropHint(null)</c>.</summary>
+    void DropHintSnap() => ShowDropHint(null);
+
     /// <summary>False while there is nowhere to drop (the folder is missing): drags are refused, with no tint and no label.</summary>
     bool AcceptsDrops { get; }
 

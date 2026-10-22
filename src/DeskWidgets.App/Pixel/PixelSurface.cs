@@ -47,6 +47,9 @@ internal sealed partial class PixelSurface : Grid
         ActualThemeChanged += (_, _) => Invalidate();
     }
 
+    /// <summary>What was painted last (valid until the next repaint clears it): a motion that has to show a cell as it was takes its picture from here.</summary>
+    internal PixelCanvas? LastCanvas => _canvas;
+
     /// <summary>The drawing's size in art pixels.</summary>
     public void SetArtSize(int width, int height)
     {

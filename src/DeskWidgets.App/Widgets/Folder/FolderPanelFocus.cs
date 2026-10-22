@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using DeskWidgets.Interop;
+using DeskWidgets.Motion;
 using Microsoft.UI.Dispatching;
 
 namespace DeskWidgets.Widgets.Folder;
@@ -94,12 +95,18 @@ internal sealed class PanelAftermath
     private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(5);
 
     private string? _renamedTo;
+    private string? _renamedFrom;
     private IReadOnlyList<string> _before = [];
     private HashSet<string>? _removed;
     private DateTime _since;
 
-    public void Renamed(string newFileName, DateTime now)
+    /// <summary>The rename in flight (the item that was <c>From</c> is now <c>To</c>), until the list has shown it: the panels let the cell follow the item.</summary>
+    public (string From, string To)? PendingRename
+        => _renamedTo is not null && _renamedFrom is not null && DateTime.UtcNow - _since <= Lifetime ? (_renamedFrom, _renamedTo) : null;
+
+    public void Renamed(string newFileName, DateTime now, string? oldFileName = null)
     {
+        _renamedFrom = oldFileName;
         _renamedTo = newFileName;
         _removed = null;
         _since = now;
@@ -192,9 +199,11 @@ internal sealed class PanelFocusGuard
     private readonly Func<bool> _panelBusy;
     private readonly Action _close;
     private readonly Action _take;
-    private readonly DispatcherQueueTimer _recheck;
-    private readonly DispatcherQueueTimer _reclaim;
-    private readonly DispatcherQueueTimer _watch;
+    // The three waits are tickets on the shared clock, not timers of their own: a timer per panel leaked two kernel handles each,
+    // and the Pixel panel makes a new guard with every open (Phase 12).
+    private FrameClock.Ticket? _recheck;
+    private FrameClock.Ticket? _reclaim;
+    private FrameClock.Ticket? _watch;
     private const int WatchMilliseconds = 500;
     private nint _ownForeground; // the window of ours that had the foreground when the panel last stayed for it
     private DateTime _touched = DateTime.UtcNow;
@@ -211,27 +220,34 @@ internal sealed class PanelFocusGuard
         _panelBusy = panelBusy;
         _close = close;
         _take = take;
-        var queue = DispatcherQueue.GetForCurrentThread();
-        _recheck = queue.CreateTimer();
-        _recheck.IsRepeating = false;
-        _recheck.Interval = TimeSpan.FromMilliseconds(PanelFocusPolicy.RecheckMilliseconds);
-        _recheck.Tick += (_, _) =>
-        {
-            _recheck.Stop();
-            Evaluate(PanelFocusEvent.Rechecked);
-        };
-        _watch = queue.CreateTimer();
-        _watch.IsRepeating = true;
-        _watch.Interval = TimeSpan.FromMilliseconds(WatchMilliseconds);
-        _watch.Tick += (_, _) => WatchTick();
-        _reclaim = queue.CreateTimer();
-        _reclaim.IsRepeating = false;
-        _reclaim.Interval = TimeSpan.FromMilliseconds(PanelFocusPolicy.RecheckMilliseconds);
-        _reclaim.Tick += (_, _) =>
-        {
-            _reclaim.Stop();
-            ReclaimNow();
-        };
+    }
+
+    /// <summary>Starts again the wait that runs <paramref name="action"/> once after <paramref name="milliseconds"/>.</summary>
+    private static void Restart(ref FrameClock.Ticket? ticket, int milliseconds, Action action)
+    {
+        ticket?.Stop();
+        ticket = FrameClock.After(milliseconds, action);
+    }
+
+    private void StartWatch()
+    {
+        if (_watch is not { Active: true })
+            _watch = FrameClock.Every(WatchMilliseconds, _ => WatchTick());
+    }
+
+    private void StopWatch()
+    {
+        _watch?.Stop();
+        _watch = null;
+    }
+
+    /// <summary>The panel is gone: nothing of the guard is left waiting.</summary>
+    public void Stop()
+    {
+        _recheck?.Stop();
+        _reclaim?.Stop();
+        StopWatch();
+        _recheck = _reclaim = null;
     }
 
     /// <summary>The panel opened, or one of its menus just closed: the click that did it must not close the panel as well.</summary>
@@ -248,8 +264,7 @@ internal sealed class PanelFocusGuard
         _afterOperation |= afterOperation; // a menu closing right after an operation does not make it less of one
         _workEndedTick = (uint)Environment.TickCount;
         Touch();
-        _reclaim.Stop();
-        _reclaim.Start();
+        Restart(ref _reclaim, PanelFocusPolicy.RecheckMilliseconds, ReclaimNow);
     }
 
     private bool Busy => PanelBusy.IsBusy || _panelBusy();
@@ -299,8 +314,7 @@ internal sealed class PanelFocusGuard
                 _close();
                 break;
             case PanelFocusDecision.Recheck:
-                _recheck.Stop();
-                _recheck.Start();
+                Restart(ref _recheck, PanelFocusPolicy.RecheckMilliseconds, () => Evaluate(PanelFocusEvent.Rechecked));
                 break;
             default:
                 // Staying because a window of ours (a Properties window, a menu) has the foreground: no event tells us when it hands
@@ -308,7 +322,7 @@ internal sealed class PanelFocusGuard
                 if (foreground == ForegroundKind.Own && fgw != _panelWindow() && !Busy)
                 {
                     _ownForeground = fgw;
-                    _watch.Start();
+                    StartWatch();
                 }
                 break;
         }
@@ -318,19 +332,19 @@ internal sealed class PanelFocusGuard
     {
         if (!_isOpen())
         {
-            _watch.Stop();
+            StopWatch();
             return;
         }
         var foreground = Foreground(out nint window);
         if (window == _panelWindow() || foreground == ForegroundKind.Own)
         {
             if (window == _panelWindow())
-                _watch.Stop();
+                StopWatch();
             else
                 _ownForeground = window;
             return;
         }
-        _watch.Stop();
+        StopWatch();
         // The window of ours that had the foreground is gone (a Properties window was closed): Windows hands the activation to the next
         // ordinary window, never to a tool window like this panel, so that is not the user leaving. The panel takes it back.
         if (_ownForeground != 0 && !Win32.IsVisible(_ownForeground))

@@ -174,13 +174,18 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
         _view.SetPressed(_pressedHit);
     }
 
+    public void CardDragStarted() => _view.SetPressed(FolderHit.None);
+
     public void CardPointerReleased(Point position, bool dragged)
     {
         var pressed = _pressedHit;
         _pressedHit = FolderHit.None;
         _view.SetPressed(FolderHit.None);
         if (!dragged && pressed.Kind != FolderHitKind.None && _view.HitTest(position) == pressed)
+        {
+            _view.Confirm(pressed);
             Activate(pressed);
+        }
     }
 
     /// <summary>A click on the card: an item opens, the header or the stack opens the panel.</summary>
@@ -217,6 +222,8 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
     public DropPolicy DropPolicy => _policy;
 
     public void ShowDropHint(DropVerb? verb) => _view.ShowDropHint(verb);
+
+    public void DropHintSnap() => _view.ShowDropHint(null, snap: true);
 
     public string? DropItems(IReadOnlyList<Dropped> items, DropKeys keys)
     {
@@ -330,7 +337,7 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
     {
         string? error = FolderActions.Rename(Model, item, typed, OwnerHandle, out string? newFileName);
         if (newFileName is not null)
-            _aftermath.Renamed(newFileName, DateTime.UtcNow);
+            _aftermath.Renamed(newFileName, DateTime.UtcNow, item.FileName);
         Report(error);
     }
 

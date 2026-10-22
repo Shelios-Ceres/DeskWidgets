@@ -1,3 +1,4 @@
+using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
 using DeskWidgets.PixelUi;
 
@@ -43,7 +44,11 @@ internal sealed record FolderPanelView(
     bool SortHover,
     bool SortPressed,
     PanelEdit? Edit,
-    PixelFolderIcons Icons);
+    PixelFolderIcons Icons,
+    int Pressed = -1,
+    int Flash = -1,
+    ListMotion? Motion = null,
+    IReadOnlySet<int>? Dimmed = null);
 
 /// <summary>
 /// The Big Folder's panel in the Pixel theme (the Pixel design's HANDOFF, "Panel"): 220 × 196 art pixels with the title row, the
@@ -237,6 +242,13 @@ internal static class FolderPixelPanelScene
             var none = FolderPixelScene.Layout(Strings.FolderNoMatches, PixelFonts.Regular);
             none.Draw(canvas, 7, plan.GridY + 30, p.Soft, PixelAlign.Center, Width - 14);
         }
+        // The cells that left stay a moment longer, at half their pixels, then a quarter (LEAVE), under the ones that came.
+        if (view.Motion is { } motion && motion.Frame < ListMotion.Frames)
+        {
+            int minBayer = motion.Frame == 1 ? 8 : 12;
+            foreach (var gone in motion.Leaving)
+                PixelMotion.BlitMasked(gone.Pixels, canvas, gone.X, gone.Y, minBayer);
+        }
         for (int row = 0; row < plan.VisibleRows; row++)
         {
             for (int column = 0; column < Columns; column++)
@@ -265,22 +277,59 @@ internal static class FolderPixelPanelScene
 
     private static void DrawCell(PixelCanvas canvas, PixelPalette p, FolderPanelView view, PanelPlan plan, int index, int row, int column)
     {
-        var item = view.Items[index];
         int x = Left + column * ColumnPitch, y = plan.GridY + row * plan.Pitch;
+        int lift = 0;
+        if (view.Motion is { } motion)
+        {
+            var (effect, moveDx) = motion.Of(index);
+            if (effect == CellEffect.Move)
+            {
+                x += motion.MoveOffset(moveDx);
+            }
+            else if (effect == CellEffect.Pop && motion.Frame == 1)
+            {
+                // POP, frame 1: the item's mini tile, centred on where its icon will be.
+                FolderPixelScene.Blit(PixelFolderIcons.Mini(p, view.Icons.Icon(p, view.Items[index])), canvas, x + 15, y + 5);
+                return;
+            }
+            else if (effect == CellEffect.Pop && motion.Frame == 2)
+            {
+                lift = -1; // the full cell, 1 px above its place
+            }
+        }
+        if (view.Dimmed is { } dimmed && dimmed.Contains(index))
+        {
+            // A2d: a cell being dragged out is drawn at half its pixels while the drag lasts.
+            var scratch = new PixelCanvas(CellWidth + 2, plan.CellHeight + 3);
+            DrawCellAt(scratch, p, view, plan, index, 1, 2, lift);
+            PixelMotion.BlitMasked(scratch, canvas, x - 1, y - 2, 8);
+            return;
+        }
+        DrawCellAt(canvas, p, view, plan, index, x, y, lift);
+    }
+
+    /// <summary>A3: 1 px up on hover, 1 px down (and the Shade plate) on a press; a completed click flashes the plate once (Select, the name in OnSelect).</summary>
+    private static void DrawCellAt(PixelCanvas canvas, PixelPalette p, FolderPanelView view, PanelPlan plan, int index, int x, int y, int lift)
+    {
+        var item = view.Items[index];
         bool selected = view.Selection.IsSelected(index);
-        if (selected)
+        bool pressed = view.Pressed == index, hover = view.Hover == index, flash = view.Flash == index;
+        int dy = (pressed ? 1 : hover ? -1 : 0) + lift;
+        if (selected || flash)
             FolderPixelScene.FillRound(canvas, x - 1, y - 2, CellWidth + 2, plan.CellHeight + 3, p.Select);
-        else if (view.Hover == index)
+        else if (pressed)
+            FolderPixelScene.FillRound(canvas, x - 1, y - 2, CellWidth + 2, plan.CellHeight + 3, p.Shade);
+        else if (hover)
             FolderPixelScene.FillRound(canvas, x - 1, y - 2, CellWidth + 2, plan.CellHeight + 3, p.OpenFill);
         if (view.Selection.KeyboardFocus && view.Focus == index)
             PixelFrame.FocusRing(canvas, x - 1, y - 2, CellWidth + 2, plan.CellHeight + 3, p.Ink);
 
         var icon = view.Icons.Icon(p, item);
-        FolderPixelScene.Blit(item.TargetMissing ? PixelFolderIcons.Dimmed(p, icon) : icon, canvas, x + 10, y);
+        FolderPixelScene.Blit(item.TargetMissing ? PixelFolderIcons.Dimmed(p, icon) : icon, canvas, x + 10, y + dy);
         if (view.Edit is { Target: PanelEditTarget.Item } edit && edit.ItemIndex == index)
             return;
-        int lineY = y + 16 + plan.NameGap;
-        uint color = selected ? p.OnSelect : item.TargetMissing ? p.Faint : p.Ink;
+        int lineY = y + 16 + plan.NameGap + dy;
+        uint color = selected || flash ? p.OnSelect : item.TargetMissing ? p.Faint : p.Ink;
         foreach (var line in NameLines(item.DisplayName))
         {
             line.Draw(canvas, x + (CellWidth - line.Width) / 2, lineY, color);

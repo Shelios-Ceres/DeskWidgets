@@ -1,5 +1,6 @@
 using DeskWidgets.Core.Diagnostics;
 using DeskWidgets.Interop;
+using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
 using DeskWidgets.PixelUi;
 
@@ -40,13 +41,28 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     private bool _menuOpen, _closing, _dragging;
     private readonly PanelFocusGuard _guard;
     private TextService? _text;
+    private readonly StepAnimator _steps = new(); // A1: GROW and SHRINK
+    private readonly StepAnimator _listSteps = new(); // A2, A4: MOVE, POP, LEAVE
+    private readonly StepAnimator _flashSteps = new(); // A3: FLASH
+    private double _revealShare = 1; // how much of the panel's width shows while it grows or shrinks
+    private bool _anchorRight; // the card is on the panel's right: the box grows from, and shrinks to, its right edge
+    private ListMotion? _motion;
+    private PixelCanvas? _lastPanel; // the panel as last drawn (without its shadow): what a leaving cell looked like
+    private int _flashCell = -1;
+    private IReadOnlySet<int>? _dimmed;
 
     public PixelFolderPanel(FolderWidget widget)
     {
         _widget = widget;
         _guard = new PanelFocusGuard(() => IsOpen, () => Hwnd, () => _menuOpen || _dragging || _widget.PanelPinned, CloseFromGuard, TakeForeground);
-        _icons = new PixelFolderIcons(Redraw);
+        // A picture that arrives does not cut a grow or a shrink short: the last frame of a grow draws the scene afresh.
+        _icons = new PixelFolderIcons(() =>
+        {
+            if (!_steps.Running)
+                Redraw();
+        });
         _accessible = new PanelAccessible(this);
+        _ = "warm".Contains("RM", StringComparison.CurrentCultureIgnoreCase); // the first filter of a process pays ~60 ms for culture-aware search coming up
         CreateWindow(noActivate: false);
         _text = new TextService(Hwnd, () => _edit?.Editor ?? _search, ActiveFieldRect, OnTextServiceChanged);
     }
@@ -85,8 +101,19 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         int width = (FolderPixelPanelScene.Width + DialogLayout.ShadowOffset) * factor, height = (FolderPixelPanelScene.Height + DialogLayout.ShadowOffset) * factor;
         var (x, y) = FolderPanelPlacement.Place(card, work, width, height, 4 * factor);
         Factor = factor;
+        _anchorRight = x + width <= card.Left;
         RecomputeView();
-        Draw(x, y);
+        EnsurePlan();
+        // A1, GROW: the window is at its final size from the first frame; the box grows from the card's side at full height, 1/3, 2/3, then the panel.
+        double[] shares = [1.0 / 3, 2.0 / 3, 1.0];
+        _steps.Start(shares.Length, frame =>
+        {
+            _revealShare = shares[frame];
+            if (_revealShare >= 1)
+                Draw(x, y);
+            else
+                DrawBox(x, y);
+        });
         _guard.Touch();
         ShowWindow(activate: true);
         Win32.SetForegroundWindow(Hwnd);
@@ -120,21 +147,56 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         _text?.Focus();
     }
 
-    public void Destroy() => Close();
-
-    public void Close()
+    /// <summary>The card is going away: the window goes at once, with no shrink.</summary>
+    public void Destroy()
     {
-        if (_closing || Hwnd == 0)
+        if (Hwnd == 0)
             return;
+        bool wasOpen = !_closing;
         _closing = true;
         if (Native.GetCapture() == Hwnd)
             Native.ReleaseCapture();
         Dispose();
+        if (wasOpen)
+            Closed?.Invoke();
+    }
+
+    /// <summary>
+    /// A1, SHRINK: the box shrinks toward the card's side, 2/3, 1/3, then the window is gone. The panel counts as closed from the first
+    /// moment (the action that closed it is not delayed); a close during a grow starts from the width it had reached.
+    /// </summary>
+    public void Close()
+    {
+        if (_closing || Hwnd == 0)
+            return;
+        double from = _steps.Running ? _revealShare : 1;
+        _closing = true;
+        if (Native.GetCapture() == Hwnd)
+            Native.ReleaseCapture();
+        _listSteps.Cancel();
+        _flashSteps.Cancel();
+        _steps.Cancel();
         Closed?.Invoke();
+        if (Hwnd == 0)
+            return;
+        var shares = new[] { 2.0 / 3, 1.0 / 3 }.Where(share => share < from - 0.001).ToList();
+        var (x, y) = (Origin.X, Origin.Y);
+        _steps.Start(shares.Count + 1, frame =>
+        {
+            if (frame < shares.Count)
+            {
+                _revealShare = shares[frame];
+                DrawBox(x, y);
+            }
+        }, Dispose);
     }
 
     public override void Dispose()
     {
+        _guard.Stop();
+        _steps.Dispose();
+        _listSteps.Dispose();
+        _flashSteps.Dispose();
         if (Hwnd != 0)
             UiaNative.UiaReturnRawElementProvider(Hwnd, 0, 0, null);
         _accessible.DisconnectUia();
@@ -149,8 +211,63 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     {
         if (Hwnd == 0)
             return;
-        RecomputeView();
+        ChangeList(RecomputeView);
         Redraw();
+    }
+
+    /// <summary>
+    /// A2 and A4: runs a change of the list (the filter, the order, the items) and starts what it does for three frames: the cells that
+    /// stayed in their row MOVE, new ones and ones that changed rows POP, the old cells of those that left or changed rows LEAVE. Only
+    /// cells in view animate; a grow or shrink in progress, or "Animation effects" off, snaps.
+    /// </summary>
+    private void ChangeList(Action change)
+    {
+        var oldKeys = _view.Select(i => i.FileName).ToList();
+        int oldFirst = _firstRow;
+        var oldPlan = _plan;
+        var oldScene = _lastPanel;
+        _listSteps.Cancel();
+        _motion = null;
+        change();
+        if (Hwnd == 0 || _closing || _steps.Running || !MotionSettings.Enabled || oldPlan is null || oldScene is null)
+            return;
+        var newKeys = _view.Select(i => i.FileName).ToList();
+        if (oldKeys.SequenceEqual(newKeys, StringComparer.OrdinalIgnoreCase))
+            return;
+        EnsurePlan();
+        var plan = _plan!;
+        var palette = CurrentPalette();
+        (int, int)? PlaceIn(FolderPixelPanelScene.PanelPlan at, int first, int index) => FolderPixelPanelScene.CellRect(at, index, first) is { } rect ? (rect.X + 1, rect.Y + 2) : null;
+        LeavingCell? Picture(int index)
+        {
+            if (FolderPixelPanelScene.CellRect(oldPlan, index, oldFirst) is not { } rect)
+                return null;
+            var picture = PixelMotion.Snapshot(oldScene, rect.X, rect.Y, rect.W, rect.H);
+            for (int i = 0; i < picture.Pixels.Length; i++)
+                if (picture.Pixels[i] == palette.Panel)
+                    picture.Pixels[i] = 0; // only the cell's own pixels leave, not the panel behind them
+            return new LeavingCell(picture, rect.X, rect.Y);
+        }
+        var motion = ListMotion.Plan(oldKeys, newKeys, index => PlaceIn(oldPlan, oldFirst, index), index => PlaceIn(plan, _firstRow, index), Picture);
+        if (motion is null)
+            return;
+        _motion = motion;
+        _listSteps.Start(ListMotion.Frames, frame =>
+        {
+            motion.Frame = frame + 1;
+            if (frame > 0)
+                Redraw();
+        }, () => _motion = null);
+    }
+
+    /// <summary>A3: the FLASH frame of an item that opens, then the hover look.</summary>
+    private void FlashItem(int index)
+    {
+        _flashSteps.Start(2, frame =>
+        {
+            _flashCell = frame == 0 ? index : -1;
+            Redraw();
+        });
     }
 
     public void ApplyLanguage() => Refresh();
@@ -199,7 +316,16 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         _rank = FolderPixelPanelScene.MetricRank(Model.Name, _search.Text, Model.Sort, _view);
     }
 
-    private FolderPanelView Snapshot() => new(Model.Name, Model.Path, _view, _search.Text, Model.Sort, Model.Items.Count, _selection, _hover, _selection.Focus, _firstRow, _sortHover, _sortPressed, _edit, _icons);
+    private FolderPanelView Snapshot() => new(Model.Name, Model.Path, _view, _search.Text, Model.Sort, Model.Items.Count, _selection, _hover, _selection.Focus, _firstRow, _sortHover, _sortPressed, _edit, _icons,
+        _pressedCell, _flashCell, _motion, _dimmed);
+
+    /// <summary>Works out the layout (and so what the pointer can hit) without drawing it: a grow shows empty frames first.</summary>
+    private void EnsurePlan()
+    {
+        var plan = FolderPixelPanelScene.Plan(Snapshot(), _rank);
+        _firstRow = Math.Clamp(_firstRow, 0, Math.Max(0, plan.TotalRows - plan.VisibleRows));
+        _plan = plan;
+    }
 
     private void Draw(int x, int y)
     {
@@ -209,13 +335,22 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         _firstRow = Math.Clamp(_firstRow, 0, Math.Max(0, plan.TotalRows - plan.VisibleRows));
         _plan = plan;
         var panel = FolderPixelPanelScene.Draw(palette, view with { FirstRow = _firstRow }, plan);
+        _lastPanel = panel;
         Present(PixelFrame.WithShadow(panel, palette.Shadow, DialogLayout.ShadowOffset), Factor, x, y);
     }
+
+    /// <summary>GROW and SHRINK's empty box: the panel's own frame at <see cref="_revealShare"/> of its width, the rest of the window transparent.</summary>
+    private void DrawBox(int x, int y) => Present(PixelMotion.EmptyFrame(CurrentPalette(), FolderPixelPanelScene.Width, FolderPixelPanelScene.Height, DialogLayout.ShadowOffset, _revealShare, _anchorRight), Factor, x, y);
 
     private void Redraw()
     {
         if (Hwnd == 0 || _closing)
             return;
+        if (_steps.Running)
+        {
+            _steps.Cancel(); // input wins: a state that needs drawing cuts a grow short
+            _revealShare = 1;
+        }
         if (Native.GetWindowRect(Hwnd, out var rect))
             Draw(rect.Left, rect.Top);
         _text?.Sync(); // the field may have changed: the IME works from the same text
@@ -342,7 +477,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         _selection.Anchor = -1;
         _selection.KeyboardFocus = false;
         _firstRow = 0;
-        RecomputeView();
+        ChangeList(RecomputeView);
         Redraw();
     }
 
@@ -677,6 +812,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
                 if (second)
                 {
                     _collapseOnRelease = false;
+                    FlashItem(hit.Index);
                     OpenSelection();
                 }
                 break;
@@ -744,6 +880,9 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         _pressedCell = -1;
         if (Native.GetCapture() == Hwnd)
             Native.ReleaseCapture();
+        // A2d: while the drag lasts, each dragged cell is drawn at half its pixels (a still state, not an animation).
+        _dimmed = new HashSet<int>(items.Select(item => _view.IndexOf(item)).Where(index => index >= 0));
+        Redraw();
         try
         {
             var data = Shell.DataObjectOf(items.Select(i => Shell.FromPath(i.Path)));
@@ -756,6 +895,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         finally
         {
             _dragging = false;
+            _dimmed = null;
         }
         if (Hwnd == 0 || _closing)
             return;
@@ -767,6 +907,9 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
 
     protected override nint OnMessage(uint msg, nint wParam, nint lParam)
     {
+        // While the box shrinks away (SHRINK) the panel is closed: it takes no more keys or clicks.
+        if (_closing && msg is Native.WM_KEYDOWN or Native.WM_SYSKEYDOWN or Native.WM_CHAR or Native.WM_MOUSEMOVE or Native.WM_LBUTTONDOWN or Native.WM_LBUTTONUP or Native.WM_RBUTTONUP or Native.WM_MOUSEWHEEL)
+            return 0;
         switch (msg)
         {
             case Native.WM_ERASEBKGND:

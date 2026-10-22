@@ -1,3 +1,4 @@
+using DeskWidgets.Motion;
 using DeskWidgets.Pixel;
 using DeskWidgets.PixelUi;
 
@@ -13,7 +14,10 @@ internal sealed record FolderPixelView(
     FolderHit Hover,
     FolderHit Pressed,
     DropVerb? Drop,
-    PixelFolderIcons Icons);
+    PixelFolderIcons Icons,
+    int DropPhase = 2,
+    ListMotion? Motion = null,
+    FolderHit Flash = default);
 
 /// <summary>
 /// The Big Folder card in the Pixel theme (the Pixel design's HANDOFF, "Card"): metrics in art pixels, the header, the cells, the
@@ -162,10 +166,16 @@ internal static class FolderPixelScene
         bool missing = !view.Exists, empty = view.Exists && view.Items.Count == 0;
         var keep = new List<(int X, int Y, int W, int H)>(); // boxes the drop tint must not touch: every icon and every text, grown by 1
 
-        if (view.Hover.Kind == FolderHitKind.Header || view.Pressed.Kind == FolderHitKind.Header)
-            FillRound(canvas, 3, plan.HeaderY - 2, width - 6, plan.HeaderHeight + 4, view.Pressed.Kind == FolderHitKind.Header ? p.Shade : p.OpenFill);
-        plan.Title.Draw(canvas, 7, plan.HeaderY + (plan.HeaderHeight - plan.Title.Height) / 2, p.Ink);
-        plan.Count.Draw(canvas, width - 7 - plan.Count.Width, plan.HeaderY + (plan.HeaderHeight - plan.Count.Height) / 2, p.Soft);
+        // A3: the header's plate and its words go 1 px up on hover and 1 px down on a press; a completed click flashes it once.
+        bool headerFlash = view.Flash.Kind == FolderHitKind.Header;
+        bool headerPressed = view.Pressed.Kind == FolderHitKind.Header, headerHover = view.Hover.Kind == FolderHitKind.Header;
+        int headerDy = headerPressed ? 1 : headerHover ? -1 : 0;
+        if (headerFlash)
+            FillRound(canvas, 3, plan.HeaderY - 2, width - 6, plan.HeaderHeight + 4, p.Select);
+        else if (headerHover || headerPressed)
+            FillRound(canvas, 3, plan.HeaderY - 2, width - 6, plan.HeaderHeight + 4, headerPressed ? p.Shade : p.OpenFill);
+        plan.Title.Draw(canvas, 7, plan.HeaderY + (plan.HeaderHeight - plan.Title.Height) / 2 + headerDy, headerFlash ? p.OnSelect : p.Ink);
+        plan.Count.Draw(canvas, width - 7 - plan.Count.Width, plan.HeaderY + (plan.HeaderHeight - plan.Count.Height) / 2 + headerDy, headerFlash ? p.OnSelect : p.Soft);
         keep.Add((6, plan.HeaderY + (plan.HeaderHeight - plan.Title.Height) / 2 - 1, plan.Title.Width + 2, plan.Title.Height + 2));
         keep.Add((width - 8 - plan.Count.Width, plan.HeaderY + (plan.HeaderHeight - plan.Count.Height) / 2 - 1, plan.Count.Width + 2, plan.Count.Height + 2));
         int top = plan.HeaderY + plan.HeaderHeight;
@@ -183,8 +193,8 @@ internal static class FolderPixelScene
         {
             DrawCells(canvas, p, view, plan, keep);
         }
-        if (view.Drop is { } verb && view.Exists)
-            DrawDrop(canvas, p, DropLabel(verb, view.Name), keep);
+        if (view.Drop is { } verb && view.Exists && view.DropPhase > 0)
+            DrawDrop(canvas, p, DropLabel(verb, view.Name), keep, view.DropPhase);
     }
 
     public static string DropLabel(DropVerb verb, string folder) => verb switch
@@ -200,15 +210,48 @@ internal static class FolderPixelScene
         var cells = plan.Cells;
         int columns = cells.Columns;
         int total = cells.HasStack ? cells.Shown + 1 : cells.Shown;
+        var motion = view.Motion;
+        // The cells that left stay a moment longer, at half their pixels, then a quarter (LEAVE), under the ones that came.
+        if (motion is not null && motion.Frame < ListMotion.Frames)
+        {
+            int minBayer = motion.Frame == 1 ? 8 : 12;
+            foreach (var gone in motion.Leaving)
+                PixelMotion.BlitMasked(gone.Pixels, canvas, gone.X, gone.Y, minBayer);
+        }
         for (int i = 0; i < total; i++)
         {
             int x = plan.Columns[i % columns], y = plan.Rows[i / columns];
             bool isStack = cells.HasStack && i == cells.Shown;
             var hit = isStack ? new FolderHit(FolderHitKind.Stack) : new FolderHit(FolderHitKind.Item, i);
-            bool pressed = view.Pressed == hit;
-            int dy = pressed ? 1 : 0;
-            if (view.Hover == hit || pressed)
-                FillRound(canvas, x - 1, y - 2, CellWidth + 2, plan.CellHeight + 4, pressed ? p.Shade : p.OpenFill);
+            bool pressed = view.Pressed == hit, hover = view.Hover == hit, flash = view.Flash == hit;
+            // A3: 1 px up on hover, 1 px down (and the Shade plate) on a press; a completed click flashes once.
+            int dy = pressed ? 1 : hover ? -1 : 0;
+            int plateX = x - 1;
+            if (!isStack && motion is not null)
+            {
+                var (effect, moveDx) = motion.Of(i);
+                if (effect == CellEffect.Move)
+                {
+                    x += motion.MoveOffset(moveDx);
+                    plateX = x - 1;
+                }
+                else if (effect == CellEffect.Pop && motion.Frame == 1)
+                {
+                    // POP, frame 1: the item's mini tile, centred on where its icon will be.
+                    var mini = PixelFolderIcons.Mini(p, view.Icons.Icon(p, view.Items[i]));
+                    Blit(mini, canvas, x + 15, y + 5);
+                    continue;
+                }
+                else if (effect == CellEffect.Pop && motion.Frame == 2)
+                {
+                    dy -= 1; // the full cell, 1 px above its place
+                }
+            }
+            if (flash)
+                FillRound(canvas, plateX, y - 2, CellWidth + 2, plan.CellHeight + 4, p.Select);
+            else if (hover || pressed)
+                FillRound(canvas, plateX, y - 2, CellWidth + 2, plan.CellHeight + 4, pressed ? p.Shade : p.OpenFill);
+            uint nameColor(FolderItem item) => flash ? p.OnSelect : item.TargetMissing ? p.Faint : p.Ink;
             if (!isStack)
             {
                 var item = view.Items[i];
@@ -219,7 +262,7 @@ internal static class FolderPixelScene
                 foreach (var line in plan.Names[i])
                 {
                     int lineX = x + (CellWidth - line.Width) / 2, top = plan.TwoLines ? lineY : y + 16 + plan.NameGap + (plan.NameHeight - line.Height) / 2 + dy;
-                    line.Draw(canvas, lineX, top, item.TargetMissing ? p.Faint : p.Ink);
+                    line.Draw(canvas, lineX, top, nameColor(item));
                     keep.Add((lineX - 1, top - 1, line.Width + 2, line.Height + 2));
                     lineY += LinePitch(line);
                 }
@@ -231,7 +274,7 @@ internal static class FolderPixelScene
                 var label = plan.StackLabel!;
                 int labelX = x + (CellWidth - label.Width) / 2;
                 int labelY = y + 16 + plan.NameGap + (plan.TwoLines ? 0 : (plan.NameHeight - label.Height) / 2) + dy; // "+K" is line 1
-                label.Draw(canvas, labelX, labelY, p.Ink);
+                label.Draw(canvas, labelX, labelY, flash ? p.OnSelect : p.Ink);
                 keep.Add((x + 9, y + dy - 1, 18, 18));
                 keep.Add((labelX - 1, labelY - 1, label.Width + 2, label.Height + 2));
             }
@@ -270,16 +313,20 @@ internal static class FolderPixelScene
     }
 
     /// <summary>Drop hover: every other panel-coloured pixel turns Select (icons and names stay crisp), then a Select plate with the label.</summary>
-    private static void DrawDrop(PixelCanvas canvas, PixelPalette p, string label, List<(int X, int Y, int W, int H)> keep)
+    private static void DrawDrop(PixelCanvas canvas, PixelPalette p, string label, List<(int X, int Y, int W, int H)> keep, int phase)
     {
-        for (int y = 2; y < canvas.Height - 3; y += 2)
+        // A2a: phase 1 is the tint at 1 dot in 16 with no label, phase 2 the tint as it is (1 in 4) with the label plate.
+        int step = phase == 1 ? 4 : 2;
+        for (int y = 2; y < canvas.Height - 3; y += step)
         {
-            for (int x = 2; x < canvas.Width - 2; x += 2)
+            for (int x = 2; x < canvas.Width - 2; x += step)
             {
                 if (canvas.Get(x, y) == p.Panel && !keep.Any(k => x >= k.X && x < k.X + k.W && y >= k.Y && y < k.Y + k.H))
                     canvas.Set(x, y, p.Select);
             }
         }
+        if (phase < 2)
+            return;
         var text = Layout(label, PixelFonts.Small, canvas.Width - 24, 2);
         int plateWidth = text.Width + 12, plateHeight = text.Height + 9;
         int px = (canvas.Width - plateWidth) / 2, py = (canvas.Height - plateHeight) / 2;
