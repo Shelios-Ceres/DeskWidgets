@@ -79,6 +79,19 @@ public class FolderNameShortenerTests
     }
 
     [Fact]
+    public void AVisibleExtension_WinsOverTheMinimumHead()
+    {
+        // Phase 8: a 1-character head with the extension tail beats cutting at the end, which would drop the extension.
+        Assert.Equal("度…报告.docx", One("度财务报告.docx", 72));
+        // Without an extension the minimum head still applies.
+        Assert.Equal("度财…", One("度财务报告", 36));
+        // And when not even 1 character fits beside "…" + extension, the name is cut at the end.
+        string cut = One("度财务报告.docx", 50);
+        Assert.True(Width(cut) <= 50);
+        Assert.EndsWith("…", cut);
+    }
+
+    [Fact]
     public void TrailingSeparatorsOfTheHead_AreTrimmed()
     {
         Assert.DoesNotContain("_…", One("Quarterly_report_final_2026", 74));
@@ -184,7 +197,8 @@ public class FolderNameShortenerTests
     public void TwoLines_PreferABreakAfterAHyphenOrBeforeTheExtension_ToBreakingInsideAWord()
     {
         Assert.Equal(("cross-", "drive.txt"), NameShortener.TwoLines("cross-drive.txt", 72, Width));
-        Assert.Equal(("my_long_", "file_nam…"), NameShortener.TwoLines("my_long_file_name.pdf", 54, Width));
+        // Line 2 keeps the visible extension (Phase 8: it wins over the minimum head), not "file_nam…".
+        Assert.Equal(("my_long_", "fi…me.pdf"), NameShortener.TwoLines("my_long_file_name.pdf", 54, Width));
         // No natural break fits in line 1: the word breaks inside, as before.
         Assert.Equal(("Quarterlyrep", "ort.docx"), NameShortener.TwoLines("Quarterlyreport.docx", 72, Width));
         // The dot is a break when it fits: "Quarterly" + ".docx".

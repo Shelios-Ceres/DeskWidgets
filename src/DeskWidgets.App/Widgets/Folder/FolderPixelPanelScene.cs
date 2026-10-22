@@ -73,7 +73,8 @@ internal static class FolderPixelPanelScene
 
     internal sealed class PanelPlan
     {
-        public required bool SimSun { get; init; }
+        /// <summary>The metric set: 0 pixel fonts, 1 Fusion 8 px, 2 SimSun.</summary>
+        public required int Rank { get; init; }
         public required PixelText Title { get; init; }
         public required PixelText Count { get; init; }
         public required PixelText SortText { get; init; }
@@ -92,41 +93,43 @@ internal static class FolderPixelPanelScene
         public required int NameGap { get; init; }
     }
 
-    /// <summary>Whether the panel needs the SimSun metric set: any visible text (title, search, sort, a name) that the pixel fonts cannot spell.</summary>
-    public static bool NeedsSimSun(string name, string search, FolderSort sort, IReadOnlyList<FolderItem> items)
+    /// <summary>
+    /// The panel's metric set: that of its highest-ranked visible text (title, search, sort button or a name): 0 when the pixel fonts spell them all, 1 when Fusion 8 px has to, 2 when only SimSun can.
+    /// </summary>
+    public static int MetricRank(string name, string search, FolderSort sort, IReadOnlyList<FolderItem> items)
     {
-        if (PixelText.Layout(name, PixelFonts.Regular).IsFallback || PixelText.Layout(search.Length > 0 ? search : Strings.FolderSearch, PixelFonts.Regular).IsFallback
-            || PixelText.Layout(Strings.FolderSortButton(sort), PixelFonts.Regular).IsFallback)
-        {
-            return true;
-        }
-        var font = PixelFonts.Small;
+        int rank = Math.Max(FolderPixelScene.Layout(name, PixelFonts.Regular).Rank, FolderPixelScene.Layout(search.Length > 0 ? search : Strings.FolderSearch, PixelFonts.Regular).Rank);
+        rank = Math.Max(rank, FolderPixelScene.Layout(Strings.FolderSortButton(sort), PixelFonts.Regular).Rank);
         foreach (var item in items)
-        {
-            if (!font.Covers(font.Normalize(item.DisplayName)))
-                return true;
-        }
-        return false;
+            rank = Math.Max(rank, RankOf(item.DisplayName, PixelFonts.Small));
+        return rank;
     }
 
-    public static PanelPlan Plan(FolderPanelView view, bool simSun)
+    private static int RankOf(string text, PixelFont latin)
     {
-        var count = PixelText.Layout(Strings.FolderItemCount(view.Total), PixelFonts.Regular);
+        var font = FolderPixelScene.FontFor(text, latin);
+        return font == PixelFonts.System ? 2 : font == PixelFonts.Fusion ? 1 : 0;
+    }
+
+    public static PanelPlan Plan(FolderPanelView view, int rank)
+    {
+        var count = FolderPixelScene.Layout(Strings.FolderItemCount(view.Total), PixelFonts.Regular);
         var title = FolderPixelScene.OneLine(view.Name, PixelFonts.Regular, Width - 14 - count.Width - 8);
-        var sortText = PixelText.Layout(Strings.FolderSortButton(view.Sort), PixelFonts.Regular);
-        int fieldY = 20, fieldHeight = simSun ? 18 : 15;
+        var sortText = FolderPixelScene.Layout(Strings.FolderSortButton(view.Sort), PixelFonts.Regular);
+        // Metric sets: pixel fonts (cell 30, pitch 33), Fusion (cell 36: 16, 1, 9, 1, 9; pitch 39), SimSun (cell 42, pitch 45).
+        int fieldY = 20, fieldHeight = rank == 2 ? 18 : 15;
         int sortWidth = sortText.Width + 8 + 5 + 4 + 8;
         int sortX = Width - 7 - sortWidth;
         int fieldWidth = sortX - 5 - 7;
         int gridY = fieldY + fieldHeight + 6, gridBottom = Height - 24;
-        int cellHeight = simSun ? 42 : 30, pitch = simSun ? 45 : 33;
+        int cellHeight = rank switch { 2 => 42, 1 => 36, _ => 30 }, pitch = rank switch { 2 => 45, 1 => 39, _ => 33 };
         int visibleRows = (gridBottom - gridY + (pitch - cellHeight)) / pitch;
         int totalRows = (view.Items.Count + Columns - 1) / Columns;
         return new PanelPlan
         {
-            SimSun = simSun, Title = title, Count = count, SortText = sortText, FieldY = fieldY, FieldHeight = fieldHeight, FieldWidth = fieldWidth,
+            Rank = rank, Title = title, Count = count, SortText = sortText, FieldY = fieldY, FieldHeight = fieldHeight, FieldWidth = fieldWidth,
             SortX = sortX, SortWidth = sortWidth, GridY = gridY, GridBottom = gridBottom, CellHeight = cellHeight, Pitch = pitch,
-            VisibleRows = visibleRows, TotalRows = totalRows, NameHeight = simSun ? 12 : 5, NameGap = simSun ? 1 : 2,
+            VisibleRows = visibleRows, TotalRows = totalRows, NameHeight = rank switch { 2 => 12, 1 => 9, _ => 5 }, NameGap = rank == 0 ? 2 : 1,
         };
     }
 
@@ -173,11 +176,12 @@ internal static class FolderPixelPanelScene
 
     // ----- drawing -----
 
-    /// <summary>The name in at most two lines, both in the font chosen from the whole name (SimSun for Chinese, even when a line is only digits).</summary>
+    /// <summary>The name in at most two lines, both in the font chosen from the whole name (Fusion or SimSun for Chinese, even when a line is only digits).</summary>
     public static List<PixelText> NameLines(string displayName)
     {
-        var font = FolderPixelScene.FontFor(displayName, PixelFonts.Small);
-        var (first, second) = NameShortener.TwoLines(displayName, CellWidth, FolderPixelScene.Measure(font));
+        string encoded = PixelEmoji.Encode(displayName);
+        var font = FolderPixelScene.FontFor(encoded, PixelFonts.Small);
+        var (first, second) = NameShortener.TwoLines(encoded, CellWidth, FolderPixelScene.Measure(font));
         return second.Length == 0 ? [PixelText.Layout(first, font)] : [PixelText.Layout(first, font), PixelText.Layout(second, font)];
     }
 
@@ -209,7 +213,7 @@ internal static class FolderPixelPanelScene
         int y = plan.FieldY, h = plan.FieldHeight;
         PixelFrame.Draw(canvas, 7, y, plan.FieldWidth, h, PixelFrame.ButtonCorner, p.Outline, p.Well, p.WellEdge, p.Well, 0);
         canvas.Draw(Magnifier, 12, y + (h - 6) / 2, _ => p.Soft);
-        var text = PixelText.Layout(view.Search.Length > 0 ? view.Search : Strings.FolderSearch, PixelFonts.Regular);
+        var text = FolderPixelScene.Layout(view.Search.Length > 0 ? view.Search : Strings.FolderSearch, PixelFonts.Regular);
         int room = plan.FieldWidth - 21 + 7 - 6; // the text's room: from x 21 to the field's right edge less a margin
         int shift = text.Width + 1 > room && view.Search.Length > 0 ? text.Width + 1 - room : 0;
         var inner = new PixelCanvas(Math.Max(1, room), h - 2);
@@ -230,7 +234,7 @@ internal static class FolderPixelPanelScene
         var items = view.Items;
         if (items.Count == 0 && view.Search.Length > 0)
         {
-            var none = PixelText.Layout(Strings.FolderNoMatches, PixelFonts.Regular);
+            var none = FolderPixelScene.Layout(Strings.FolderNoMatches, PixelFonts.Regular);
             none.Draw(canvas, 7, plan.GridY + 30, p.Soft, PixelAlign.Center, Width - 14);
         }
         for (int row = 0; row < plan.VisibleRows; row++)
@@ -246,7 +250,7 @@ internal static class FolderPixelPanelScene
         if (view.Edit is { Target: PanelEditTarget.Item } edit && CellRect(plan, edit.ItemIndex, view.FirstRow) is { } cell)
         {
             // The field is the cell's width (38, from the cell's left edge), under the icon; the text scrolls to keep the caret in view.
-            DrawEditField(canvas, p, cell.X, cell.Y + 2 + 16 + 1, cell.W, plan.SimSun ? 16 : 14, edit.Editor, PixelFonts.Small);
+            DrawEditField(canvas, p, cell.X, cell.Y + 2 + 16 + 1, cell.W, plan.Rank == 2 ? 16 : 14, edit.Editor, PixelFonts.Small);
         }
 
         if (plan.TotalRows > plan.VisibleRows)
@@ -280,8 +284,8 @@ internal static class FolderPixelPanelScene
         foreach (var line in NameLines(item.DisplayName))
         {
             line.Draw(canvas, x + (CellWidth - line.Width) / 2, lineY, color);
-            // Each name keeps its own font's line pitch, even in a panel with SimSun metrics: 5 + 2 for the pixel font, 12 + 1 for SimSun.
-            lineY += line.IsFallback ? 13 : 7;
+            // Each name keeps its own font's line pitch, even in a panel with other metrics: 5 + 2 for the pixel font, 9 + 1 for Fusion, 12 + 1 for SimSun.
+            lineY += line.Rank switch { 2 => 13, 1 => 10, _ => 7 };
         }
     }
 
@@ -291,12 +295,13 @@ internal static class FolderPixelPanelScene
         int pathWidth = Width - 14;
         if (view.Selection.Count > 0)
         {
-            var selected = PixelText.Layout(Strings.FolderSelected(view.Selection.Count), PixelFonts.Small);
+            var selected = FolderPixelScene.Layout(Strings.FolderSelected(view.Selection.Count), PixelFonts.Small);
             selected.Draw(canvas, Width - 7 - selected.Width, Height - 18 + (12 - selected.Height) / 2, p.Ink);
             pathWidth -= selected.Width + 8;
         }
-        var pathFont = FolderPixelScene.FontFor(view.Path, PixelFonts.Small);
-        var path = PixelText.Layout(NameShortener.Path(view.Path, pathWidth, FolderPixelScene.Measure(pathFont)), pathFont);
+        string encodedPath = PixelEmoji.Encode(view.Path);
+        var pathFont = FolderPixelScene.FontFor(encodedPath, PixelFonts.Small);
+        var path = PixelText.Layout(NameShortener.Path(encodedPath, pathWidth, FolderPixelScene.Measure(pathFont)), pathFont);
         path.Draw(canvas, 7, Height - 18 + (12 - path.Height) / 2, p.Soft);
     }
 
@@ -307,11 +312,11 @@ internal static class FolderPixelPanelScene
     internal static void DrawEditField(PixelCanvas canvas, PixelPalette p, int x, int y, int width, int height, LineEditor editor, PixelFont latin)
     {
         PixelFrame.Draw(canvas, x, y, width, height, PixelFrame.ButtonCorner, p.Outline, p.Well, p.WellEdge, p.Well, 0);
-        var text = PixelText.Layout(editor.Text, latin);
+        var text = FolderPixelScene.Layout(editor.Text, latin);
         int innerWidth = width - 6, innerHeight = height - 2;
         int caretX = editor.AllSelected || editor.Caret >= editor.Text.Length
             ? text.Width + 1
-            : text.Font.Measure(text.Font.Normalize(editor.Text[..editor.Caret])) + 1;
+            : text.Font.Measure(text.Font.Normalize(PixelEmoji.Encode(editor.Text[..editor.Caret]))) + 1;
         int shift = Math.Max(0, caretX - innerWidth + 2);
         var inner = new PixelCanvas(innerWidth, innerHeight);
         int textY = (innerHeight - text.Height) / 2;

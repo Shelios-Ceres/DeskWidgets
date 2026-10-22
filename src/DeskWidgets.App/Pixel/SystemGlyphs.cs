@@ -22,10 +22,17 @@ internal static class SystemGlyphs
     /// <summary>Rows in every glyph: the font's cell height.</summary>
     public static int Height => EnsureContext() ? s_height : EmSize;
 
+    /// <summary>The side of an emoji's tile in a SimSun line: it takes a 12-pixel advance and the glyph rows 0 to 10.</summary>
+    public const int EmojiTile = 11;
+
+    private const int EmojiSize = EmojiTile;
+
     public static PixelMask? Render(char c)
     {
         if (!EnsureContext())
             return null;
+        if (PixelEmoji.IsEmoji(c))
+            return new PixelMask(EmojiSize + 1, s_height, new bool[(EmojiSize + 1) * s_height]); // an empty cell; the tile is drawn over it
         if (char.IsSurrogate(c))
             c = '?'; // characters outside the BMP (emoji) are not worth a second code path
         string text = c.ToString();

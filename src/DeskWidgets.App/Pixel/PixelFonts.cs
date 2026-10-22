@@ -14,7 +14,13 @@ internal static class PixelFonts
     public static PixelFont Regular { get; } = CreateRegular();
 
     /// <summary>SimSun's 12-pixel bitmaps, for text the pixel fonts cannot spell (Chinese and other scripts).</summary>
-    public static PixelFont System { get; } = new(SystemGlyphs.Height, lineGap: 1, spacing: 0, capitalsOnly: false, SystemGlyphs.Render);
+    public static PixelFont System { get; } = new(SystemGlyphs.Height, lineGap: 1, spacing: 0, capitalsOnly: false, SystemGlyphs.Render, emojiSize: SystemGlyphs.EmojiTile);
+
+    /// <summary>
+    /// Fusion Pixel Font 8 px (OFL-1.1): the Big Folder's Chinese text, a 9-row cell with a 10-pixel line pitch. It spells Latin too, so a
+    /// name with one Chinese character or one emoji is set entirely in it (mixed case). Everything else keeps SimSun.
+    /// </summary>
+    public static PixelFont Fusion { get; } = new(FusionGlyphs.Height, lineGap: 1, spacing: 0, capitalsOnly: false, FusionGlyphs.Render, emojiSize: 7);
 
     private static PixelFont CreateSmall()
     {

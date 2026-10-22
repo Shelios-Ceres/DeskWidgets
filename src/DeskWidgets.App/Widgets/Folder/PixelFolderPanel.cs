@@ -26,7 +26,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     private PanelEdit? _edit;
     private string? _renamingFile;
     private FolderPixelPanelScene.PanelPlan? _plan;
-    private bool _simSun;
+    private int _rank; // the metric set: 0 pixel fonts, 1 Fusion 8 px, 2 SimSun
     private int _firstRow;
     private int _hover = -1;
     private bool _sortHover, _sortPressed;
@@ -196,7 +196,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
             if (_edit is null)
                 _renamingFile = null;
         }
-        _simSun = FolderPixelPanelScene.NeedsSimSun(Model.Name, _search.Text, Model.Sort, _view);
+        _rank = FolderPixelPanelScene.MetricRank(Model.Name, _search.Text, Model.Sort, _view);
     }
 
     private FolderPanelView Snapshot() => new(Model.Name, Model.Path, _view, _search.Text, Model.Sort, Model.Items.Count, _selection, _hover, _selection.Focus, _firstRow, _sortHover, _sortPressed, _edit, _icons);
@@ -205,7 +205,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     {
         var palette = CurrentPalette();
         var view = Snapshot();
-        var plan = FolderPixelPanelScene.Plan(view, _simSun);
+        var plan = FolderPixelPanelScene.Plan(view, _rank);
         _firstRow = Math.Clamp(_firstRow, 0, Math.Max(0, plan.TotalRows - plan.VisibleRows));
         _plan = plan;
         var panel = FolderPixelPanelScene.Draw(palette, view with { FirstRow = _firstRow }, plan);
@@ -236,7 +236,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
         if (_edit is { Target: PanelEditTarget.Folder })
             return ToScreen((6, 4, FolderPixelPanelScene.Width - 12, 14));
         if (_edit is { Target: PanelEditTarget.Item } edit && _plan is not null && FolderPixelPanelScene.CellRect(_plan, edit.ItemIndex, _firstRow) is { } cell)
-            return ToScreen((cell.X, cell.Y + 2 + 16 + 1, cell.W, _plan.SimSun ? 16 : 14));
+            return ToScreen((cell.X, cell.Y + 2 + 16 + 1, cell.W, _plan.Rank == 2 ? 16 : 14));
         return SearchRect();
     }
 

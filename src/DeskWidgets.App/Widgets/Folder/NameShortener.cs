@@ -20,7 +20,8 @@ internal static class NameShortener
     /// One line (card, header, drop label):
     /// whole if it fits; else the head, "…" and a tail, the tail being the last word (at most 12 characters, with its
     /// extension, if "…" + tail fits in half the width) or the last 4 characters (the last 2 when the name ends in a CJK
-    /// character). If fewer than 2 characters (3 for Latin) would be left of the head, the tail is dropped and the name is cut at the end.
+    /// character). If fewer than 2 characters (3 for Latin) would be left of the head, the tail is dropped and the name is cut at the end,
+    /// except that a visible extension is always kept: with it, a head of 1 character is enough (only no head at all cuts at the end).
     /// </summary>
     public static string OneLine(string name, double maxWidth, Func<string, double> measure)
     {
@@ -34,7 +35,10 @@ internal static class NameShortener
         string tail = string.Concat(elements.Skip(headRoom));
         int headCount = LongestFit(headRoom, h => HeadText(elements, h) + Ellipsis + tail, maxWidth, measure);
         string head = HeadText(elements, headCount);
-        int minimum = ContainsCjk(head) ? 2 : 3;
+        // A visible extension wins over the minimum head: cutting at the end would drop it ("度…报告.docx", not "度财务报告.d…").
+        int dot = ExtensionDot(elements);
+        bool keepsExtension = dot >= 1 && tailCount >= count - dot;
+        int minimum = keepsExtension ? 1 : ContainsCjk(head) ? 2 : 3;
         if (tailCount > 0 && head.Length > 0 && TextElementCount(head) >= minimum)
             return head + Ellipsis + tail;
 

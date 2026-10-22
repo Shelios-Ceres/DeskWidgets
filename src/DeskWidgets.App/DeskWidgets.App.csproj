@@ -26,6 +26,8 @@
     <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="1.8.260803002" />
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+    <!-- Offscreen DirectWrite colour-font rendering: the Pixel theme shrinks Segoe UI Emoji onto its grid (PixelUi emoji tiles). -->
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -35,6 +37,9 @@
 
   <ItemGroup>
     <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Fusion Pixel Font 8 px (OFL-1.1): the table is embedded, the license travels beside the exe. See tools\Make-FusionFont.ps1. -->
+    <EmbeddedResource Include="Assets\Fonts\FusionPixel8-zh_hans.bin" LogicalName="FusionPixel8-zh_hans.bin" />
+    <Content Include="Assets\Fonts\OFL-FusionPixel.txt" Link="OFL-FusionPixel.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

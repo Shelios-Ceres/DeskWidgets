@@ -290,17 +290,21 @@ internal sealed class GlassFolderCard : Canvas, IFolderCardView
         Children.Add(host);
     }
 
-    private (double ColumnWidth, double RowHeight, double Tile, double TileTop, double NameTop, double NameHeight, double NameFont, double NameWidth) Metrics()
+    /// <summary>
+    /// The grid per size (Glass HANDOFF 1.1, Phase 8 option B): names are Text 10 (10.5 on Large) with a 13 line height; Small and Medium
+    /// keep one line, Large takes two. The name box is the column minus 2, at row + 46 (row + 49 on Large, where the tile is 44).
+    /// </summary>
+    private (double ColumnWidth, double RowHeight, double Tile, double TileTop, double NameTop, double NameHeight, double NameFont, double NameWidth, int Lines) Metrics()
         => _size switch
         {
-            WidgetSize.Small => (70, 60, 40, 2, 45, 14, 11, 64),
-            WidgetSize.Medium => (80, 60, 40, 2, 45, 14, 11, 74),
-            _ => (80, 75, 48, 5, 58, 15, 12, 74),
+            WidgetSize.Small => (70, 60, 40, 2, 46, 13, 10, 68, 1),
+            WidgetSize.Medium => (80, 60, 40, 2, 46, 13, 10, 78, 1),
+            _ => (80, 75, 44, 2, 49, 26, 10.5, 78, 2),
         };
 
     private void Cells(GlassPalette palette, Size card, IReadOnlyList<FolderItem> items)
     {
-        var (columnWidth, rowHeight, tile, tileTop, nameTop, nameHeight, nameFont, nameWidth) = Metrics();
+        var (columnWidth, rowHeight, tile, tileTop, nameTop, nameHeight, nameFont, nameWidth, lines) = Metrics();
         var layout = FolderCards.Layout(_size, items.Count);
         double gridLeft = (card.Width - layout.Columns * columnWidth) / 2, gridTop = 34;
         var measure = Measurer(nameFont, FontWeights.Normal);
@@ -317,7 +321,8 @@ internal sealed class GlassFolderCard : Canvas, IFolderCardView
             var name = new TextBlock
             {
                 FontFamily = TextFont, FontSize = nameFont, Width = nameWidth, Height = nameHeight, TextAlignment = TextAlignment.Center,
-                TextWrapping = TextWrapping.NoWrap, IsHitTestVisible = false,
+                TextWrapping = TextWrapping.NoWrap, MaxLines = lines, LineHeight = 13, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                IsHitTestVisible = false,
             };
             if (isStack)
             {
@@ -336,17 +341,29 @@ internal sealed class GlassFolderCard : Canvas, IFolderCardView
                 SetLeft(visual, tileX);
                 SetTop(visual, y0 + tileTop);
                 Children.Add(visual);
-                string shown = NameShortener.OneLine(item.DisplayName, nameWidth, measure);
-                name.Text = shown;
+                bool shortened;
+                if (lines == 2)
+                {
+                    var (first, second) = NameShortener.TwoLines(item.DisplayName, nameWidth, measure);
+                    name.Text = second.Length == 0 ? first : first + "\n" + second;
+                    // A break at a space drops the space; anything else missing was cut.
+                    shortened = (first + second).Replace(" ", "") != item.DisplayName.Replace(" ", "");
+                }
+                else
+                {
+                    string shown = NameShortener.OneLine(item.DisplayName, nameWidth, measure);
+                    name.Text = shown;
+                    shortened = shown != item.DisplayName;
+                }
                 name.Foreground = item.TargetMissing ? palette.Secondary : palette.Primary;
                 AutomationProperties.SetName(name, item.DisplayName);
-                if (shown != item.DisplayName)
+                if (shortened)
                 {
                     name.IsHitTestVisible = true;
                     ToolTipService.SetToolTip(name, item.DisplayName);
                 }
             }
-            SetLeft(name, x0 + 3);
+            SetLeft(name, x0 + 1); // the name box is the column minus 2, centred in it
             SetTop(name, y0 + nameTop);
             Children.Add(name);
         }
@@ -358,7 +375,7 @@ internal sealed class GlassFolderCard : Canvas, IFolderCardView
         SetLeft(plate, x);
         SetTop(plate, y);
         Children.Add(plate);
-        double mini = _size == WidgetSize.Large ? 19 : 16, inset = _size == WidgetSize.Large ? 4 : 3;
+        double mini = _size == WidgetSize.Large ? 17 : 16, inset = _size == WidgetSize.Large ? 4 : 3; // minis + gap 2 + insets fill the tile: 4 + 17 + 2 + 17 + 4 = 44
         for (int i = 0; i < layout.Minis.Length; i++)
         {
             var visual = _tiles.Tile(palette, items[layout.Minis[i]], mini);

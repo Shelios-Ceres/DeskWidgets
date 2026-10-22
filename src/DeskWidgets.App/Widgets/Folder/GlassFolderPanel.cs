@@ -733,15 +733,16 @@ internal sealed class GlassFolderPanel : IFolderPanel
         Canvas.SetTop(tile, 6);
         layer.Children.Add(tile);
 
-        // The name: two lines, 72 wide (64 while selected, so the pill fits), centred.
-        const double width = 72;
-        var measure = Measurer(12, FontWeights.Normal);
-        var name = new StackPanel { Width = 72, Height = 30, IsHitTestVisible = false };
+        // The name: two lines of Text 11 (line height 14) in a 76 × 28 box at (x + 2, y + 58), centred (Glass HANDOFF 3.3, Phase 8).
+        const double width = 76;
+        var measure = Measurer(11, FontWeights.Normal);
+        var boxMeasure = Measurer(12, FontWeights.Normal); // the rename box keeps Text 12
+        var name = new StackPanel { Width = 76, Height = 28, IsHitTestVisible = false };
         if (_renaming == item.FileName)
         {
             _rename.Visibility = Visibility.Collapsed;
             // The box is as wide as the name (Text 12) plus 16, 80 to 160, centred on the cell and kept inside the panel's content (x 20 to 420).
-            double boxWidth = Math.Clamp(measure(item.DisplayName) + 16, 80, 160);
+            double boxWidth = Math.Clamp(boxMeasure(item.DisplayName) + 16, 80, 160);
             double cellLeft = 20 + index % Columns * CellWidth;
             double boxLeft = Math.Clamp(cellLeft + CellWidth / 2 - boxWidth / 2, 20, PanelWidth - 20 - boxWidth);
             var box = new TextBox { Text = item.DisplayName, Width = boxWidth, FontSize = 12 };
@@ -784,12 +785,12 @@ internal sealed class GlassFolderPanel : IFolderPanel
             name.HorizontalAlignment = HorizontalAlignment.Center;
             foreach (string line in second.Length == 0 ? [first] : new[] { first, second })
             {
-                var block = new TextBlock { Text = line, FontFamily = TextFont, FontSize = 12, LineHeight = 15, TextAlignment = TextAlignment.Center, Foreground = item.TargetMissing ? palette.Secondary : palette.Primary };
+                var block = new TextBlock { Text = line, FontFamily = TextFont, FontSize = 11, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextAlignment = TextAlignment.Center, Foreground = item.TargetMissing ? palette.Secondary : palette.Primary };
                 UIElement lineElement = block;
                 if (selected)
                 {
                     block.Foreground = palette.OnSelect;
-                    lineElement = new Border { Background = palette.Select, CornerRadius = new CornerRadius(4), Padding = new Thickness(4, 0, 4, 0), Height = 15, HorizontalAlignment = HorizontalAlignment.Center, Child = block };
+                    lineElement = new Border { Background = palette.Select, CornerRadius = new CornerRadius(4), Padding = new Thickness(4, 0, 4, 0), Height = 14, HorizontalAlignment = HorizontalAlignment.Center, Child = block };
                 }
                 name.Children.Add(lineElement);
             }

@@ -41,7 +41,8 @@ internal static class FolderPixelScene
     {
         public required int Width { get; init; }
         public required int Height { get; init; }
-        public required bool SimSun { get; init; }
+        /// <summary>The metric set: 0 pixel fonts, 1 Fusion 8 px, 2 SimSun (the highest-ranked text on the card decides).</summary>
+        public required int Rank { get; init; }
         public required int HeaderY { get; init; }
         public required int HeaderHeight { get; init; }
         public required int NameGap { get; init; }
@@ -59,16 +60,31 @@ internal static class FolderPixelScene
     internal static Func<string, double> Measure(PixelFont font) => text => PixelText.Layout(text, font).Width;
 
     /// <summary>
-    /// The font a whole text is set in: the pixel font when it can spell all of it, else SimSun. Chosen from the whole text, not from the
-    /// shortened or wrapped piece ("2026年度报告" becomes "2026…", which the pixel font could spell: the name would change size).
+    /// The font a whole text is set in (Phase 8, "one font per name"): the pixel font when it can spell all of it, else Fusion 8 px when it
+    /// covers all of it (emoji included), else SimSun. Chosen from the whole text, not from the shortened or wrapped piece ("2026年度报告"
+    /// becomes "2026…", which the pixel font could spell: the name would change size).
     /// </summary>
-    internal static PixelFont FontFor(string text, PixelFont latin) => latin.Covers(latin.Normalize(text)) ? latin : PixelFonts.System;
+    internal static PixelFont FontFor(string text, PixelFont latin)
+    {
+        string encoded = PixelEmoji.Encode(text);
+        if (latin.Covers(latin.Normalize(encoded)))
+            return latin;
+        return PixelFonts.Fusion.Covers(encoded) ? PixelFonts.Fusion : PixelFonts.System;
+    }
 
-    /// <summary>One line, shortened by the shared rule, in the pixel font (or SimSun when it cannot spell the text).</summary>
+    /// <summary>Text laid out in the font <see cref="FontFor"/> picks, with its emoji as stand-in characters.</summary>
+    internal static PixelText Layout(string text, PixelFont latin, int maxWidth = int.MaxValue, int maxLines = 1)
+    {
+        string encoded = PixelEmoji.Encode(text);
+        return PixelText.Layout(encoded, FontFor(encoded, latin), maxWidth, maxLines);
+    }
+
+    /// <summary>One line, shortened by the shared rule, in the font <see cref="FontFor"/> picks.</summary>
     internal static PixelText OneLine(string text, PixelFont latin, int maxWidth)
     {
-        var font = FontFor(text, latin);
-        return PixelText.Layout(NameShortener.OneLine(text, maxWidth, Measure(font)), font);
+        string encoded = PixelEmoji.Encode(text);
+        var font = FontFor(encoded, latin);
+        return PixelText.Layout(NameShortener.OneLine(encoded, maxWidth, Measure(font)), font);
     }
 
     public static CardPlan Plan(FolderPixelView view)
@@ -80,25 +96,27 @@ internal static class FolderPixelScene
         var cells = FolderCards.Layout(view.Size, view.Exists ? view.Items.Count : 0);
 
         var names = cells.Shown == 0 ? [] : view.Items.Take(cells.Shown).Select(i => OneLine(i.DisplayName, PixelFonts.Small, CellWidth)).ToArray();
-        var stackLabel = cells.HasStack ? PixelText.Layout("+" + cells.StackMore, PixelFonts.Small) : null;
-        var count = PixelText.Layout(missing ? "—" : view.Items.Count.ToString(), PixelFonts.Regular);
+        var stackLabel = cells.HasStack ? Layout("+" + cells.StackMore, PixelFonts.Small) : null;
+        var count = Layout(missing ? "—" : view.Items.Count.ToString(), PixelFonts.Regular);
         var title = OneLine(view.Name, PixelFonts.Regular, width - 14 - count.Width - 6);
-        // One metric set per card: the SimSun set when the header or any visible name needs SimSun.
-        bool simSun = title.IsFallback || (!empty && !missing && (names.Any(n => n.IsFallback) || (stackLabel?.IsFallback ?? false)));
+        // One metric set per card: that of the highest-ranked text, the header or any visible name (pixel font < Fusion < SimSun).
+        int rank = title.Rank;
+        if (!empty && !missing)
+            rank = Math.Max(rank, Math.Max(names.Select(n => n.Rank).DefaultIfEmpty(0).Max(), stackLabel?.Rank ?? 0));
 
         int headerY, headerHeight, nameGap;
         int[] rows;
         if (height == 82)
         {
-            (headerY, headerHeight, nameGap) = simSun ? (5, 12, 1) : (7, 7, 2);
-            rows = simSun ? [19, 48] : [19, 52];
+            (headerY, headerHeight, nameGap) = rank switch { 2 => (5, 12, 1), 1 => (7, 9, 1), _ => (7, 7, 2) };
+            rows = rank switch { 2 => [19, 48], 1 => [19, 49], _ => [19, 52] };
         }
         else
         {
-            (headerY, headerHeight, nameGap) = simSun ? (7, 12, 1) : (7, 7, 2);
-            rows = simSun ? [22, 60, 98, 136] : [19, 60, 101, 142];
+            (headerY, headerHeight, nameGap) = rank switch { 2 => (7, 12, 1), 1 => (7, 9, 1), _ => (7, 7, 2) };
+            rows = rank switch { 2 => [22, 60, 98, 136], 1 => [19, 58, 97, 136], _ => [19, 60, 101, 142] };
         }
-        int nameHeight = simSun ? 12 : 5;
+        int nameHeight = rank switch { 2 => 12, 1 => 9, _ => 5 };
 
         var regions = new List<(int, int, int, int, FolderHit)>();
         if (view.Exists)
@@ -112,7 +130,7 @@ internal static class FolderPixelScene
         }
         return new CardPlan
         {
-            Width = width, Height = height, SimSun = simSun, HeaderY = headerY, HeaderHeight = headerHeight, NameGap = nameGap, NameHeight = nameHeight,
+            Width = width, Height = height, Rank = rank, HeaderY = headerY, HeaderHeight = headerHeight, NameGap = nameGap, NameHeight = nameHeight,
             Columns = xs, Rows = rows, Title = title, Count = count, Names = names, Cells = cells, StackLabel = stackLabel, Regions = regions,
         };
     }
@@ -209,7 +227,7 @@ internal static class FolderPixelScene
     {
         int x0 = 7, y0 = top + 5, x1 = plan.Width - 8, y1 = plan.Height - 8;
         DottedRect(canvas, x0, y0, x1, y1, p.Faint);
-        var text = PixelText.Layout(Strings.FolderEmpty, PixelFonts.Small, x1 - x0 - 8, 2);
+        var text = Layout(Strings.FolderEmpty, PixelFonts.Small, x1 - x0 - 8, 2);
         int block = 7 + 4 + text.Height;
         int y = y0 + (y1 - y0 - block) / 2 + 1;
         canvas.Draw(DropArrow, (plan.Width - 7) / 2, y, _ => p.Soft);
@@ -220,7 +238,7 @@ internal static class FolderPixelScene
 
     private static void DrawMissing(PixelCanvas canvas, PixelPalette p, FolderPixelView view, CardPlan plan, int top)
     {
-        var text = PixelText.Layout(Strings.FolderMissing, PixelFonts.Small, plan.Width - 16, 2);
+        var text = Layout(Strings.FolderMissing, PixelFonts.Small, plan.Width - 16, 2);
         int block = 12 + 5 + text.Height;
         int y = top + (plan.Height - 4 - top - block) / 2;
         canvas.Draw(PixelIcons.Warning, (plan.Width - 13) / 2, y, ch => ch switch { '+' => p.Yellow, 'x' => p.SpriteInk, _ => p.Outline });
@@ -228,7 +246,7 @@ internal static class FolderPixelScene
         if (view.Size == WidgetSize.Large)
         {
             var pathFont = FontFor(view.Path, PixelFonts.Small);
-            var path = PixelText.Layout(NameShortener.Path(view.Path, plan.Width - 16, Measure(pathFont)), pathFont);
+            var path = PixelText.Layout(NameShortener.Path(PixelEmoji.Encode(view.Path), plan.Width - 16, Measure(pathFont)), pathFont);
             path.Draw(canvas, 8, y + 17 + text.Height + 6, p.Soft, PixelAlign.Center, plan.Width - 16);
         }
     }
@@ -244,7 +262,7 @@ internal static class FolderPixelScene
                     canvas.Set(x, y, p.Select);
             }
         }
-        var text = PixelText.Layout(label, PixelFonts.Small, canvas.Width - 24, 2);
+        var text = Layout(label, PixelFonts.Small, canvas.Width - 24, 2);
         int plateWidth = text.Width + 12, plateHeight = text.Height + 9;
         int px = (canvas.Width - plateWidth) / 2, py = (canvas.Height - plateHeight) / 2;
         PixelFrame.Draw(canvas, px, py, plateWidth, plateHeight, [1], p.SelectPressed, p.Select, p.SelectLight, p.SelectPressed, 1);

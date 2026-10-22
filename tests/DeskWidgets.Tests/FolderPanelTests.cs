@@ -198,23 +198,27 @@ public class FolderPanelTests
         => new("Projects", @"D:\Work\Projects", items, search, sort, items.Count, Selection(items.Count), -1, -1, 0, false, false, null, new PixelFolderIcons(() => { }));
 
     [Fact]
-    public void ThePlan_ShowsFourRowsInLatinAndTwoInTheSimSunSet()
+    public void ThePlan_ShowsFourRowsInLatin_ThreeInFusionAndTwoInTheSimSunSet()
     {
         var items = Enumerable.Range(0, 23).Select(i => Item("file" + i)).ToList();
-        var latin = FolderPixelPanelScene.Plan(View(items), simSun: false);
+        var latin = FolderPixelPanelScene.Plan(View(items), rank: 0);
         Assert.Equal(4, latin.VisibleRows);
         Assert.Equal(5, latin.TotalRows);
-        var simSun = FolderPixelPanelScene.Plan(View(items), simSun: true);
+        var fusion = FolderPixelPanelScene.Plan(View(items), rank: 1);
+        Assert.Equal(3, fusion.VisibleRows);
+        Assert.Equal((36, 39, 15), (fusion.CellHeight, fusion.Pitch, fusion.FieldHeight)); // 16, 1, 9, 1, 9
+        var simSun = FolderPixelPanelScene.Plan(View(items), rank: 2);
         Assert.Equal(2, simSun.VisibleRows);
-        Assert.True(FolderPixelPanelScene.NeedsSimSun("项目", "", FolderSort.Newest, items));
-        Assert.False(FolderPixelPanelScene.NeedsSimSun("Projects", "", FolderSort.Newest, items));
+        Assert.Equal(1, FolderPixelPanelScene.MetricRank("项目", "", FolderSort.Newest, items));
+        Assert.Equal(0, FolderPixelPanelScene.MetricRank("Projects", "", FolderSort.Newest, items));
+        Assert.Equal(2, FolderPixelPanelScene.MetricRank("Projects", "", FolderSort.Newest, [Item("\U00020000 file")])); // Fusion has no glyph for it
     }
 
     [Fact]
     public void HitTest_FindsTheCell_TheSortButtonAndTheSearchField()
     {
         var items = Enumerable.Range(0, 23).Select(i => Item("file" + i)).ToList();
-        var plan = FolderPixelPanelScene.Plan(View(items), simSun: false);
+        var plan = FolderPixelPanelScene.Plan(View(items), rank: 0);
         var cell = FolderPixelPanelScene.CellRect(plan, 7, 0)!.Value; // row 1, column 2
         var hit = FolderPixelPanelScene.HitTest(plan, items.Count, 0, cell.X + 3, cell.Y + 3);
         Assert.Equal(new PanelHit(PanelHitKind.Cell, 7), hit);
@@ -233,7 +237,7 @@ public class FolderPanelTests
         var items = Enumerable.Range(0, 7).Select(i => Item("file" + i)).ToList();
         var palette = PixelPalette.For(dark: false);
         var view = View(items);
-        var canvas = FolderPixelPanelScene.Draw(palette, view, FolderPixelPanelScene.Plan(view, false));
+        var canvas = FolderPixelPanelScene.Draw(palette, view, FolderPixelPanelScene.Plan(view, 0));
         Assert.Equal((220, 196), (canvas.Width, canvas.Height));
         Assert.Equal(0u, canvas.Get(0, 0));
         Assert.Equal(palette.Outline, canvas.Get(4, 0));
@@ -245,10 +249,13 @@ public class FolderPanelTests
     public void AChineseNameIsSetInOneFont_EvenWhenAShortenedPieceIsOnlyDigits()
     {
         var card = FolderPixelScene.OneLine("2026年度报告审计结果", PixelFonts.Small, 40);
-        Assert.True(card.IsFallback); // "2026…" alone could be spelled in the pixel font
+        Assert.Equal(1, card.Rank); // Fusion 8 px; "2026…" alone could be spelled in the pixel font
         foreach (var line in FolderPixelPanelScene.NameLines("2026年度报告审计结果汇总说明"))
-            Assert.True(line.IsFallback);
-        Assert.False(FolderPixelScene.OneLine("Quarterly report 2026", PixelFonts.Small, 36).IsFallback);
+            Assert.Equal(1, line.Rank);
+        Assert.Equal(0, FolderPixelScene.OneLine("Quarterly report 2026", PixelFonts.Small, 36).Rank);
+        // A name Fusion cannot spell falls back to SimSun as a whole.
+        var rare = FolderPixelScene.OneLine("2026年\U00020000度报告", PixelFonts.Small, 60);
+        Assert.Equal(2, rare.Rank);
     }
 
     [Fact]
@@ -297,7 +304,7 @@ public class FolderPanelTests
         var editor = new LineEditor("a very long file name indeed.docx", selectAll: false);
         var view = new FolderPanelView("Projects", @"D:\Work\Projects", items, "", FolderSort.Newest, items.Count, Selection(items.Count), -1, -1, 0, false, false,
             new PanelEdit(PanelEditTarget.Item, editor, 1), new PixelFolderIcons(() => { }));
-        var plan = FolderPixelPanelScene.Plan(view, simSun: false);
+        var plan = FolderPixelPanelScene.Plan(view, rank: 0);
         var canvas = FolderPixelPanelScene.Draw(palette, view, plan);
         var cell = FolderPixelPanelScene.CellRect(plan, 1, 0)!.Value;
         // Right of the field, in the gap before the next cell, nothing of the editor is drawn: the panel's own colour is still there.

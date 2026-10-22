@@ -29,6 +29,7 @@ internal static class FolderPixelPreview
                     PixelPreview.SavePng(Path.Combine(folder, $"folder-2-states-{tag}.png"), States(palette, dark), Factor);
                     PixelPreview.SavePng(Path.Combine(folder, $"folder-3-icons-{tag}.png"), Icons(palette, dark), Factor);
                     PixelPreview.SavePng(Path.Combine(folder, $"folder-4-panel-{tag}.png"), Panels(palette, dark), Factor);
+                    PixelPreview.SavePng(Path.Combine(folder, $"folder-5-emoji-{tag}.png"), Emoji(palette, dark), Factor);
                 }
             }
         }
@@ -108,8 +109,8 @@ internal static class FolderPixelPreview
 
     private static string FolderName => Strings.IsChinese ? "项目资料" : "Projects";
 
-    private static FolderPixelView View(WidgetSize size, IReadOnlyList<FolderItem> items, PixelFolderIcons icons, bool exists = true, FolderHit? hover = null, FolderHit? pressed = null, DropVerb? drop = null)
-        => new(FolderName, @"D:\Work\Projects", items, exists, size, hover ?? FolderHit.None, pressed ?? FolderHit.None, drop, icons);
+    private static FolderPixelView View(WidgetSize size, IReadOnlyList<FolderItem> items, PixelFolderIcons icons, bool exists = true, FolderHit? hover = null, FolderHit? pressed = null, DropVerb? drop = null, string? name = null)
+        => new(name ?? FolderName, @"D:\Work\Projects", items, exists, size, hover ?? FolderHit.None, pressed ?? FolderHit.None, drop, icons);
 
     // ----- sheets -----
 
@@ -199,8 +200,9 @@ internal static class FolderPixelPreview
     }
 
     private static Cell PanelCell(string label, PixelPalette palette, IReadOnlyList<FolderItem> all, string search = "", int[]? selected = null, int hover = -1, int focus = -1,
-        int firstRow = 0, bool sortHover = false, PanelEdit? edit = null, FolderSort sort = FolderSort.Newest)
+        int firstRow = 0, bool sortHover = false, PanelEdit? edit = null, FolderSort sort = FolderSort.Newest, string? name = null)
     {
+        name ??= FolderName;
         var icons = new PixelFolderIcons(() => { });
         var items = search.Length == 0 ? all : all.Where(i => i.DisplayName.Contains(search, StringComparison.CurrentCultureIgnoreCase)).ToList();
         var selection = new PanelSelection();
@@ -212,8 +214,8 @@ internal static class FolderPixelPreview
             selection.Focus = focus;
             selection.KeyboardFocus = true;
         }
-        var view = new FolderPanelView(FolderName, @"D:\Work\Projects", items, search, sort, all.Count, selection, hover, focus, firstRow, sortHover, false, edit, icons);
-        var plan = FolderPixelPanelScene.Plan(view, FolderPixelPanelScene.NeedsSimSun(FolderName, search, sort, items));
+        var view = new FolderPanelView(name, @"D:\Work\Projects", items, search, sort, all.Count, selection, hover, focus, firstRow, sortHover, false, edit, icons);
+        var plan = FolderPixelPanelScene.Plan(view, FolderPixelPanelScene.MetricRank(name, search, sort, items));
         var canvas = FolderPixelPanelScene.Draw(palette, view, plan);
         return new Cell(label, canvas);
     }
@@ -240,6 +242,54 @@ internal static class FolderPixelPreview
                 PanelCell("RENAME ITEM", palette, items, selected: [0], edit: new PanelEdit(PanelEditTarget.Item, new LineEditor(items[0].DisplayName, selectAll: true), 0)),
                 PanelCell("RENAME FOLDER", palette, items, edit: new PanelEdit(PanelEditTarget.Folder, new LineEditor(FolderName), -1)),
                 PanelCell("EMPTY", palette, []),
+            ],
+        ], dark);
+    }
+
+    /// <summary>Emoji in names and in the folder's title (Phase 8): the cards at three sizes and the panel, and the tiles at 8×.</summary>
+    private static List<FolderItem> EmojiItems() =>
+    [
+        Sample("📁 Archive", FolderItemKind.Folder),
+        Sample("旅行🎉", FolderItemKind.Folder),
+        Sample("✅ Done list", FolderItemKind.Text),
+        Sample("❤️ 家人", FolderItemKind.Folder),
+        Sample("🚀 Launch plan", FolderItemKind.Presentation, label: "launch.pptx"),
+        Sample("微信", FolderItemKind.App, "wechat"),
+        Sample("⭐ 收藏", FolderItemKind.Folder),
+        Sample("🔥 Hot 2026", FolderItemKind.Spreadsheet, label: "hot.xlsx"),
+        Sample("Budget", FolderItemKind.Spreadsheet, label: "budget.xlsx"),
+        Sample("😀 Fun", FolderItemKind.Folder),
+        Sample("腾讯会议", FolderItemKind.App, "tencentmeeting"),
+        Sample("Kimi", FolderItemKind.App, "kimi"),
+    ];
+
+    private static PixelCanvas Emoji(PixelPalette palette, bool dark)
+    {
+        var icons = new PixelFolderIcons(() => { });
+        var items = EmojiItems();
+        string name = Strings.IsChinese ? "🔥 项目" : "🔥 Projects";
+        var tiles = new PixelCanvas(8 * 9 + 2, 9);
+        int tx = 1;
+        foreach (string emoji in new[] { "📁", "😀", "🎉", "❤️", "⭐", "🔥", "✅", "🚀" })
+        {
+            string encoded = PixelEmoji.Encode(emoji);
+            for (int k = 0; k < encoded.Length; k++)
+                PixelEmoji.Draw(tiles, encoded[k], 7, tx, 1, palette.Outline);
+            tx += 9;
+        }
+        return Compose(
+        [
+            [
+                Card("SMALL", palette, View(WidgetSize.Small, items.Take(4).ToList(), icons, name: name)),
+                Card("MEDIUM", palette, View(WidgetSize.Medium, items.Take(8).ToList(), icons, name: name)),
+            ],
+            [
+                Card("LARGE", palette, View(WidgetSize.Large, items, icons, name: name)),
+                PanelCell("PANEL", palette, items, selected: [4], name: name),
+            ],
+            [
+                new Cell("EMOJI TILES 7X7", tiles),
+                PanelCell("RENAME", palette, items, selected: [0], name: name, edit: new PanelEdit(PanelEditTarget.Item, new LineEditor(items[0].DisplayName, selectAll: false), 0)),
             ],
         ], dark);
     }

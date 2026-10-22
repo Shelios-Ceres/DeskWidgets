@@ -21,14 +21,19 @@ internal sealed class PixelFont
 
     /// <param name="capitalsOnly">Lower case is drawn in capitals and accents are dropped ("São" → "SAO").</param>
     /// <param name="provider">Supplies glyphs on demand, for a font that covers every character (the system fallback).</param>
-    public PixelFont(int height, int lineGap, int spacing, bool capitalsOnly, Func<char, PixelMask?>? provider = null)
+    /// <param name="emojiSize">The side of an emoji's tile in this font (7 in Fusion, 11 in SimSun), or 0 when the font cannot carry an emoji.</param>
+    public PixelFont(int height, int lineGap, int spacing, bool capitalsOnly, Func<char, PixelMask?>? provider = null, int emojiSize = 0)
     {
         Height = height;
         LineGap = lineGap;
         Spacing = spacing;
         CapitalsOnly = capitalsOnly;
         _provider = provider;
+        EmojiSize = emojiSize;
     }
+
+    /// <summary>The side of an emoji's tile, drawn over the empty cell the font gives the emoji's stand-in character (see <see cref="PixelEmoji"/>); 0 for a font that cannot.</summary>
+    public int EmojiSize { get; }
 
     /// <summary>Rows in every glyph.</summary>
     public int Height { get; }
@@ -109,6 +114,8 @@ internal sealed class PixelFont
             if (Glyph(c) is not { } glyph)
                 continue;
             canvas.Stamp(glyph, x, y, color, scale);
+            if (EmojiSize > 0 && PixelEmoji.IsEmoji(c))
+                PixelEmoji.Draw(canvas, c, EmojiSize, x, y, color, scale);
             x += (glyph.Width + Spacing) * scale;
         }
     }
@@ -152,6 +159,9 @@ internal sealed class PixelText
 
     /// <summary>Whether the fallback font had to be used (taller glyphs: lay out accordingly).</summary>
     public bool IsFallback => Font == PixelFonts.System;
+
+    /// <summary>0 when set in a pixel font, 1 in Fusion 8 px, 2 in SimSun: a Big Folder card or panel takes the metric set of its highest rank.</summary>
+    public int Rank => Font == PixelFonts.System ? 2 : Font == PixelFonts.Fusion ? 1 : 0;
 
     public static PixelText Layout(string text, PixelFont font, int maxWidth = int.MaxValue, int maxLines = 1, int scale = 1)
     {
