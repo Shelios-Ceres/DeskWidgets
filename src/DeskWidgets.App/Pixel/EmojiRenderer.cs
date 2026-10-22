@@ -17,7 +17,7 @@ internal static class EmojiRenderer
         using (var session = target.CreateDrawingSession())
         {
             session.Clear(Color.FromArgb(0, 0, 0, 0));
-            var format = new CanvasTextFormat
+            using var format = new CanvasTextFormat // holds a native DirectWrite object
             {
                 FontFamily = "Segoe UI Emoji",
                 FontSize = 56,
