@@ -110,10 +110,13 @@ public partial class App : Application
         // Widgets are windows that come and go; the tray icon keeps the app alive.
         DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
 
-        bool demo = Has(commandLine, "--demo");
+        // Design QA: --demo shows four sample devices, --demo-devices=N up to seven.
+        string? demoCount = commandLine.FirstOrDefault(a => a.StartsWith("--demo-devices=", StringComparison.OrdinalIgnoreCase));
+        int demoDevices = demoCount is not null && int.TryParse(demoCount[(demoCount.IndexOf('=') + 1)..], out int n) ? n : Has(commandLine, "--demo") ? 4 : 0;
+        bool demo = demoDevices > 0;
         string start = demo ? "starting (demo devices)" : Has(commandLine, "--autostart") ? "starting (sign-in task)" : "starting";
         Log.Info(DataRoot.IsTestInstance ? $"{start}, test instance, data in {DataRoot.Path}" : start);
-        _host = new WidgetHost(demo);
+        _host = new WidgetHost(demoDevices);
         _host.Start();
         string? open = commandLine.FirstOrDefault(a => a.StartsWith("--pixel-ui-open=", StringComparison.OrdinalIgnoreCase));
         if (open is not null)

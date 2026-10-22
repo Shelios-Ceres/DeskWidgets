@@ -256,8 +256,8 @@ internal sealed class BatteryWidget : UserControl, IWidget
     /// <summary>Large: one row per device with name, connection and percentage.</summary>
     private void RenderList(IReadOnlyList<DeviceStatus> devices, GlassPalette palette)
     {
-        _root.Padding = new Thickness(18, 14, 18, 14);
-        var list = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Top };
+        _root.Padding = new Thickness(18, 16, 18, 16);
+        var list = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Top }; // six 48 rows end at y 344 of 364
         foreach (var device in devices.Take(ListRows))
         {
             var row = new Grid { Height = 48, ColumnSpacing = 12 };

@@ -31,12 +31,13 @@ internal sealed class WidgetHost
     private bool _overDesktop; // Win+D has lifted the desktop over the widgets, so they sit above it for now
     private bool _exiting;
 
-    public WidgetHost(bool demoMode)
+    /// <param name="demoDevices">0 for the real devices, else how many sample devices to show (<c>--demo</c> is 4).</param>
+    public WidgetHost(int demoDevices)
     {
         Strings.Language = _settings.Current.Language;
         var dispatcher = DispatcherQueue.GetForCurrentThread();
-        IDeviceSource[] sources = demoMode
-            ? [new DemoDeviceSource(() => Strings.IsChinese)]
+        IDeviceSource[] sources = demoDevices > 0
+            ? [new DemoDeviceSource(() => Strings.IsChinese, demoDevices)]
             : [new HidDongleSource(), new BluetoothBatterySource()];
         Services = new AppServices { Devices = new DeviceHub(sources), Dispatcher = dispatcher };
 

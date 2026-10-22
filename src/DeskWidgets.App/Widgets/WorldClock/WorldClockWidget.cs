@@ -197,7 +197,7 @@ internal sealed class WorldClockWidget : UserControl, IWidget
     /// <summary>Large: one row per city with its clock, name and offset, and its time over its date.</summary>
     private void RenderList(Brush primary, Brush secondary)
     {
-        _root.Padding = new Thickness(18, 12, 18, 12);
+        _root.Padding = new Thickness(18, 14, 18, 14); // four 84 rows in 364
         for (int i = 0; i < CityCount; i++)
             _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
@@ -209,7 +209,7 @@ internal sealed class WorldClockWidget : UserControl, IWidget
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var clock = new AnalogClock(56, _glass);
+            var clock = new AnalogClock(60, _glass);
             var labels = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
             labels.Children.Add(Label(city.Name, 15, FontWeights.SemiBold, primary, centered: false));
             var offset = Label(string.Empty, 12, FontWeights.Normal, secondary, centered: false);

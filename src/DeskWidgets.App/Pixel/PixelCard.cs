@@ -16,7 +16,7 @@ internal static class PixelCard
     {
         WidgetSize.Small => (82, 82),
         WidgetSize.Medium => (172, 82),
-        _ => (172, 172),
+        _ => (172, 182),
     };
 
     /// <summary>

@@ -65,9 +65,9 @@ public class FolderFusionAndEmojiTests
     [InlineData(WidgetSize.Small, 0, 7, 7, 2, 5, new[] { 19, 52 })]
     [InlineData(WidgetSize.Small, 1, 7, 9, 1, 9, new[] { 19, 49 })]
     [InlineData(WidgetSize.Small, 2, 5, 12, 1, 12, new[] { 19, 48 })]
-    [InlineData(WidgetSize.Large, 0, 7, 7, 2, 5, new[] { 19, 60, 101, 142 })]
-    [InlineData(WidgetSize.Large, 1, 7, 9, 1, 9, new[] { 19, 58, 97, 136 })]
-    [InlineData(WidgetSize.Large, 2, 7, 12, 1, 12, new[] { 22, 60, 98, 136 })]
+    [InlineData(WidgetSize.Large, 0, 7, 7, 2, 5, new[] { 19, 61, 103, 145 })]
+    [InlineData(WidgetSize.Large, 1, 7, 9, 1, 9, new[] { 19, 59, 99, 139 })]
+    [InlineData(WidgetSize.Large, 2, 7, 12, 1, 12, new[] { 22, 63, 105, 146 })]
     public void TheCard_TakesTheMetricSetOfItsHighestRankedText(WidgetSize size, int rank, int headerY, int headerHeight, int nameGap, int nameHeight, int[] rows)
     {
         string name = rank switch { 0 => "Budget", 1 => "预算表", _ => "预算\U00020000" };
@@ -75,6 +75,58 @@ public class FolderFusionAndEmojiTests
         Assert.Equal(rank, plan.Rank);
         Assert.Equal((headerY, headerHeight, nameGap, nameHeight), (plan.HeaderY, plan.HeaderHeight, plan.NameGap, plan.NameHeight));
         Assert.Equal(rows, plan.Rows);
+    }
+
+    // ----- Phase 11: two-line names on the Large card -----
+
+    [Theory]
+    [InlineData(0, 30, 18, 25)] // pixel font: cell 16 + 2 + 5 + 2 + 5, lines at icon y + 18 and + 25
+    [InlineData(1, 36, 17, 27)] // Fusion: cell 16 + 1 + 9 + 1 + 9, lines at + 17 and + 27
+    public void TheLargeCard_WrapsNamesOntoTwoLines_ToTheRowsAndCellOfItsSet(int rank, int cell, int firstLine, int secondLine)
+    {
+        string longName = rank == 0 ? "Quarterly report 2026" : "二零二六年第三季度财务报告";
+        string shortName = rank == 0 ? "Notes" : "预算表";
+        var plan = FolderPixelScene.Plan(CardView(WidgetSize.Large, "Projects", longName, shortName));
+
+        Assert.Equal(rank, plan.Rank);
+        Assert.True(plan.TwoLines);
+        Assert.Equal(2, plan.Names[0].Length);
+        Assert.Single(plan.Names[1]); // a name that fits stays one line
+        Assert.Equal(cell, plan.CellHeight);
+        Assert.Equal(firstLine, 16 + plan.NameGap);
+        Assert.Equal(secondLine, 16 + plan.NameGap + (rank == 0 ? 7 : 10));
+        // The click rect is (x - 1, icon y - 2, 38, cell + 4) and it ends inside the card, 7 above the bottom edge or less.
+        var (x, y, w, h, _) = plan.Regions[1];
+        Assert.Equal((plan.Columns[0] - 1, plan.Rows[0] - 2, 38, cell + 4), (x, y, w, h));
+        Assert.True(plan.Rows[^1] + cell <= plan.Height - 7);
+    }
+
+    [Fact]
+    public void TheLargeCard_KeepsOneLineInTheSimSunSet_AndSmallAndMediumKeepOneLine()
+    {
+        var simsun = FolderPixelScene.Plan(CardView(WidgetSize.Large, "Projects", "预算𠀀报告报告报告报告报告"));
+        Assert.Equal(2, simsun.Rank);
+        Assert.False(simsun.TwoLines);
+        Assert.Single(simsun.Names[0]);
+        Assert.Equal(12 + 1 + 16, simsun.CellHeight);
+
+        foreach (var size in new[] { WidgetSize.Small, WidgetSize.Medium })
+        {
+            var plan = FolderPixelScene.Plan(CardView(size, "Projects", "Quarterly report 2026"));
+            Assert.False(plan.TwoLines);
+            Assert.Single(plan.Names[0]);
+        }
+    }
+
+    [Fact]
+    public void TheLargeCard_StaysInsideItsHeight_InEveryMetricSet()
+    {
+        foreach (var name in new[] { "Quarterly report 2026", "二零二六年第三季度财务报告", "预算𠀀报告" })
+        {
+            var plan = FolderPixelScene.Plan(CardView(WidgetSize.Large, "Projects", name));
+            Assert.Equal(182, plan.Height);
+            Assert.True(plan.Rows[^1] + plan.CellHeight <= 175, $"rank {plan.Rank}");
+        }
     }
 
     [Fact]

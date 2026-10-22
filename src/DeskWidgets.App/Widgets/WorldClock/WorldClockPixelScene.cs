@@ -66,10 +66,10 @@ internal static class WorldClockPixelScene
     /// </summary>
     private static void DrawList(PixelCanvas canvas, PixelPalette palette, IReadOnlyList<WorldCity> cities, IReadOnlyList<DateTimeOffset> times, DateTimeOffset local, bool showSeconds)
     {
-        const int left = 8, right = 164, rowHeight = 39, radius = 15, textLeft = 44, gap = 3;
+        const int left = 8, right = 164, rowHeight = 41, radius = 15, textLeft = 44, gap = 3;
         for (int i = 0; i < cities.Count; i++)
         {
-            int y = 8 + i * rowHeight, inner = rowHeight - 1;
+            int y = 9 + i * rowHeight, inner = rowHeight - 1;
             DrawFace(canvas, palette, left + radius, y + inner / 2, radius, times[i].DateTime, showSeconds);
 
             var time = PixelText.Layout(WorldCities.FormatTime(times[i]), PixelFonts.Regular, scale: 2);

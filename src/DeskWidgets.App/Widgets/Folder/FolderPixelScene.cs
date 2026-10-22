@@ -47,11 +47,16 @@ internal static class FolderPixelScene
         public required int HeaderHeight { get; init; }
         public required int NameGap { get; init; }
         public required int NameHeight { get; init; }
+        /// <summary>True on a Large card in a pixel-font or Fusion set: names wrap onto two lines, as in the panel (SimSun cannot fit two).</summary>
+        public required bool TwoLines { get; init; }
+        /// <summary>A cell's content height, icon to last name line: the hover plate and the click rect are this plus 4.</summary>
+        public required int CellHeight { get; init; }
         public required int[] Columns { get; init; }
         public required int[] Rows { get; init; }
         public required PixelText Title { get; init; }
         public required PixelText Count { get; init; }
-        public required PixelText[] Names { get; init; }
+        /// <summary>Each name's lines: one, or two on a <see cref="TwoLines"/> card.</summary>
+        public required PixelText[][] Names { get; init; }
         public required CardCells Cells { get; init; }
         public required PixelText? StackLabel { get; init; }
         public required List<(int X, int Y, int W, int H, FolderHit Hit)> Regions { get; init; }
@@ -95,14 +100,14 @@ internal static class FolderPixelScene
         bool missing = !view.Exists, empty = view.Exists && view.Items.Count == 0;
         var cells = FolderCards.Layout(view.Size, view.Exists ? view.Items.Count : 0);
 
-        var names = cells.Shown == 0 ? [] : view.Items.Take(cells.Shown).Select(i => OneLine(i.DisplayName, PixelFonts.Small, CellWidth)).ToArray();
+        var names = cells.Shown == 0 ? [] : view.Items.Take(cells.Shown).Select(i => new[] { OneLine(i.DisplayName, PixelFonts.Small, CellWidth) }).ToArray();
         var stackLabel = cells.HasStack ? Layout("+" + cells.StackMore, PixelFonts.Small) : null;
         var count = Layout(missing ? "—" : view.Items.Count.ToString(), PixelFonts.Regular);
         var title = OneLine(view.Name, PixelFonts.Regular, width - 14 - count.Width - 6);
         // One metric set per card: that of the highest-ranked text, the header or any visible name (pixel font < Fusion < SimSun).
         int rank = title.Rank;
         if (!empty && !missing)
-            rank = Math.Max(rank, Math.Max(names.Select(n => n.Rank).DefaultIfEmpty(0).Max(), stackLabel?.Rank ?? 0));
+            rank = Math.Max(rank, Math.Max(names.Select(n => n[0].Rank).DefaultIfEmpty(0).Max(), stackLabel?.Rank ?? 0));
 
         int headerY, headerHeight, nameGap;
         int[] rows;
@@ -114,9 +119,14 @@ internal static class FolderPixelScene
         else
         {
             (headerY, headerHeight, nameGap) = rank switch { 2 => (7, 12, 1), 1 => (7, 9, 1), _ => (7, 7, 2) };
-            rows = rank switch { 2 => [22, 60, 98, 136], 1 => [19, 58, 97, 136], _ => [19, 60, 101, 142] };
+            rows = rank switch { 2 => [22, 63, 105, 146], 1 => [19, 59, 99, 139], _ => [19, 61, 103, 145] };
         }
         int nameHeight = rank switch { 2 => 12, 1 => 9, _ => 5 };
+        // Phase 11: a Large card's names take two lines like the panel's (the same breaks); a name that fits stays one line, top-aligned.
+        bool twoLines = view.Size == WidgetSize.Large && rank < 2;
+        if (twoLines)
+            names = view.Items.Take(cells.Shown).Select(i => FolderPixelPanelScene.NameLines(i.DisplayName).ToArray()).ToArray();
+        int cellHeight = 16 + nameGap + nameHeight + (twoLines ? rank switch { 1 => 10, _ => 7 } : 0);
 
         var regions = new List<(int, int, int, int, FolderHit)>();
         if (view.Exists)
@@ -126,11 +136,11 @@ internal static class FolderPixelScene
         {
             int x = xs[cell % columns], y = rows[cell / columns];
             var hit = cells.HasStack && cell == cells.Shown ? new FolderHit(FolderHitKind.Stack) : new FolderHit(FolderHitKind.Item, cell);
-            regions.Add((x - 1, y - 2, CellWidth + 2, 16 + nameGap + nameHeight + 4, hit));
+            regions.Add((x - 1, y - 2, CellWidth + 2, cellHeight + 4, hit));
         }
         return new CardPlan
         {
-            Width = width, Height = height, Rank = rank, HeaderY = headerY, HeaderHeight = headerHeight, NameGap = nameGap, NameHeight = nameHeight,
+            Width = width, Height = height, Rank = rank, HeaderY = headerY, HeaderHeight = headerHeight, NameGap = nameGap, NameHeight = nameHeight, TwoLines = twoLines, CellHeight = cellHeight,
             Columns = xs, Rows = rows, Title = title, Count = count, Names = names, Cells = cells, StackLabel = stackLabel, Regions = regions,
         };
     }
@@ -198,30 +208,38 @@ internal static class FolderPixelScene
             bool pressed = view.Pressed == hit;
             int dy = pressed ? 1 : 0;
             if (view.Hover == hit || pressed)
-                FillRound(canvas, x - 1, y - 2, CellWidth + 2, 16 + plan.NameGap + plan.NameHeight + 4, pressed ? p.Shade : p.OpenFill);
+                FillRound(canvas, x - 1, y - 2, CellWidth + 2, plan.CellHeight + 4, pressed ? p.Shade : p.OpenFill);
             if (!isStack)
             {
                 var item = view.Items[i];
                 var icon = view.Icons.Icon(p, item);
                 Blit(item.TargetMissing ? PixelFolderIcons.Dimmed(p, icon) : icon, canvas, x + 10, y + dy);
-                var name = plan.Names[i];
-                int nameX = x + (CellWidth - name.Width) / 2, nameY = y + 16 + plan.NameGap + (plan.NameHeight - name.Height) / 2 + dy;
-                name.Draw(canvas, nameX, nameY, item.TargetMissing ? p.Faint : p.Ink);
                 keep.Add((x + 9, y + dy - 1, 18, 18));
-                keep.Add((nameX - 1, nameY - 1, name.Width + 2, name.Height + 2));
+                int lineY = y + 16 + plan.NameGap + dy;
+                foreach (var line in plan.Names[i])
+                {
+                    int lineX = x + (CellWidth - line.Width) / 2, top = plan.TwoLines ? lineY : y + 16 + plan.NameGap + (plan.NameHeight - line.Height) / 2 + dy;
+                    line.Draw(canvas, lineX, top, item.TargetMissing ? p.Faint : p.Ink);
+                    keep.Add((lineX - 1, top - 1, line.Width + 2, line.Height + 2));
+                    lineY += LinePitch(line);
+                }
             }
             else
             {
                 for (int k = 0; k < cells.Minis.Length; k++)
                     Blit(PixelFolderIcons.Mini(p, view.Icons.Icon(p, view.Items[cells.Minis[k]])), canvas, x + 10 + k % 2 * 9, y + k / 2 * 9 + dy);
                 var label = plan.StackLabel!;
-                int labelX = x + (CellWidth - label.Width) / 2, labelY = y + 16 + plan.NameGap + (plan.NameHeight - label.Height) / 2 + dy;
+                int labelX = x + (CellWidth - label.Width) / 2;
+                int labelY = y + 16 + plan.NameGap + (plan.TwoLines ? 0 : (plan.NameHeight - label.Height) / 2) + dy; // "+K" is line 1
                 label.Draw(canvas, labelX, labelY, p.Ink);
                 keep.Add((x + 9, y + dy - 1, 18, 18));
                 keep.Add((labelX - 1, labelY - 1, label.Width + 2, label.Height + 2));
             }
         }
     }
+
+    /// <summary>The step from one name line to the next: each font keeps its own pitch (5 + 2 for the pixel font, 9 + 1 for Fusion, 12 + 1 for SimSun).</summary>
+    private static int LinePitch(PixelText line) => line.Rank switch { 2 => 13, 1 => 10, _ => 7 };
 
     private static void DrawEmpty(PixelCanvas canvas, PixelPalette p, CardPlan plan, int top, List<(int X, int Y, int W, int H)> keep)
     {

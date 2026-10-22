@@ -292,14 +292,14 @@ internal sealed class GlassFolderCard : Canvas, IFolderCardView
 
     /// <summary>
     /// The grid per size (Glass HANDOFF 1.1, Phase 8 option B): names are Text 10 (10.5 on Large) with a 13 line height; Small and Medium
-    /// keep one line, Large takes two. The name box is the column minus 2, at row + 46 (row + 49 on Large, where the tile is 44).
+    /// keep one line, Large takes two. The name box is the column minus 2, at row + 46 (row + 52 on Large, where the rows are 80 and the tile is 44 at row + 4).
     /// </summary>
     private (double ColumnWidth, double RowHeight, double Tile, double TileTop, double NameTop, double NameHeight, double NameFont, double NameWidth, int Lines) Metrics()
         => _size switch
         {
             WidgetSize.Small => (70, 60, 40, 2, 46, 13, 10, 68, 1),
             WidgetSize.Medium => (80, 60, 40, 2, 46, 13, 10, 78, 1),
-            _ => (80, 75, 44, 2, 49, 26, 10.5, 78, 2),
+            _ => (80, 80, 44, 4, 52, 26, 10.5, 78, 2),
         };
 
     private void Cells(GlassPalette palette, Size card, IReadOnlyList<FolderItem> items)

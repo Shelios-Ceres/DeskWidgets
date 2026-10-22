@@ -23,6 +23,17 @@ public class CardSizeTests
         Assert.Equal(new SizeInt32(516, 246), WidgetLayout.GetCardPixels(WidgetSize.Medium, WidgetTheme.Pixel, 1.5));
     }
 
+    [Theory]
+    [InlineData(1.0, 344, 364)]
+    [InlineData(1.5, 516, 546)]
+    [InlineData(2.0, 688, 728)]
+    public void LargeCard_IsAMediumPlusTwoGridRowsTall_InBothThemes(double scale, int width, int height)
+    {
+        Assert.Equal(new SizeInt32(width, height), WidgetLayout.GetCardPixels(WidgetSize.Large, WidgetTheme.Glass, scale));
+        Assert.Equal(new SizeInt32(width, height), WidgetLayout.GetCardPixels(WidgetSize.Large, WidgetTheme.Pixel, scale));
+        Assert.Equal((172, 182), PixelCard.ArtSize(WidgetSize.Large));
+    }
+
     [Fact]
     public void AtAnOddScale_ThePixelCardComesOutALittleLarger()
     {

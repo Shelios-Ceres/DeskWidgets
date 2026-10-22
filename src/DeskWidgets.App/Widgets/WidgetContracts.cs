@@ -29,12 +29,17 @@ public static class WidgetLayout
 {
     public const double CornerRadius = 22;
 
-    /// <summary>Card size in DIPs. Medium/large are two smalls plus the 16-DIP gap.</summary>
+    /// <summary>
+    /// Card size in DIPs. Medium is two smalls plus the 16-DIP gap. Large is two
+    /// mediums stacked with the 36-DIP gap the desktop grid leaves between them
+    /// at Windows' default icon spacing, so a Large beside a stacked pair has
+    /// the same top and bottom edges.
+    /// </summary>
     public static Windows.Foundation.Size GetCardSize(WidgetSize size) => size switch
     {
         WidgetSize.Small => new(164, 164),
         WidgetSize.Medium => new(344, 164),
-        _ => new(344, 344),
+        _ => new(344, 364),
     };
 
     /// <summary>

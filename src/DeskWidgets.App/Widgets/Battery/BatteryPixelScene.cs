@@ -113,10 +113,11 @@ internal static class BatteryPixelScene
     /// <summary>
     /// Large: one row per device with slot, name, connection, percentage and
     /// gauge. Rows grow (and fewer fit) when Chinese text needs two tall lines.
+    /// A full list (six rows, or no room for one more) spreads over the whole height; a short one stays top-aligned.
     /// </summary>
     private static void DrawList(PixelCanvas canvas, PixelPalette palette, IReadOnlyList<DeviceStatus> devices)
     {
-        const int left = 8, right = 164, top = 8, bottom = 165, textLeft = 36, valueWidth = 25, slotSize = 22;
+        const int left = 8, right = 164, top = 8, bottom = 175, textLeft = 36, valueWidth = 25, slotSize = 22;
         const int textWidth = right - valueWidth - 6 - textLeft;
         var rows = devices.Take(ListRows).Select(device =>
         {
@@ -124,8 +125,10 @@ internal static class BatteryPixelScene
             var detail = PixelText.Layout(BatteryWidget.Describe(device), PixelFonts.Small, textWidth);
             return (Device: device, Name: name, Detail: detail, Gap: name.IsFallback || detail.IsFallback ? 1 : 3);
         }).ToList();
-        int rowHeight = Math.Max(26, rows.Max(r => r.Name.Height + r.Gap + r.Detail.Height) + 4);
-        int count = Math.Min(rows.Count, (bottom - top) / rowHeight);
+        int minHeight = Math.Max(26, rows.Max(r => r.Name.Height + r.Gap + r.Detail.Height) + 4);
+        int count = Math.Min(rows.Count, (bottom - top) / minHeight);
+        bool full = count == ListRows || (count + 1) * minHeight > bottom - top;
+        int rowHeight = full ? (bottom - top) / count : minHeight;
 
         for (int i = 0; i < count; i++)
         {

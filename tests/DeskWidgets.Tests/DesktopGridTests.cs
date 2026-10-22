@@ -1,6 +1,7 @@
 using DeskWidgets.Desktop;
 using DeskWidgets.Hosting;
 using DeskWidgets.Interop;
+using DeskWidgets.Widgets;
 using Windows.Graphics;
 
 namespace DeskWidgets.Tests;
@@ -50,6 +51,37 @@ public class DesktopGridTests
         var grid = DesktopGrid.Create(WorkArea, 115, 150);
 
         Assert.Equal(new PointInt32(29, 75), grid.Snap(0, 48, 516, 246));
+    }
+
+    [Theory]
+    [InlineData(WidgetTheme.Glass)]
+    [InlineData(WidgetTheme.Pixel)]
+    public void LargeCard_SitsCentredInFiveByFourCells_WithTheMediumsInset(WidgetTheme theme)
+    {
+        // 344×364 DIP (Pixel: 172×182 art pixels × 3) = 516×546 screen pixels: 5×4 cells, inset 29×27.
+        var large = WidgetLayout.GetCardPixels(WidgetSize.Large, theme, 1.5);
+        var grid = DesktopGrid.Create(WorkArea, 115, 150);
+
+        Assert.Equal(new SizeInt32(516, 546), large);
+        Assert.Equal(new PointInt32(29, 75), grid.Snap(0, 48, large.Width, large.Height));
+    }
+
+    [Fact]
+    public void LargeCard_FillsTheSpanOfTwoStackedMediums()
+    {
+        var (right, top) = IconLayout.MarginPixels(115, 150, IconLayout.DefaultInsets);
+        var grid = DesktopGrid.Create(WorkArea, 115, 150, new GridAnchor(right, top));
+        var medium = WidgetLayout.GetCardPixels(WidgetSize.Medium, WidgetTheme.Pixel, 1.5);
+        var large = WidgetLayout.GetCardPixels(WidgetSize.Large, WidgetTheme.Pixel, 1.5);
+
+        // The user's column: World clock above Battery, a Big Folder beside them.
+        var upper = grid.Snap(0, 48, medium.Width, medium.Height);
+        var lower = grid.Snap(50, 360, medium.Width, medium.Height);
+        // A Big Folder saved at y 92 (the old, shorter Large's inset) lands level with the column.
+        var folder = grid.Snap(600, 92, large.Width, large.Height);
+
+        Assert.Equal(upper.Y, folder.Y);
+        Assert.Equal(lower.Y + medium.Height, folder.Y + large.Height);
     }
 
     [Fact]
