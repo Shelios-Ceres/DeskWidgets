@@ -40,6 +40,9 @@
     <!-- Fusion Pixel Font 8 px (OFL-1.1): the table is embedded, the license travels beside the exe. See tools\Make-FusionFont.ps1. -->
     <EmbeddedResource Include="Assets\Fonts\FusionPixel8-zh_hans.bin" LogicalName="FusionPixel8-zh_hans.bin" />
     <Content Include="Assets\Fonts\OFL-FusionPixel.txt" Link="OFL-FusionPixel.txt" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The pinyin table for the Big Folder search is built from the Unicode Han Database (Unicode License v3). See tools\Make-PinyinTable.ps1. -->
+    <EmbeddedResource Include="Assets\Pinyin\pinyin.bin" LogicalName="pinyin.bin" />
+    <Content Include="Assets\Pinyin\UNICODE-LICENSE.txt" Link="UNICODE-LICENSE-Unihan.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

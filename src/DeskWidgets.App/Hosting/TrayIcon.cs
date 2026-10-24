@@ -74,6 +74,26 @@ internal sealed class TrayIcon : IDisposable
             Win32.DestroyIcon(previous);
     }
 
+    /// <summary>
+    /// Shows a Windows notification (a balloon or toast, drawn by the system) from the tray icon. A title is cut to 63 characters and the
+    /// text to 255, which is all the system takes.
+    /// </summary>
+    public void ShowNotice(string title, string text, bool warning)
+    {
+        Core.Diagnostics.Log.Info($"notice shown: {title}");
+        var data = CreateData();
+        data.uFlags |= NoticeFlag;
+        data.szInfoTitle = title.Length > 63 ? title[..63] : title;
+        data.szInfo = text.Length > 255 ? text[..255] : text;
+        data.dwInfoFlags = warning ? 0x2u /* NIIF_WARNING */ : 0x1u /* NIIF_INFO */;
+        Win32.Shell_NotifyIcon(Win32.NIM_MODIFY, ref data);
+    }
+
+    private const uint NoticeFlag = 0x10; // NIF_INFO
+
+    /// <summary>Raised when the session is ending (sign-out, restart, shutdown) or the tray window is asked to close: settings are written now.</summary>
+    public event Action? SessionEnding;
+
     /// <summary>Raised with the cursor's screen position when the icon is clicked.</summary>
     public event Action<int, int>? MenuRequested;
 
@@ -123,6 +143,16 @@ internal sealed class TrayIcon : IDisposable
             if (mouseMessage is Win32.WM_LBUTTONUP or Win32.WM_RBUTTONUP && Win32.GetCursorPos(out var point))
                 MenuRequested?.Invoke(point.X, point.Y);
             return 0;
+        }
+        if (msg == 0x11 /* WM_QUERYENDSESSION */)
+        {
+            SessionEnding?.Invoke(); // save before the answer: the session may end right after it
+            return 1;
+        }
+        if (msg == 0x16 /* WM_ENDSESSION */ && wParam != 0 || msg == 0x10 /* WM_CLOSE */)
+        {
+            SessionEnding?.Invoke();
+            return msg == 0x10 ? Win32.DefWindowProc(hwnd, msg, wParam, lParam) : 0;
         }
         if (msg is Win32.WM_DPICHANGED or Win32.WM_DISPLAYCHANGE)
         {

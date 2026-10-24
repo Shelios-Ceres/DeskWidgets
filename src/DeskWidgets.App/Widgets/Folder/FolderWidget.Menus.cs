@@ -1,3 +1,4 @@
+using DeskWidgets.Interop;
 using DeskWidgets.PixelUi;
 
 namespace DeskWidgets.Widgets.Folder;
@@ -64,7 +65,27 @@ internal sealed partial class FolderWidget
         rows.Add(MenuEntry.Item(remove, () => RecycleItems(affected), glyph: "", icon: PixelIcons.Remove));
         rows.Add(MenuEntry.Separator());
         rows.Add(MenuEntry.Item(Strings.FolderProperties, () => FolderActions.Properties(item, OwnerHandle), glyph: ""));
+        rows.Add(MenuEntry.Separator());
+        rows.Add(MenuEntry.Item(Strings.FolderMoreOptions, () => ShowMoreOptions(item, affected), glyph: ""));
         return rows;
+    }
+
+    /// <summary>
+    /// "Show more options" (Phase 13.4): Windows' own context menu for the item or the selection, at the pointer. It is Windows' menu in both
+    /// themes. Open, Rename and Delete in it run our own code, so the Recycle Bin, the origin log and the in-place rename behave as in our menu.
+    /// </summary>
+    private void ShowMoreOptions(FolderItem item, IReadOnlyList<FolderItem> affected)
+    {
+        Win32.GetCursorPos(out var cursor);
+        string? error = ShellContextMenu.Show([.. affected.Select(i => i.Path)], OwnerHandle, cursor.X, cursor.Y,
+            onOpen: () =>
+            {
+                foreach (var target in affected)
+                    Open(target);
+            },
+            onRename: () => OpenPanel().BeginRename(item.FileName),
+            onDelete: () => RecycleItems(affected));
+        Report(error);
     }
 
     private void PutBack(IReadOnlyList<FolderItem> items)

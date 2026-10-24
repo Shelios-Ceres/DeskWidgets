@@ -85,6 +85,38 @@ internal static class Strings
     public static string StartWithWindowsTest => T("开机自动启动（测试实例中不可用）", "Start with Windows (not in a test instance)");
     public static string IconsTestOff => T("测试实例：只有测试设置能开启", "Test instance: only its settings file can turn this on");
 
+    // Windows notifications about the settings file (Phase 13.1): the title is cut to 63 characters, the text to 255.
+    public static string SettingsRecoveredTitle => T("设置文件损坏，已恢复", "Settings restored from a backup");
+
+    public static string SettingsRecoveredText(DateTime backupLocal)
+        => T($"设置文件损坏了，已用 {backupLocal:yyyy-MM-dd HH:mm} 的备份恢复你的小组件。损坏的文件保留在数据文件夹里。",
+            $"Your settings file was damaged. Your widgets were restored from a backup made on {backupLocal:yyyy-MM-dd HH:mm}. The damaged file is kept in the data folder.");
+
+    public static string SettingsLostTitle => T("设置文件损坏，没有可用的备份", "Settings could not be restored");
+
+    public static string SettingsLostText => T("设置文件损坏了，也没有可用的备份，所以从默认的小组件重新开始。损坏的文件保留在数据文件夹里。",
+        "Your settings file was damaged and no backup could be used, so Desk Widgets started with its default widget. The damaged file is kept in the data folder.");
+
+    public static string SaveFailingTitle => T("设置无法保存", "Settings are not being saved");
+
+    public static string SaveFailingText(string reason)
+        => T($"桌面小组件无法写入设置文件（{reason}），会继续重试。如果在成功之前退出，现在做的改动会丢失。请检查磁盘是否已满，或文件夹是否只读。",
+            $"Desk Widgets can't write its settings file ({reason}). It keeps trying, but changes you make now will be lost if it quits before it succeeds. Check that the disk isn't full and the folder isn't read-only.");
+
+    /// <summary>A short reason for a failed save, in the app's language (the exception's own message is English and carries the whole path).</summary>
+    public static string SaveFailureReason(Exception? error)
+    {
+        int code = (error?.HResult ?? 0) & 0xFFFF; // the Win32 error inside an HRESULT
+        if (error is UnauthorizedAccessException || code == 5)
+            return T("没有写入权限", "access denied");
+        return code switch
+        {
+            39 or 112 => T("磁盘已满", "the disk is full"),
+            32 or 33 => T("文件被占用", "the file is in use"),
+            _ => T($"错误 0x{error?.HResult ?? 0:X8}", $"error 0x{error?.HResult ?? 0:X8}"),
+        };
+    }
+
     public static string IconsMenu => T("桌面图标", "Desktop icons");
     public static string IconsArrangeRight => T("靠右自动排列", "Keep arranged on the right");
     public static string IconsArrangeNow => T("立即整理", "Arrange now");
@@ -136,6 +168,9 @@ internal static class Strings
     public static string FolderMoveToRecycleBin => T("移到回收站", "Move to Recycle Bin");
     public static string FolderRemoveFromFolder => T("从文件夹中移除", "Remove from folder");
     public static string FolderProperties => T("属性", "Properties");
+
+    /// <summary>Windows 11's own words for the row that opens the full Windows menu (Phase 13.4).</summary>
+    public static string FolderMoreOptions => T("显示更多选项", "Show more options");
     public static string FolderOpenInExplorer => T("在资源管理器中打开文件夹", "Open folder in Explorer");
     public static string FolderAddApps => T("添加应用…", "Add apps…");
     public static string FolderSortBy => T("排序方式", "Sort by");

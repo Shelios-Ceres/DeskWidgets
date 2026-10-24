@@ -42,6 +42,11 @@ internal sealed class IconService : IDisposable
     private readonly object _gate = new();
     private int _next;
 
+    private static int s_started;
+
+    /// <summary>How many pictures were asked of the Shell since the app started (the large-folder bench reads it).</summary>
+    public static int RequestsStarted => Volatile.Read(ref s_started);
+
     private IconService(DispatcherQueue ui) => _ui = ui;
 
     /// <summary>One service for the app. First use must be on the UI thread.</summary>
@@ -67,6 +72,7 @@ internal sealed class IconService : IDisposable
                 return;
             }
         }
+        Interlocked.Increment(ref s_started);
         _workers[Interlocked.Increment(ref _next) % _workers.Length].Post(() =>
         {
             IconImage? image = null;

@@ -49,6 +49,9 @@ internal interface IFolderPanel
     /// <summary>Design QA: puts the panel in a state a user would reach with the mouse and keyboard, so it can be captured.</summary>
     void PrepareForCapture(FolderCapture state);
 
+    /// <summary>Design QA (the large-folder bench): scrolls so that item <paramref name="index"/> of the shown list is in view.</summary>
+    void ScrollToItemForBench(int index);
+
     /// <summary>Starts renaming one item in place.</summary>
     void BeginRename(string fileName);
 

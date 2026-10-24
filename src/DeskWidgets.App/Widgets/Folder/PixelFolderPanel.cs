@@ -62,7 +62,7 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
                 Redraw();
         });
         _accessible = new PanelAccessible(this);
-        _ = "warm".Contains("RM", StringComparison.CurrentCultureIgnoreCase); // the first filter of a process pays ~60 ms for culture-aware search coming up
+        _ = Search.NameSearch.Matches("壁纸", new Search.NameQuery("bz")); // the first Chinese filter of a process loads the pinyin table
         CreateWindow(noActivate: false);
         _text = new TextService(Hwnd, () => _edit?.Editor ?? _search, ActiveFieldRect, OnTextServiceChanged);
     }
@@ -295,7 +295,8 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
     private void RecomputeView()
     {
         string filter = _search.Text.Trim();
-        _view = Model.Items.Where(i => filter.Length == 0 || i.DisplayName.Contains(filter, StringComparison.CurrentCultureIgnoreCase)).ToList();
+        var query = new Search.NameQuery(filter);
+        _view = Model.Items.Where(i => Search.NameSearch.Matches(i.DisplayName, query)).ToList();
         _selection.SetView(_view);
         // The result of the panel's own work: the renamed item, or the item after a removed one, gets the selection.
         if (_widget.Aftermath.Resolve(_view.Select(i => i.FileName).ToList(), DateTime.UtcNow) is { } picked)
@@ -462,6 +463,13 @@ internal sealed class PixelFolderPanel : PixelPopupWindow, IFolderPanel
             return;
         _selection.SelectOnly(index);
         _firstRow = PanelSelection.FirstRowFor(index, FolderPixelPanelScene.Columns, _firstRow, VisibleRows);
+        Redraw();
+    }
+
+    public void ScrollToItemForBench(int index)
+    {
+        int max = _plan is null ? 0 : Math.Max(0, _plan.TotalRows - _plan.VisibleRows);
+        _firstRow = Math.Clamp(index / FolderPixelPanelScene.Columns, 0, max);
         Redraw();
     }
 

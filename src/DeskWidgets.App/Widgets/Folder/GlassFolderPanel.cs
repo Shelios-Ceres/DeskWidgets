@@ -320,8 +320,8 @@ internal sealed class GlassFolderPanel : IFolderPanel
         _glass.Attach(_hwnd);
         _fader = new WindowFader(_hwnd);
         _fader.Set(0); // up, but see-through, until the content is there
-        // The first filter of a process pays ~60 ms for culture-aware string search coming up; it is paid here, while the window is still invisible.
-        _ = "warm".Contains("RM", StringComparison.CurrentCultureIgnoreCase);
+        // The first Chinese filter of a process loads the pinyin table; that is paid here, while the window is still invisible.
+        _ = Search.NameSearch.Matches("壁纸", new Search.NameQuery("bz"));
         _subclass = Procedure;
         Win32.SetWindowSubclass(_hwnd, _subclass, 7, 0);
 
@@ -690,7 +690,8 @@ internal sealed class GlassFolderPanel : IFolderPanel
     {
         string filter = _search.Text.Trim();
         var rename = _widget.Aftermath.PendingRename;
-        _view = Model.Items.Where(i => filter.Length == 0 || i.DisplayName.Contains(filter, StringComparison.CurrentCultureIgnoreCase)).ToList();
+        var query = new Search.NameQuery(filter);
+        _view = Model.Items.Where(i => Search.NameSearch.Matches(i.DisplayName, query)).ToList();
         // A2/A4: what is new in this list (it enters), and which cell an item brings along (a rename keeps its cell: it is a move).
         var keys = new HashSet<string>(_view.Select(i => i.FileName), StringComparer.OrdinalIgnoreCase);
         var previous = _knownKeys;
@@ -1554,6 +1555,12 @@ internal sealed class GlassFolderPanel : IFolderPanel
         }
         ScrollTo(next);
         Paint();
+    }
+
+    public void ScrollToItemForBench(int index)
+    {
+        ScrollTo(index);
+        UpdateVisible();
     }
 
     private void ScrollTo(int index)

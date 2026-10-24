@@ -204,7 +204,7 @@ internal static class FolderPixelPreview
     {
         name ??= FolderName;
         var icons = new PixelFolderIcons(() => { });
-        var items = search.Length == 0 ? all : all.Where(i => i.DisplayName.Contains(search, StringComparison.CurrentCultureIgnoreCase)).ToList();
+        var items = search.Length == 0 ? all : all.Where(i => Search.NameSearch.Matches(i.DisplayName, new Search.NameQuery(search))).ToList();
         var selection = new PanelSelection();
         selection.SetView(items);
         foreach (int index in selected ?? [])

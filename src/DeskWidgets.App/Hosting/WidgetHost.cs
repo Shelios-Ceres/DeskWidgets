@@ -30,6 +30,9 @@ internal sealed class WidgetHost
     private ShowDesktopWatcher? _showDesktop;
     private bool _overDesktop; // Win+D has lifted the desktop over the widgets, so they sit above it for now
     private bool _exiting;
+    private bool _dirty; // a change is waiting to be saved
+    private int _saveFailures;
+    private bool _failureTold;
 
     /// <param name="demoDevices">0 for the real devices, else how many sample devices to show (<c>--demo</c> is 4).</param>
     public WidgetHost(int demoDevices)
@@ -44,11 +47,22 @@ internal sealed class WidgetHost
         _saveTimer = dispatcher.CreateTimer();
         _saveTimer.Interval = TimeSpan.FromMilliseconds(600);
         _saveTimer.IsRepeating = false;
-        _saveTimer.Tick += (_, _) => _settings.Save();
+        _saveTimer.Tick += (_, _) => SaveNow();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => Flush(fromTimerThread: false);
 
         _icons = new IconArranger(_settings.Current.ArrangeDesktopIcons);
         _icons.StatusChanged += status => dispatcher.TryEnqueue(() => ShowIconStatus(status));
         _icons.MarginsChanged += () => dispatcher.TryEnqueue(ResnapAll);
+    }
+
+    /// <summary>Phase 13.1: if the settings file was damaged at start, say once, through the tray icon, what was done about it.</summary>
+    private void TellAboutRecovery()
+    {
+        var recovery = _settings.Recovery;
+        if (recovery.Kind == SettingsRecoveryKind.FromBackup)
+            _tray?.ShowNotice(Strings.SettingsRecoveredTitle, Strings.SettingsRecoveredText(recovery.BackupUtc.ToLocalTime()), warning: true);
+        else if (recovery.Kind == SettingsRecoveryKind.Fresh)
+            _tray?.ShowNotice(Strings.SettingsLostTitle, Strings.SettingsLostText, warning: true);
     }
 
     /// <summary>Design QA (<c>--motion-qa</c>): the widgets' windows.</summary>
@@ -108,7 +122,10 @@ internal sealed class WidgetHost
 
         _tray = new TrayIcon(TrayTooltip(), Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
         _tray.MenuRequested += ShowTrayMenu;
+        _tray.SessionEnding += () => Flush();
         _tray.SetPixelIcon(Theme == WidgetTheme.Pixel);
+        _settings.StartSession();
+        TellAboutRecovery();
 
         _showDesktop = new ShowDesktopWatcher(Services.Dispatcher, CheckShowDesktop);
         CheckShowDesktop();
@@ -170,10 +187,54 @@ internal sealed class WidgetHost
         RequestSave();
     }
 
+    private static readonly TimeSpan SaveDelay = TimeSpan.FromMilliseconds(600);
+    private static readonly TimeSpan SaveRetry = TimeSpan.FromSeconds(5);
+    private const int FailuresBeforeNotice = 3;
+
+    /// <summary>The save timer's tick: write the settings; if that fails, try again every few seconds, and tell the user once if it keeps failing.</summary>
+    private void SaveNow()
+    {
+        if (_settings.Save())
+        {
+            _dirty = false;
+            _saveFailures = 0;
+            _failureTold = false;
+            return;
+        }
+        _saveFailures++;
+        if (_saveFailures >= FailuresBeforeNotice && !_failureTold)
+        {
+            _failureTold = true;
+            _tray?.ShowNotice(Strings.SaveFailingTitle, Strings.SaveFailingText(Strings.SaveFailureReason(_settings.LastError)), warning: true);
+        }
+        _saveTimer.Interval = SaveRetry;
+        _saveTimer.Start();
+    }
+
+    /// <summary>
+    /// Writes any change that is still waiting, now: on Exit, when the session ends (sign-out, restart, shutdown) and when the process
+    /// is closing. A failure is only logged here (the store keeps the reason); the process is going away.
+    /// </summary>
+    public void Flush(bool fromTimerThread = true)
+    {
+        if (fromTimerThread)
+            _saveTimer.Stop();
+        if (_dirty || _saveFailures > 0)
+        {
+            if (_settings.Save())
+            {
+                _dirty = false;
+                _saveFailures = 0;
+            }
+        }
+    }
+
     /// <summary>Saves soon. Every change to the widgets' layout comes through here, so the icon arranger hears of it too.</summary>
     public void RequestSave()
     {
+        _dirty = true;
         _saveTimer.Stop();
+        _saveTimer.Interval = SaveDelay;
         _saveTimer.Start();
         _icons.SetBlocked(GetCardRects(except: null));
     }
@@ -255,8 +316,7 @@ internal sealed class WidgetHost
         if (_exiting)
             return;
         _exiting = true;
-        _saveTimer.Stop();
-        _settings.Save();
+        Flush();
         foreach (var window in _windows.ToList())
             window.CloseFromHost();
         _windows.Clear();
