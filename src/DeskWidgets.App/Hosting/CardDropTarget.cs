@@ -121,7 +121,7 @@ internal sealed class CardDropTarget : IDropTarget
             Hint(widget, null);
             return (uint)DropEffect.None;
         }
-        var decisions = _items.Select(i => widget.DropPolicy.Decide(i.Entry, _keys, widget.DropFolderPath)).ToList();
+        var decisions = _items.Select(i => DropPolicy.Allow(widget.DropPolicy.Decide(i.Entry, _keys, widget.DropFolderPath), _allowed)).ToList();
         var verb = DropPolicy.Summarize(decisions);
         Hint(widget, verb == DropVerb.None ? null : verb);
         if (verb != _shown)
@@ -172,8 +172,9 @@ internal sealed class CardDropTarget : IDropTarget
         }
         // The key state at Drop has no mouse buttons; the modifiers of the last DragOver are what the label promised.
         var keys = _keys;
-        var decisions = _items.Select(i => widget.DropPolicy.Decide(i.Entry, keys, widget.DropFolderPath)).ToList();
-        var chosen = DropPolicy.CursorEffect(decisions, _allowed);
+        var allowed = _allowed;
+        var decisions = _items.Select(i => DropPolicy.Allow(widget.DropPolicy.Decide(i.Entry, keys, widget.DropFolderPath), allowed)).ToList();
+        var chosen = DropPolicy.CursorEffect(decisions, allowed);
         _helper?.Drop(dataObject, ref point, (uint)chosen);
         widget.DropHintSnap();
         var items = _items;
@@ -182,7 +183,7 @@ internal sealed class CardDropTarget : IDropTarget
         {
             try
             {
-                widget.DropItems(items, keys);
+                widget.DropItems(items, keys, allowed);
             }
             catch (Exception ex)
             {

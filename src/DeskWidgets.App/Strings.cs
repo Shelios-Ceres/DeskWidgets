@@ -92,6 +92,12 @@ internal static class Strings
         => T($"设置文件损坏了，已用 {backupLocal:yyyy-MM-dd HH:mm} 的备份恢复你的小组件。损坏的文件保留在数据文件夹里。",
             $"Your settings file was damaged. Your widgets were restored from a backup made on {backupLocal:yyyy-MM-dd HH:mm}. The damaged file is kept in the data folder.");
 
+    public static string SettingsMissingTitle => T("设置文件不见了，已恢复", "Settings restored from a backup");
+
+    public static string SettingsMissingText(DateTime backupLocal)
+        => T($"设置文件不见了，已用 {backupLocal:yyyy-MM-dd HH:mm} 的备份恢复你的小组件。",
+            $"Your settings file was missing. Your widgets were restored from a backup made on {backupLocal:yyyy-MM-dd HH:mm}.");
+
     public static string SettingsLostTitle => T("设置文件损坏，没有可用的备份", "Settings could not be restored");
 
     public static string SettingsLostText => T("设置文件损坏了，也没有可用的备份，所以从默认的小组件重新开始。损坏的文件保留在数据文件夹里。",

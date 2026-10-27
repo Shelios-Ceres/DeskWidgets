@@ -174,6 +174,20 @@ internal sealed class DropPolicy
         return new Decision(ExplorerDefault(path, destinationFolder, keys), "ordinary item: Explorer's rule");
     }
 
+    /// <summary>
+    /// A decision as the drag's source allows it. Only a move takes something away from the source, so a move the source does not offer
+    /// (it allows copy and link only, as an app handing out a file from its own store does) becomes a copy, or a shortcut when the source
+    /// does not allow copying either. Copies and shortcuts leave the source as it is and stay what the table says.
+    /// </summary>
+    public static Decision Allow(Decision decision, DropEffect allowed)
+    {
+        if (decision.Effect != DropEffect.Move || (allowed & DropEffect.Move) != 0)
+            return decision;
+        return (allowed & DropEffect.Copy) != 0
+            ? decision with { Effect = DropEffect.Copy, Rule = decision.Rule + "; the source allows no move: copy" }
+            : decision with { Effect = DropEffect.Link, Rule = decision.Rule + "; the source allows no move: shortcut" };
+    }
+
     /// <summary>The rule for an ordinary item taken from the desktop: it moves whatever the drive; Ctrl copies, Alt or Ctrl+Shift makes a shortcut.</summary>
     public static DropEffect DesktopDefault(DropKeys keys)
     {

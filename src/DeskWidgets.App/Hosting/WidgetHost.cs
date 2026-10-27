@@ -24,6 +24,7 @@ internal sealed class WidgetHost
     private readonly SettingsStore _settings = new();
     private readonly List<WidgetWindow> _windows = [];
     private readonly DispatcherQueueTimer _saveTimer;
+    private readonly DispatcherQueueTimer _displayTimer;
     private readonly IconArranger _icons;
     private IconArrangerStatus _iconStatus = new(IconArrangerState.Off, 0, null);
     private TrayIcon? _tray;
@@ -50,6 +51,11 @@ internal sealed class WidgetHost
         _saveTimer.Tick += (_, _) => SaveNow();
         AppDomain.CurrentDomain.ProcessExit += (_, _) => Flush(fromTimerThread: false);
 
+        _displayTimer = dispatcher.CreateTimer();
+        _displayTimer.Interval = DisplaySettle;
+        _displayTimer.IsRepeating = false;
+        _displayTimer.Tick += (_, _) => DisplayPass();
+
         _icons = new IconArranger(_settings.Current.ArrangeDesktopIcons);
         _icons.StatusChanged += status => dispatcher.TryEnqueue(() => ShowIconStatus(status));
         _icons.MarginsChanged += () => dispatcher.TryEnqueue(ResnapAll);
@@ -61,6 +67,8 @@ internal sealed class WidgetHost
         var recovery = _settings.Recovery;
         if (recovery.Kind == SettingsRecoveryKind.FromBackup)
             _tray?.ShowNotice(Strings.SettingsRecoveredTitle, Strings.SettingsRecoveredText(recovery.BackupUtc.ToLocalTime()), warning: true);
+        else if (recovery.Kind == SettingsRecoveryKind.Missing)
+            _tray?.ShowNotice(Strings.SettingsMissingTitle, Strings.SettingsMissingText(recovery.BackupUtc.ToLocalTime()), warning: true);
         else if (recovery.Kind == SettingsRecoveryKind.Fresh)
             _tray?.ShowNotice(Strings.SettingsLostTitle, Strings.SettingsLostText, warning: true);
     }
@@ -96,9 +104,9 @@ internal sealed class WidgetHost
         if (theme == Theme)
             return;
         _settings.Current.Theme = theme;
-        RequestSave();
         foreach (var window in _windows)
             window.ApplyTheme(theme);
+        RequestSave(); // after the cards have their new sizes, so the icon arranger hears of them
         _tray?.SetPixelIcon(theme == WidgetTheme.Pixel);
     }
 
@@ -221,7 +229,7 @@ internal sealed class WidgetHost
             _saveTimer.Stop();
         if (_dirty || _saveFailures > 0)
         {
-            if (_settings.Save())
+            if (_settings.Save(patient: true))
             {
                 _dirty = false;
                 _saveFailures = 0;
@@ -242,10 +250,25 @@ internal sealed class WidgetHost
     public IEnumerable<Win32.RECT> GetCardRects(WidgetWindow? except)
         => _windows.Where(w => w != except).Select(w => w.CardRect).ToList();
 
+    private static readonly TimeSpan DisplaySettle = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// A display change (resolution, a monitor added or removed). Every widget's window hears the same broadcast, and a change often comes
+    /// as a burst of them: one pass for all the widgets runs a moment after the last.
+    /// </summary>
     public void OnDisplayChanged()
     {
+        _displayTimer.Stop();
+        _displayTimer.Start();
+    }
+
+    private void DisplayPass()
+    {
+        if (_exiting)
+            return;
         foreach (var window in _windows)
             window.EnsureOnScreen();
+        _icons.SetBlocked(GetCardRects(except: null)); // a new scale changes a card's size even where nothing moved
         _icons.Invalidate();
     }
 
@@ -317,6 +340,7 @@ internal sealed class WidgetHost
             return;
         _exiting = true;
         Flush();
+        _displayTimer.Stop();
         foreach (var window in _windows.ToList())
             window.CloseFromHost();
         _windows.Clear();

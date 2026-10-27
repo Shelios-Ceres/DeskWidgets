@@ -10,19 +10,20 @@ internal sealed class OpSink : IFileOperationProgressSink
 {
     public readonly List<string> Events = [];
 
-    /// <summary>The new path of each moved or copied item, keyed by the source path; and of each new item, in the order created.</summary>
+    /// <summary>The new path of each moved or copied item, keyed by the source path.</summary>
     public readonly Dictionary<string, string> Placed = new(StringComparer.OrdinalIgnoreCase);
 
-    public readonly List<string> NewItems = [];
+    /// <summary>The path of each new item that was made, keyed by the file name it was queued under (one that failed is absent).</summary>
+    public readonly Dictionary<string, string> NewItems = new(StringComparer.OrdinalIgnoreCase);
 
-    private void Note(string verb, int hr, IShellItem? source, IShellItem? created)
+    private void Note(string verb, int hr, IShellItem? source, IShellItem? created, string? queuedName = null)
     {
         string? path = created is null ? null : Shell.FileSystemPath(created);
         Events.Add($"{verb} hr=0x{hr:X8}{(path is null ? "" : " -> " + path)}");
         if (hr < 0 || path is null)
             return;
         if (verb == "new")
-            NewItems.Add(path);
+            NewItems[queuedName ?? Path.GetFileName(path)] = path;
         else if (source is not null && Shell.FileSystemPath(source) is { } from)
             Placed[from] = path;
     }
@@ -38,7 +39,7 @@ internal sealed class OpSink : IFileOperationProgressSink
     public int PreDeleteItem(uint flags, IShellItem item) => 0;
     public int PostDeleteItem(uint flags, IShellItem item, int hrDelete, IShellItem? newlyCreated) { Note("delete", hrDelete, item, null); return 0; }
     public int PreNewItem(uint flags, IShellItem destFolder, string newName) => 0;
-    public int PostNewItem(uint flags, IShellItem destFolder, string newName, string templateName, uint fileAttributes, int hrNew, IShellItem? newItem) { Note("new", hrNew, null, newItem); return 0; }
+    public int PostNewItem(uint flags, IShellItem destFolder, string newName, string templateName, uint fileAttributes, int hrNew, IShellItem? newItem) { Note("new", hrNew, null, newItem, newName); return 0; }
     public int UpdateProgress(uint workTotal, uint workSoFar) => 0;
     public int ResetTimer() => 0;
     public int PauseTimer() => 0;

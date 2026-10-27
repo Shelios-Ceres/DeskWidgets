@@ -33,14 +33,15 @@ internal static class FolderActions
 
     /// <summary>
     /// Carries out a drop as one Explorer operation (one Ctrl+Z): moves and copies through IFileOperation with its own progress and
-    /// conflict dialogs, shortcuts as new items that are then filled in. Never forwards the drop to the Shell.
+    /// conflict dialogs, shortcuts as new items that are then filled in. Never forwards the drop to the Shell. <paramref name="allowed"/>
+    /// is what the drag's source offered: a move it did not offer is not made (see <see cref="DropPolicy.Allow"/>).
     /// </summary>
-    public static string? ExecuteDrop(FolderModel model, DropPolicy policy, IReadOnlyList<Dropped> items, DropKeys keys, IntPtr owner)
+    public static string? ExecuteDrop(FolderModel model, DropPolicy policy, IReadOnlyList<Dropped> items, DropKeys keys, DropEffect allowed, IntPtr owner)
     {
         using var busy = PanelBusy.Enter(); // the operation, the conflict windows and the shortcut writes: the panel stays up through all of it
         try
         {
-            var decisions = items.Select(d => (d, decision: policy.Decide(d.Entry, keys, model.Path))).ToList();
+            var decisions = items.Select(d => (d, decision: DropPolicy.Allow(policy.Decide(d.Entry, keys, model.Path), allowed))).ToList();
             if (decisions.All(x => x.decision.Effect == DropEffect.None))
                 return null;
 
@@ -87,11 +88,9 @@ internal static class FolderActions
             op.GetAnyOperationsAborted(out bool aborted);
 
             var now = DateTime.UtcNow;
-            // The shortcuts exist as empty files now; write them in the order they were queued.
-            for (int i = 0; i < sink.NewItems.Count && i < links.Count; i++)
+            // The shortcuts exist as empty files now: fill each in with its own item's target.
+            foreach (var (created, dropped, decision) in MatchCreated(links, sink.NewItems))
             {
-                var (_, dropped, decision) = links[i];
-                string created = sink.NewItems[i];
                 try
                 {
                     ShellOps.FillShortcut(created, decision.Target ?? dropped.Entry.Path, dropped.Entry.IsVirtual ? dropped.Item : null);
@@ -123,6 +122,24 @@ internal static class FolderActions
             Log.Warn("A Big Folder drop failed", ex);
             return ex.Message;
         }
+    }
+
+    /// <summary>
+    /// Pairs each queued shortcut with the file the operation made for it, by the file name it was queued under. A shortcut that was not
+    /// made (it failed, or the user skipped it) is left out, so the ones after it are not filled in with each other's targets.
+    /// </summary>
+    internal static List<(string Created, Dropped Item, Decision Decision)> MatchCreated(
+        IEnumerable<(string Path, Dropped Item, Decision Decision)> links, IReadOnlyDictionary<string, string> createdByName)
+    {
+        var matched = new List<(string, Dropped, Decision)>();
+        foreach (var (path, item, decision) in links)
+        {
+            if (createdByName.TryGetValue(Path.GetFileName(path), out string? created))
+                matched.Add((created, item, decision));
+            else
+                Log.Info($"Big Folder drop: the shortcut '{Path.GetFileName(path)}' was not made");
+        }
+        return matched;
     }
 
     /// <summary>The name a new shortcut gets: the item's name without its extension.</summary>
@@ -257,9 +274,8 @@ internal static class FolderActions
         {
             var list = items.ToList();
             var (hr, _) = ShellOps.Recycle(list.Select(i => Shell.FromPath(i.Path)), owner);
-            foreach (var item in list)
-                model.Origins.Remove(item.FileName);
-            model.SaveOrigins();
+            if (ForgetGone(model.Origins, list, Exists))
+                model.SaveOrigins();
             model.Rescan();
             return hr < 0 && hr != ErrorCancelled ? $"0x{hr:X8}" : null;
         }
@@ -269,6 +285,24 @@ internal static class FolderActions
             return ex.Message;
         }
     }
+
+    /// <summary>
+    /// After an operation that takes items out of the folder (Recycle, Put back): forgets the origins of the items that are gone. An item
+    /// that is still there (the user cancelled Windows' prompt or skipped a conflict, or it could not be removed) keeps its origin, and with
+    /// it "Put back". Returns whether any origin was forgotten.
+    /// </summary>
+    internal static bool ForgetGone(OriginLog origins, IEnumerable<FolderItem> items, Func<string, bool> exists)
+    {
+        bool forgot = false;
+        foreach (var item in items)
+        {
+            if (!exists(item.Path))
+                forgot |= origins.Remove(item.FileName);
+        }
+        return forgot;
+    }
+
+    private static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
 
     public static bool CanPutBack(FolderModel model, FolderItem item)
         => model.Origins.OriginOf(item.FileName) is { } origin && Path.GetDirectoryName(origin) is { } dir && Directory.Exists(dir);
@@ -281,12 +315,10 @@ internal static class FolderActions
         try
         {
             var (hr, _) = ShellOps.Perform(DropEffect.Move, [Shell.FromPath(item.Path)], Shell.FromPath(directory), ShellOps.InteractiveFlags, owner);
-            if (hr >= 0)
-            {
-                model.Origins.Remove(item.FileName);
+            // A conflict the user skipped succeeds without moving anything: the item stays, and so does its origin.
+            if (ForgetGone(model.Origins, [item], Exists))
                 model.SaveOrigins();
-                model.Rescan();
-            }
+            model.Rescan();
             return hr < 0 && hr != ErrorCancelled ? $"0x{hr:X8}" : null;
         }
         catch (Exception ex)

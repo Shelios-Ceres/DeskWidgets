@@ -14,6 +14,12 @@ internal static class IconStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
+    /// <summary>How many damaged layout files are kept beside it (the newest).</summary>
+    private const int BadFilesKept = 3;
+
+    /// <summary>The waits between the tries at reading a layout file that is locked for a moment (a scanner, a backup tool).</summary>
+    private static readonly TimeSpan[] ReadDelays = [TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(500)];
+
     private static readonly string Folder = DataRoot.Path;
 
     private static readonly string LegacyFolder = Path.Combine(
@@ -31,7 +37,7 @@ internal static class IconStore
         try
         {
             if (File.Exists(layoutPath))
-                return Read<IconLayoutSettings>(layoutPath);
+                return ReadOwn(layoutPath);
             string legacy = Path.Combine(legacyFolder, "settings.json");
             if (takeOver && File.Exists(legacy))
             {
@@ -63,4 +69,55 @@ internal static class IconStore
 
     private static T Read<T>(string path)
         => JsonSerializer.Deserialize<T>(File.ReadAllText(path), JsonOptions) ?? throw new InvalidDataException($"{path} is empty");
+
+    /// <summary>
+    /// Our own layout file, read again while it is locked for a moment. One that is there but does not parse is copied aside as
+    /// desktop-icons.bad-&lt;time&gt;.json before it is given up: the arranger's first save replaces it, and the order it held would be gone.
+    /// </summary>
+    private static IconLayoutSettings ReadOwn(string path)
+    {
+        string text = ReadWithRetries(path);
+        try
+        {
+            return JsonSerializer.Deserialize<IconLayoutSettings>(text, JsonOptions) ?? throw new InvalidDataException($"{path} is empty");
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException)
+        {
+            KeepBadFile(path);
+            throw;
+        }
+    }
+
+    private static string ReadWithRetries(string path)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return File.ReadAllText(path);
+            }
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < ReadDelays.Length)
+            {
+                Thread.Sleep(ReadDelays[attempt]);
+            }
+        }
+    }
+
+    private static void KeepBadFile(string path)
+    {
+        try
+        {
+            string folder = Path.GetDirectoryName(path)!;
+            string stem = Path.GetFileNameWithoutExtension(path);
+            string kept = Path.Combine(folder, $"{stem}.bad-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
+            File.Copy(path, kept, overwrite: true);
+            foreach (string old in Directory.GetFiles(folder, stem + ".bad-*.json").OrderByDescending(f => f, StringComparer.Ordinal).Skip(BadFilesKept))
+                File.Delete(old);
+            Log.Warn($"desktop icons: the damaged layout file is kept as {Path.GetFileName(kept)}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn("desktop icons: keeping the damaged layout file aside failed", ex);
+        }
+    }
 }

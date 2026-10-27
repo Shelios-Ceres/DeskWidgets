@@ -10,14 +10,17 @@ namespace DeskWidgets.Widgets.Folder;
 /// </summary>
 internal sealed class FolderModel : IDisposable
 {
+    /// <summary>How often a missing folder is looked for, and how soon a folder that could not be read is read again.</summary>
     private static readonly TimeSpan MissingPoll = TimeSpan.FromSeconds(3);
 
-    private readonly DispatcherQueue _ui;
+    private readonly Action<Action> _toUi;
     private readonly Action _persist;
+    private readonly Func<string, OriginLog, List<FolderItem>> _scan;
     private readonly StaWorker _worker = new("Big Folder scanner");
     private readonly object _gate = new();
     private FolderWatcher? _watcher;
     private Timer? _missingPoll;
+    private Timer? _retry;
     private bool _scanning;
     private bool _again;
     private bool _disposed;
@@ -26,12 +29,20 @@ internal sealed class FolderModel : IDisposable
 
     /// <param name="persist">Called after the folder, the sort or the manual order changed, so the widget can save its options.</param>
     public FolderModel(string path, FolderSort sort, IEnumerable<string> order, DispatcherQueue ui, Action persist)
+        : this(path, sort, order, action => ui.TryEnqueue(() => action()), persist, FolderScanner.Scan)
+    {
+    }
+
+    /// <param name="toUi">Runs a scan's result on the UI thread.</param>
+    /// <param name="scan">Reads the folder (tests stand in for <see cref="FolderScanner.Scan"/>).</param>
+    internal FolderModel(string path, FolderSort sort, IEnumerable<string> order, Action<Action> toUi, Action persist, Func<string, OriginLog, List<FolderItem>> scan)
     {
         Path = path;
         Sort = sort;
         Order = [.. order];
-        _ui = ui;
+        _toUi = toUi;
         _persist = persist;
+        _scan = scan;
         _originPath = OriginLog.PathFor(path);
         Origins = OriginLog.Load(_originPath);
     }
@@ -78,23 +89,23 @@ internal sealed class FolderModel : IDisposable
         _worker.Post(() =>
         {
             bool exists = false;
-            List<FolderItem> items = [];
+            List<FolderItem>? items = null; // stays null when the folder is there but could not be read
             try
             {
                 exists = Directory.Exists(path);
-                if (exists)
-                    items = FolderScanner.Scan(path, origins);
+                items = exists ? _scan(path, origins) : [];
             }
             catch (Exception ex)
             {
-                Log.Warn("Scanning a Big Folder failed", ex);
+                Log.Warn("Scanning a Big Folder failed; the card keeps what it showed and reads the folder again shortly", ex);
                 exists = Directory.Exists(path);
             }
-            _ui.TryEnqueue(() => Apply(path, exists, items));
+            _toUi(() => Apply(path, exists, items));
         });
     }
 
-    private void Apply(string scannedPath, bool exists, List<FolderItem> items)
+    /// <param name="items">What the scan found; null when the folder exists but could not be read this time.</param>
+    private void Apply(string scannedPath, bool exists, List<FolderItem>? items)
     {
         bool again;
         lock (_gate)
@@ -107,12 +118,24 @@ internal sealed class FolderModel : IDisposable
             return;
         if (scannedPath == Path)
         {
-            _all = items;
             Exists = exists;
-            Resort();
-            if (Origins.Prune(items.Select(i => i.FileName)) && exists)
-                Origins.Save(_originPath);
-            Watch(exists);
+            if (!exists)
+            {
+                // A missing folder (a drive unplugged, the folder renamed elsewhere) shows nothing, but its origin log and its manual
+                // order stay as they are for when it comes back.
+                _all = [];
+                Items = [];
+            }
+            else if (items is not null)
+            {
+                _all = items;
+                Resort();
+                // Only a folder that was read in full says which items are gone.
+                if (Origins.Prune(items.Select(i => i.FileName)))
+                    Origins.Save(_originPath);
+            }
+            // Otherwise the read failed (a network blip, a lock), which is not an empty folder: the items, the order and the origins stay.
+            Watch(exists, readFailed: exists && items is null);
             Changed?.Invoke();
         }
         if (again || scannedPath != Path)
@@ -134,7 +157,7 @@ internal sealed class FolderModel : IDisposable
         }
     }
 
-    private void Watch(bool exists)
+    private void Watch(bool exists, bool readFailed)
     {
         if (exists && _watcher is null)
         {
@@ -156,6 +179,8 @@ internal sealed class FolderModel : IDisposable
             _watcher = null;
             _missingPoll ??= new Timer(_ => Rescan(), null, MissingPoll, MissingPoll);
         }
+        if (readFailed) // the watcher only hears of changes, and a folder that failed to read may not change
+            (_retry ??= new Timer(_ => Rescan())).Change(MissingPoll, Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>Points the card at another folder (or the same one renamed).</summary>
@@ -207,6 +232,7 @@ internal sealed class FolderModel : IDisposable
             _disposed = true;
         _watcher?.Dispose();
         _missingPoll?.Dispose();
+        _retry?.Dispose();
         _worker.Dispose();
     }
 }

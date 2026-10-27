@@ -44,6 +44,15 @@ internal sealed class WidgetPlacement
     public bool AlwaysOnTop { get; set; }
     public bool Locked { get; set; }
     public Dictionary<string, string> Options { get; set; } = new();
+
+    /// <summary>Takes the window's position; false when the placement already says so, and there is nothing to save.</summary>
+    public bool MoveTo(int x, int y)
+    {
+        if (X == x && Y == y)
+            return false;
+        (X, Y) = (x, y);
+        return true;
+    }
 }
 
 /// <summary>What loading settings.json did besides reading it (Phase 13.1): nothing, restored the newest good snapshot, or started fresh.</summary>
@@ -55,6 +64,9 @@ internal enum SettingsRecoveryKind
 
     /// <summary>The file exists but could not be read at all (locked, access denied) even after retries: a snapshot is used from memory, the file is left alone and saves are held until it can be read.</summary>
     Held,
+
+    /// <summary>There was no settings.json although snapshots were there (it was deleted, by a cleaner or by hand): the newest snapshot that reads was put back.</summary>
+    Missing,
 }
 
 internal readonly record struct SettingsRecovery(SettingsRecoveryKind Kind, DateTime BackupUtc = default, string? BadFile = null);
@@ -134,10 +146,38 @@ internal sealed class SettingsStore
         }
     }
 
+    /// <summary>
+    /// The settings as they are on disk, for a command that runs beside the app (<c>--icons-inspect</c>): settings.json, else the newest
+    /// snapshot that reads, else the defaults. Unlike opening a store it changes nothing: no bad file is kept and nothing is put back.
+    /// </summary>
+    public static AppSettings Peek(string folder)
+    {
+        List<(DateTime Time, string Path)> snapshots;
+        try
+        {
+            snapshots = ListSnapshots(Path.Combine(folder, "backups"));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            snapshots = [];
+        }
+        return TryRead(Path.Combine(folder, "settings.json"))
+            ?? snapshots.OrderByDescending(s => s.Time).Select(s => TryRead(s.Path)).FirstOrDefault(s => s is not null)
+            ?? new AppSettings();
+    }
+
     private (AppSettings, SettingsRecovery) Load()
     {
         if (!File.Exists(_file))
-            return (new AppSettings(), default);
+        {
+            // No file and no snapshots is a first run. No file beside snapshots means it was deleted: put the newest good one back.
+            var snapshots = Snapshots();
+            if (snapshots.Count == 0)
+                return (new AppSettings(), default);
+            Log.Warn("settings.json is missing although there are backups; restoring the newest that reads");
+            return Restore(snapshots, SettingsRecoveryKind.Missing, bad: null)
+                ?? (new AppSettings(), default); // none of them reads: start as on a first run
+        }
         var (text, error) = ReadWithRetries(_file, _readDelays);
         if (text is null)
         {
@@ -155,7 +195,16 @@ internal sealed class SettingsStore
         // Unreadable or empty: keep the bad file, then take the newest snapshot that parses.
         Log.Warn("settings.json is unreadable or empty; looking for a backup");
         string? bad = KeepBadFile();
-        foreach (var (time, path) in Snapshots().OrderByDescending(s => s.Time))
+        if (Restore(Snapshots(), SettingsRecoveryKind.FromBackup, bad) is { } restored)
+            return restored;
+        Log.Warn("No usable backup; starting fresh");
+        return (new AppSettings(), new SettingsRecovery(SettingsRecoveryKind.Fresh, default, bad));
+    }
+
+    /// <summary>Puts the newest snapshot that parses back as settings.json (or uses it from memory if that fails); null when none parses.</summary>
+    private (AppSettings, SettingsRecovery)? Restore(List<(DateTime Time, string Path)> snapshots, SettingsRecoveryKind kind, string? bad)
+    {
+        foreach (var (time, path) in snapshots.OrderByDescending(s => s.Time))
         {
             var restored = TryRead(path);
             if (restored is null)
@@ -170,10 +219,9 @@ internal sealed class SettingsStore
                 Log.Warn("Putting the backup back as settings.json failed; it is used from memory", ex);
             }
             Log.Warn($"settings.json restored from the backup of {time:u}");
-            return (restored, new SettingsRecovery(SettingsRecoveryKind.FromBackup, time, bad));
+            return (restored, new SettingsRecovery(kind, time, bad));
         }
-        Log.Warn("No usable backup; starting fresh");
-        return (new AppSettings(), new SettingsRecovery(SettingsRecoveryKind.Fresh, default, bad));
+        return null;
     }
 
     /// <summary>Reads a file, trying again after each wait while it is locked or denied. A null text means it never could be read; the last error says why.</summary>
@@ -215,18 +263,24 @@ internal sealed class SettingsStore
 
     private List<(DateTime Time, string Path)> Snapshots()
     {
-        var list = new List<(DateTime, string)>();
         try
         {
-            foreach (string path in Directory.Exists(_backups) ? Directory.GetFiles(_backups, "settings-*.json") : [])
-            {
-                if (SettingsBackups.TryParse(Path.GetFileName(path), out var time))
-                    list.Add((time, path));
-            }
+            return ListSnapshots(_backups);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Log.Warn("Listing the settings backups failed", ex);
+            return [];
+        }
+    }
+
+    private static List<(DateTime Time, string Path)> ListSnapshots(string backups)
+    {
+        var list = new List<(DateTime, string)>();
+        foreach (string path in Directory.Exists(backups) ? Directory.GetFiles(backups, "settings-*.json") : [])
+        {
+            if (SettingsBackups.TryParse(Path.GetFileName(path), out var time))
+                list.Add((time, path));
         }
         return list;
     }
@@ -278,10 +332,11 @@ internal sealed class SettingsStore
     /// <summary>
     /// A save while the file could not be read at start: try to read it now. If it still cannot be read, nothing is written (the error is the
     /// reason). Once it can, the file as it is is kept aside as settings.kept-&lt;time&gt;.json before our (older, in-memory) state replaces it.
+    /// One try only, unless <paramref name="patient"/>: an ordinary save runs on the UI thread, and the save timer tries again in a few seconds.
     /// </summary>
-    private bool ReleaseHold()
+    private bool ReleaseHold(bool patient)
     {
-        var (text, error) = ReadWithRetries(_file, [TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(300)]);
+        var (text, error) = ReadWithRetries(_file, patient ? [TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(300)] : []);
         if (text is null)
         {
             LastError = error;
@@ -304,12 +359,15 @@ internal sealed class SettingsStore
         return true;
     }
 
-    /// <summary>Writes settings.json (a temp file flushed to disk, then moved over it). False when it could not be written; <see cref="LastError"/> says why.</summary>
-    public bool Save()
+    /// <summary>
+    /// Writes settings.json (a temp file flushed to disk, then moved over it). False when it could not be written; <see cref="LastError"/> says why.
+    /// <paramref name="patient"/> is for the last save (exit, the session ending): a file held since the start is waited for a moment.
+    /// </summary>
+    public bool Save(bool patient = false)
     {
         lock (_gate)
         {
-            if (_held && !ReleaseHold())
+            if (_held && !ReleaseHold(patient))
                 return false;
             try
             {

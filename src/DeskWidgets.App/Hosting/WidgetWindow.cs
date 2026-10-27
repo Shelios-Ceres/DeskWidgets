@@ -449,9 +449,8 @@ internal sealed partial class WidgetWindow : Window, IWidgetSite
     private void SavePosition()
     {
         var position = AppWindow.Position;
-        Placement.X = position.X;
-        Placement.Y = position.Y;
-        _host.RequestSave();
+        if (Placement.MoveTo(position.X, position.Y)) // a re-snap that left the card where it was has nothing to save
+            _host.RequestSave();
     }
 
     private void OnRightTapped(object sender, RightTappedRoutedEventArgs e)
@@ -549,6 +548,7 @@ internal sealed partial class WidgetWindow : Window, IWidgetSite
         FinishMorph(); // a size change still running ends at its own size first
         var old = WidgetLayout.GetCardPixels(Placement.Size, _theme, _scale);
         Placement.Size = size;
+        _host.RequestSave(); // the new size is saved, and the icon arranger told, even if the card stays where it is
         if (_theme == WidgetTheme.Glass && MotionSettings.Enabled)
         {
             MorphTo(size, old);

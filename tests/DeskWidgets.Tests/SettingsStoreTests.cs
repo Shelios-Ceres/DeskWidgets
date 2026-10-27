@@ -156,6 +156,48 @@ public class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void AMissingFile_WithBackupsBesideIt_IsPutBack_AndSaysSo()
+    {
+        var store = Store();
+        Add(store, "clock");
+        Add(store, "battery");
+        store.Save();
+        store.StartSession(); // a snapshot with two widgets
+        File.Delete(SettingsFile); // a cleaner, or a hand, removed it
+        _now = _now.AddDays(1);
+
+        var restored = Store();
+
+        Assert.Equal(SettingsRecoveryKind.Missing, restored.Recovery.Kind);
+        Assert.Equal(2, restored.Current.Widgets.Count);
+        Assert.Null(restored.Recovery.BadFile);
+        Assert.True(File.Exists(SettingsFile)); // put back on disk too
+        Assert.Equal(SettingsRecoveryKind.None, Store().Recovery.Kind);
+    }
+
+    [Fact]
+    public void Peek_ReadsTheSettings_WithoutChangingAnyFile()
+    {
+        var store = Store();
+        Add(store, "clock");
+        store.Save();
+        store.StartSession(); // a snapshot with one widget
+        const string Damaged = "{ \"Widgets\": [ { \"Type\": \"clo";
+        File.WriteAllText(SettingsFile, Damaged); // damaged while the app runs
+        var before = Directory.GetFiles(_folder, "*", SearchOption.AllDirectories).Order().ToList();
+
+        var peeked = SettingsStore.Peek(_folder);
+
+        Assert.Single(peeked.Widgets); // the newest snapshot that reads
+        Assert.Equal(before, Directory.GetFiles(_folder, "*", SearchOption.AllDirectories).Order().ToList()); // no bad file kept, nothing put back
+        Assert.Equal(Damaged, File.ReadAllText(SettingsFile));
+
+        string nowhere = Path.Combine(_folder, "nowhere");
+        Assert.Empty(SettingsStore.Peek(nowhere).Widgets);
+        Assert.False(Directory.Exists(nowhere));
+    }
+
+    [Fact]
     public void ANormalStart_AndAFirstRun_NeedNoNotice()
     {
         Assert.Equal(SettingsRecoveryKind.None, Store().Recovery.Kind); // no file yet
@@ -270,5 +312,44 @@ public class SettingsStoreTests : IDisposable
         string kept = Assert.Single(Directory.GetFiles(_folder, "settings.kept-*.json"));
         Assert.Equal(original, File.ReadAllText(kept));
         Assert.Equal(2, Store().Current.Widgets.Count);
+    }
+
+    [Fact]
+    public void AHeldSave_TriesOnce_SoTheUiThreadNeverWaits_ButTheLastSaveIsPatient()
+    {
+        var first = Store();
+        Add(first, "clock");
+        first.Save();
+        first.StartSession(); // a snapshot with one widget
+        _now = _now.AddMinutes(1);
+
+        var gate = new FileStream(SettingsFile, FileMode.Open, FileAccess.Read, FileShare.None);
+        var held = Store(Waits(2, 10));
+        Assert.Equal(SettingsRecoveryKind.Held, held.Recovery.Kind);
+        Add(held, "folder");
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(held.Save()); // the save timer's tick, on the UI thread
+        Assert.True(clock.ElapsedMilliseconds < 150, $"an ordinary held save waited {clock.ElapsedMilliseconds} ms"); // it used to sleep 400 ms
+
+        // The last save (exit, sign-out) still waits a moment for a lock that is about to go.
+        _ = Task.Run(() =>
+        {
+            Thread.Sleep(150);
+            gate.Dispose();
+        });
+        Assert.True(held.Save(patient: true));
+        Assert.Equal(2, Store().Current.Widgets.Count);
+    }
+
+    // ----- a placement -----
+
+    [Fact]
+    public void ACardThatStaysWhereItIs_HasNothingToSave()
+    {
+        var placement = new WidgetPlacement { X = 120, Y = 40 };
+        Assert.False(placement.MoveTo(120, 40)); // a re-snap after a display change that moved nothing
+        Assert.True(placement.MoveTo(240, 40));
+        Assert.Equal((240, 40), (placement.X, placement.Y));
     }
 }

@@ -228,9 +228,9 @@ internal sealed partial class FolderWidget : UserControl, IWidget, IPointerWidge
 
     public void DropHintSnap() => _view.ShowDropHint(null, snap: true);
 
-    public string? DropItems(IReadOnlyList<Dropped> items, DropKeys keys)
+    public string? DropItems(IReadOnlyList<Dropped> items, DropKeys keys, DropEffect allowed)
     {
-        string? error = FolderActions.ExecuteDrop(Model, _policy, items, keys, OwnerHandle);
+        string? error = FolderActions.ExecuteDrop(Model, _policy, items, keys, allowed, OwnerHandle);
         Report(error);
         return error;
     }

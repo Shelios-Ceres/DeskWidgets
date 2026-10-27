@@ -214,6 +214,35 @@ public class FolderDropPolicyTests
     }
 
     [Fact]
+    public void AMoveTheSourceDoesNotOffer_BecomesACopy_OrAShortcut()
+    {
+        var policy = Policy();
+        const DropEffect All = DropEffect.Copy | DropEffect.Move | DropEffect.Link;
+        var move = policy.Decide(File(@"D:\src\a.txt"), DropKeys.None, Folder); // the same drive: the table says move
+        Assert.Equal(DropEffect.Move, move.Effect);
+
+        Assert.Same(move, DropPolicy.Allow(move, All));
+        // An app handing out a file from its own store offers copy only: the file is copied, and the app keeps its own.
+        Assert.Equal(DropEffect.Copy, DropPolicy.Allow(move, DropEffect.Copy).Effect);
+        Assert.Equal(DropEffect.Copy, DropPolicy.Allow(move, DropEffect.Copy | DropEffect.Link).Effect);
+        Assert.Equal(DropEffect.Link, DropPolicy.Allow(move, DropEffect.Link).Effect);
+        // Shift, or the desktop rule, asks for a move; the source still has the last word.
+        Assert.Equal(DropEffect.Copy, DropPolicy.Allow(policy.Decide(File(@"D:\src\a.txt"), Shift, Folder), DropEffect.Copy).Effect);
+        Assert.Equal(DropEffect.Copy, DropPolicy.Allow(policy.Decide(File(@"C:\Users\asus\Desktop\b.txt"), DropKeys.None, Folder), DropEffect.Copy).Effect);
+
+        // Copies and shortcuts leave the source as it is, and stay what the table says.
+        var copy = policy.Decide(File(@"D:\src\a.txt"), Ctrl, Folder);
+        var link = policy.Decide(File(@"D:\src\a.exe"), DropKeys.None, Folder);
+        Assert.Same(copy, DropPolicy.Allow(copy, DropEffect.Link));
+        Assert.Same(link, DropPolicy.Allow(link, DropEffect.Copy));
+
+        // The label and the cursor then say what will happen.
+        var allowed = DropPolicy.Allow(move, DropEffect.Copy | DropEffect.Link);
+        Assert.Equal(DropVerb.Copy, DropPolicy.Summarize([allowed]));
+        Assert.Equal(DropEffect.Copy, DropPolicy.CursorEffect([allowed], DropEffect.Copy | DropEffect.Link));
+    }
+
+    [Fact]
     public void ThePortableExe_IsTheOneNamedLikeTheFolder_ElseTheBiggest_AndNeverAnUninstaller()
     {
         string root = Path.Combine(Path.GetTempPath(), "bigfolder-test-" + Guid.NewGuid().ToString("N"));

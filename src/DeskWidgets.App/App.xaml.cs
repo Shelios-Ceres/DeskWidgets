@@ -151,10 +151,10 @@ public partial class App : Application
 
     private static bool Has(string[] commandLine, string flag) => commandLine.Any(a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>The saved widgets' cards in screen pixels (the widgets themselves may belong to the running instance).</summary>
+    /// <summary>The saved widgets' cards in screen pixels (the widgets themselves may belong to the running instance). Reads the settings without changing them.</summary>
     private static List<Win32.RECT> SavedCards()
     {
-        var settings = new SettingsStore().Current;
+        var settings = SettingsStore.Peek(DataRoot.Path);
         return settings.Widgets.Select(widget =>
         {
             double scale = Win32.GetScaleAt(new Win32.POINT { X = widget.X + 1, Y = widget.Y + 1 });

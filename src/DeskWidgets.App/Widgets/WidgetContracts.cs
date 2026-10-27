@@ -142,8 +142,8 @@ internal interface IDropWidget
     /// <summary>The card shows the tint and the label for what the drop would do; null hides them.</summary>
     void ShowDropHint(Folder.DropVerb? verb);
 
-    /// <summary>Carries the drop out (after the source has been released). Returns an error text, or null.</summary>
-    string? DropItems(IReadOnlyList<Folder.Dropped> items, Folder.DropKeys keys);
+    /// <summary>Carries the drop out (after the source has been released) within what the source <paramref name="allowed"/>. Returns an error text, or null.</summary>
+    string? DropItems(IReadOnlyList<Folder.Dropped> items, Folder.DropKeys keys, Folder.DropEffect allowed);
 }
 
 /// <summary>Describes a widget type and creates instances of it. Register factories in <see cref="WidgetCatalog"/>.</summary>
