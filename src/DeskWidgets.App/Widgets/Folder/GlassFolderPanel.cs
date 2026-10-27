@@ -1185,7 +1185,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
         name.HorizontalAlignment = HorizontalAlignment.Center;
         foreach (string line in second.Length == 0 ? [first] : new[] { first, second })
         {
-            var block = new TextBlock { Text = line, FontFamily = TextFont, FontSize = 11, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextAlignment = TextAlignment.Center, Foreground = item.TargetMissing ? palette.Secondary : palette.Primary };
+            var block = new TextBlock { Text = line, FontFamily = TextFont, FontSize = 11, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextAlignment = TextAlignment.Center, Foreground = item.TargetMissing ? palette.Inactive : palette.Primary };
             UIElement lineElement = block;
             if (selected)
             {

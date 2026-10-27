@@ -158,7 +158,7 @@ Font sizes (current values; new widgets pick the nearest):
 | Body (name, time, medium-size charge) | Text | 11–15 |
 | Secondary information (date, state, time difference) | Text | 11–12, secondary color |
 
-**Known trade-off**: the glass is very thin, so on a very dark wallpaper the contrast of light mode's dark text drops (and the other way round). The direction for improvement (not implemented yet): pick the text color from the brightness behind the card, instead of thickening the tint.
+**Known trade-off**: the glass is very thin, so on a very dark wallpaper the contrast of light mode's dark text drops (and the other way round). Since 2026-10-27 all text is solid, black in light mode and white in dark mode (only absent things stay dimmed: Inactive in section 8), the most a 24% tint allows: on the user's dark navy wallpaper the world clock's time and date went from about 1.5:1 to about 3.5:1. The direction for further improvement (not implemented yet): pick the text color from the brightness behind the card, instead of thickening the tint.
 
 **Large cards** (344 × 364, 2026-10-22): the 20 new DIP go to rows and air only, with no new content and no font changes. Battery: padding 16 top and bottom, row spacing 8, so six 48 rows end at y 344. World clock: padding 14, four rows of 84, dial 60 (with numerals, like the Medium's; it had ticks at 56). Big Folder: rows 80, so four rows from y 34 end at 354.
 
@@ -318,8 +318,9 @@ Added 2026-10-13.
 
 | Role | Used for | Glass (light / dark) | Pixel (light / dark) |
 |---|---|---|---|
-| Primary text (Primary / Ink) | Names, values | `#1C1C1E` / `#FFFFFF` | `#1A1C2C` / `#F4F4F4` |
-| Secondary text (Secondary / Soft) | State, time, date, time difference | `#3C3C43` 60% / `#EBEBF5` 60% | `#566C86` / `#94B0C2` |
+| Primary text (Primary / Ink) | Names, values | `#000000` / `#FFFFFF` | `#1A1C2C` / `#F4F4F4` |
+| Secondary text (Secondary / Soft) | State, time, date, time difference | Solid like Primary since 2026-10-27: `#000000` / `#FFFFFF` (was `#3C3C43` 60% / `#EBEBF5` 60%) | `#566C86` / `#94B0C2` |
+| Inactive | Something absent: a disconnected device, an unknown level, an app whose target is gone | `#3C3C43` 60% / `#EBEBF5` 60% | `#566C86` / `#94B0C2` (Soft) |
 | Faint | Tick marks, separators; not for body text | Dial minor ticks: the dial's ink at 45% | `#94B0C2` / `#566C86` |
 | Track | Empty groove of the battery ring and bar | Black 14% / white 24% | `#D5DFE6` / `#333C57` |
 | Placeholder / Well | Empty device slot, recessed groove | Black 8% / white 12% | `#E3E9ED` / `#131423` |
@@ -412,6 +413,7 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-21 | Ordinary items taken from the Desktop or the Public Desktop always move into a Big Folder, even across drives (Ctrl copies, Alt makes a shortcut); programs keep their rules, and items from anywhere else keep Explorer's. New Big Folders are made in the user's chosen default location (the `FolderRoot` setting, picked from the card's menu), else as before |
 | 2026-10-22 | Every Large card is 344×364 DIP (Pixel 172×182), so a Big Folder beside two stacked Mediums has level edges, and the Pixel Big Folder Large card shows names on two lines, as in the panel. Snapping stays on; with it off, cards keep 16 DIP gaps |
 | 2026-10-22 | Motion in both themes: Glass with the vocabulary of 4.1, Pixel as stepped frames of 40 ms with the vocabulary of 4.2 (no alpha, whole art pixels); the same moments in both (the Big Folder's panel, drag feedback and items, hover and press, search and sort first); with Windows' "Animation effects" off everything snaps, and input never waits |
+| 2026-10-27 | Glass text is solid: black in light mode, white in dark mode, for names and secondary text alike (time, date, device names); only absent things (a disconnected device, an unknown level, a missing app) stay dimmed |
 
 ---
 
@@ -439,3 +441,4 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-24 | All | Big Folder: a "Show more options" row ends the item menu and opens Windows' own context menu (it keeps the system's look in both themes; Pixel has no icon on it); search finds Chinese names by pinyin initials or syllables; 2.3, 4.1 and 4.2 changed | The user, 2026-10-24: "做第一档的三项+5" |
 | 2026-10-22 | All | Motion, the rest (Phase 12, Build B): Pixel menus, submenus and dialogs GROW and SHRINK and their rows WIPE; the battery's gauge STEPs and its bolt POPs (Glass: the bolt fades); a size change morphs the Glass card's outline and DISSOLVEs the Pixel card's content in; a light/dark change blends Glass's tint and DISSOLVEs Pixel's card; a theme switch fades or dissolves the new cards in; a widget added or removed fades and scales (Glass) or GROWs and SHRINKs (Pixel); 3, 4.1 and 4.2 changed | The user: "add some motion, in both themes"; both previews approved 2026-10-22 |
 | 2026-10-22 | All | Added motion (Phase 12), Big Folder first: the panel opens and closes (Glass fades and travels 8 DIP, Pixel GROWs and SHRINKs), items enter, leave and slide, a drag over the card fades or steps in, hover and press react, search and sort move the cells; 2.8, 3, 4.1, 4.2 and Appendix B changed; Pixel hover now lifts a cell's content 1 px | The user: "add some motion, in both themes"; both previews approved 2026-10-22 |
+| 2026-10-27 | Glass | Text is solid: Primary `#1C1C1E` → `#000000` in light mode, Secondary `#3C3C43` 60% / `#EBEBF5` 60% → `#000000` / `#FFFFFF`; the old Secondary values become the new role Inactive (a disconnected device's icon, an unknown level's dash, a missing app's name); 4.1, 8 and Appendix B changed | The user, with a screenshot on a dark navy wallpaper: the world clock's times and the battery's device names were hard to read; "浅色下能不能把字体变成黑色，深色下用白色" |

@@ -359,7 +359,7 @@ internal sealed class BatteryWidget : UserControl, IWidget
             FontFamily = font,
             FontSize = fontSize,
             FontWeight = FontWeights.SemiBold,
-            Foreground = known ? palette.Primary : palette.Secondary,
+            Foreground = known ? palette.Primary : palette.Inactive,
         });
         bool charging = known && device.IsCharging;
         _charged.TryGetValue(device.Id, out bool was);

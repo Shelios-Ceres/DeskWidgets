@@ -6,6 +6,9 @@ namespace DeskWidgets.Tests;
 /// Pins the Glass colour roles to the literals the clock and battery widgets
 /// carried before they shared one palette (docs/THEMES.md section 8), so that
 /// moving the colours into <see cref="GlassColors"/> changed nothing visible.
+/// The one deliberate change since: Primary and Secondary text became solid
+/// black (light) and white (dark) on 2026-10-27, and the old Secondary lives
+/// on as Inactive.
 /// </summary>
 public class GlassColorsTests
 {
@@ -14,8 +17,9 @@ public class GlassColorsTests
     {
         var c = GlassColors.Light;
 
-        Assert.Equal(0xFF1C1C1Eu, c.Primary);     // clock time, world clock names, battery numbers
-        Assert.Equal(0x993C3C43u, c.Secondary);   // clock date, world clock time and date, battery names
+        Assert.Equal(0xFF000000u, c.Primary);     // clock time, world clock names, battery numbers: solid black since 2026-10-27
+        Assert.Equal(0xFF000000u, c.Secondary);   // clock date, world clock time and date, battery names: solid black since 2026-10-27
+        Assert.Equal(0x993C3C43u, c.Inactive);    // the old Secondary: a disconnected device, an unknown level, a missing app
         Assert.Equal(0x24000000u, c.Track);
         Assert.Equal(0x14000000u, c.Placeholder);
         Assert.Equal(0xFF34C759u, c.Green);
@@ -38,7 +42,8 @@ public class GlassColorsTests
         var c = GlassColors.Dark;
 
         Assert.Equal(0xFFFFFFFFu, c.Primary);
-        Assert.Equal(0x99EBEBF5u, c.Secondary);
+        Assert.Equal(0xFFFFFFFFu, c.Secondary);   // solid white since 2026-10-27
+        Assert.Equal(0x99EBEBF5u, c.Inactive);
         Assert.Equal(0x3DFFFFFFu, c.Track);
         Assert.Equal(0x1FFFFFFFu, c.Placeholder);
         Assert.Equal(0xFF30D158u, c.Green);

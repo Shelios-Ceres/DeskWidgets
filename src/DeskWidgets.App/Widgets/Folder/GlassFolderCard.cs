@@ -580,7 +580,7 @@ internal sealed class GlassFolderCard : Canvas, IFolderCardView
                 name.Text = shown;
                 shortened = shown != item.DisplayName;
             }
-            name.Foreground = item.TargetMissing ? palette.Secondary : palette.Primary;
+            name.Foreground = item.TargetMissing ? palette.Inactive : palette.Primary;
             AutomationProperties.SetName(name, item.DisplayName);
             if (shortened)
             {

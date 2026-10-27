@@ -97,7 +97,7 @@ internal sealed class BatteryRing : Grid
         _track.Stroke = palette.Track;
         _arc.Stroke = level;
         _glyph.Glyph = DeviceGlyphs.For(device);
-        _glyph.Foreground = device.IsConnected ? palette.Primary : palette.Secondary;
+        _glyph.Foreground = device.IsConnected ? palette.Primary : palette.Inactive;
         _badge.Background = level;
         _badgeGlyph.Foreground = palette.OnAccent;
         SetBadge(chargingBadge && known && device.IsCharging);

@@ -16,8 +16,11 @@ internal sealed record GlassColors
     /// <summary>Names, values, big numbers.</summary>
     public required uint Primary { get; init; }
 
-    /// <summary>State, time, date, time difference.</summary>
+    /// <summary>State, time, date, time difference. Solid ink like <see cref="Primary"/> (the user, 2026-10-27): on the thin glass a dimmer colour couldn't be read over a dark wallpaper.</summary>
     public required uint Secondary { get; init; }
+
+    /// <summary>Something that isn't there: a disconnected device, an unknown level, an app whose target is gone.</summary>
+    public required uint Inactive { get; init; }
 
     /// <summary>Empty groove of a battery ring.</summary>
     public required uint Track { get; init; }
@@ -78,8 +81,9 @@ internal sealed record GlassColors
 
     public static readonly GlassColors Light = new()
     {
-        Primary = 0xFF1C1C1E,
-        Secondary = 0x993C3C43,
+        Primary = 0xFF000000,
+        Secondary = 0xFF000000,
+        Inactive = 0x993C3C43,
         Track = 0x24000000,
         Placeholder = 0x14000000,
         Green = 0xFF34C759,
@@ -105,7 +109,8 @@ internal sealed record GlassColors
     public static readonly GlassColors Dark = new()
     {
         Primary = 0xFFFFFFFF,
-        Secondary = 0x99EBEBF5,
+        Secondary = 0xFFFFFFFF,
+        Inactive = 0x99EBEBF5,
         Track = 0x3DFFFFFF,
         Placeholder = 0x1FFFFFFF,
         Green = 0xFF30D158,
@@ -142,6 +147,7 @@ internal sealed class GlassPalette
     {
         Primary = Brush(colors.Primary);
         Secondary = Brush(colors.Secondary);
+        Inactive = Brush(colors.Inactive);
         Track = Brush(colors.Track);
         Placeholder = Brush(colors.Placeholder);
         Green = Brush(colors.Green);
@@ -167,6 +173,8 @@ internal sealed class GlassPalette
     public SolidColorBrush Primary { get; }
 
     public SolidColorBrush Secondary { get; }
+
+    public SolidColorBrush Inactive { get; }
 
     public SolidColorBrush Track { get; }
 
