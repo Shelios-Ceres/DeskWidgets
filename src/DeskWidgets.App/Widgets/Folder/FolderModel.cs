@@ -10,8 +10,11 @@ namespace DeskWidgets.Widgets.Folder;
 /// </summary>
 internal sealed class FolderModel : IDisposable
 {
-    /// <summary>How often a missing folder is looked for, and how soon a folder that could not be read is read again.</summary>
+    /// <summary>How often a missing folder is looked for.</summary>
     private static readonly TimeSpan MissingPoll = TimeSpan.FromSeconds(3);
+
+    /// <summary>How soon a folder that could not be read is read again: 3 s, then 30 s, then every 5 minutes while it keeps failing.</summary>
+    private static readonly TimeSpan[] RetryDelays = [TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5)];
 
     private readonly Action<Action> _toUi;
     private readonly Action _persist;
@@ -21,6 +24,7 @@ internal sealed class FolderModel : IDisposable
     private FolderWatcher? _watcher;
     private Timer? _missingPoll;
     private Timer? _retry;
+    private int _failedReads;
     private bool _scanning;
     private bool _again;
     private bool _disposed;
@@ -65,6 +69,12 @@ internal sealed class FolderModel : IDisposable
 
     public event Action? Changed;
 
+    /// <summary>Reads in a row that failed although the folder is there; 0 once it reads again. UI thread.</summary>
+    internal int FailedReads => _failedReads;
+
+    /// <summary>The wait before the next read after <paramref name="failedReads"/> failed ones in a row.</summary>
+    internal static TimeSpan RetryDelay(int failedReads) => RetryDelays[Math.Clamp(failedReads, 1, RetryDelays.Length) - 1];
+
     public void Start()
     {
         Rescan();
@@ -90,6 +100,7 @@ internal sealed class FolderModel : IDisposable
         {
             bool exists = false;
             List<FolderItem>? items = null; // stays null when the folder is there but could not be read
+            Exception? error = null;
             try
             {
                 exists = Directory.Exists(path);
@@ -97,15 +108,16 @@ internal sealed class FolderModel : IDisposable
             }
             catch (Exception ex)
             {
-                Log.Warn("Scanning a Big Folder failed; the card keeps what it showed and reads the folder again shortly", ex);
+                error = ex; // logged by NoteRead, once per run of failures
                 exists = Directory.Exists(path);
             }
-            _toUi(() => Apply(path, exists, items));
+            _toUi(() => Apply(path, exists, items, error));
         });
     }
 
     /// <param name="items">What the scan found; null when the folder exists but could not be read this time.</param>
-    private void Apply(string scannedPath, bool exists, List<FolderItem>? items)
+    /// <param name="error">Why the read failed, when it did.</param>
+    private void Apply(string scannedPath, bool exists, List<FolderItem>? items, Exception? error)
     {
         bool again;
         lock (_gate)
@@ -135,7 +147,8 @@ internal sealed class FolderModel : IDisposable
                     Origins.Save(_originPath);
             }
             // Otherwise the read failed (a network blip, a lock), which is not an empty folder: the items, the order and the origins stay.
-            Watch(exists, readFailed: exists && items is null);
+            Watch(exists);
+            NoteRead(failed: exists && items is null, error);
             Changed?.Invoke();
         }
         if (again || scannedPath != Path)
@@ -157,7 +170,7 @@ internal sealed class FolderModel : IDisposable
         }
     }
 
-    private void Watch(bool exists, bool readFailed)
+    private void Watch(bool exists)
     {
         if (exists && _watcher is null)
         {
@@ -179,8 +192,33 @@ internal sealed class FolderModel : IDisposable
             _watcher = null;
             _missingPoll ??= new Timer(_ => Rescan(), null, MissingPoll, MissingPoll);
         }
-        if (readFailed) // the watcher only hears of changes, and a folder that failed to read may not change
-            (_retry ??= new Timer(_ => Rescan())).Change(MissingPoll, Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>
+    /// Counts the reads that failed in a row and schedules the next one, waiting longer each time (the watcher only hears of changes, and
+    /// a folder that failed to read may not change). Only the first failure of a run is logged, and the recovery: a folder that stays
+    /// unreadable (access denied, a share that answers but won't list) would otherwise add a line every few seconds and push the log's
+    /// history out.
+    /// </summary>
+    private void NoteRead(bool failed, Exception? error)
+    {
+        if (failed)
+        {
+            _failedReads++;
+            if (_failedReads == 1)
+                Log.Warn("Reading a Big Folder failed; the card keeps what it showed and reads the folder again after 3 s, 30 s, then every 5 minutes", error);
+            (_retry ??= new Timer(_ => Rescan())).Change(RetryDelay(_failedReads), Timeout.InfiniteTimeSpan);
+            return;
+        }
+        if (_failedReads > 0 && Exists)
+            Log.Info($"A Big Folder could be read again after {_failedReads} failed {(_failedReads == 1 ? "try" : "tries")}");
+        StopRetrying();
+    }
+
+    private void StopRetrying()
+    {
+        _failedReads = 0;
+        _retry?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>Points the card at another folder (or the same one renamed).</summary>
@@ -188,6 +226,7 @@ internal sealed class FolderModel : IDisposable
     {
         _watcher?.Dispose();
         _watcher = null;
+        StopRetrying(); // the old folder's failures say nothing about the new one
         Path = path;
         _originPath = OriginLog.PathFor(path);
         Origins = OriginLog.Load(_originPath);

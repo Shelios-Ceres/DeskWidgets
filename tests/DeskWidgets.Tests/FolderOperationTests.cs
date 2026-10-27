@@ -87,6 +87,36 @@ public class FolderOperationTests : IDisposable
     }
 
     [Fact]
+    public void ReadsThatKeepFailing_AreCounted_UntilOneWorks()
+    {
+        bool fail = false;
+        using var model = Model(() => fail ? throw new UnauthorizedAccessException("access denied") : [Item("a.txt")], () => { });
+        AndWait(model, model.Start);
+        Assert.Equal(0, model.FailedReads);
+
+        fail = true;
+        AndWait(model, model.Rescan);
+        AndWait(model, model.Rescan);
+        AndWait(model, model.Rescan);
+        Assert.Equal(3, model.FailedReads); // one line in the log for the whole run, and the next read in 5 minutes
+        Assert.Equal(["a.txt"], Names(model.Items));
+
+        fail = false;
+        AndWait(model, model.Rescan);
+        Assert.Equal(0, model.FailedReads);
+        Assert.Equal(["a.txt"], Names(model.Items));
+    }
+
+    [Fact]
+    public void TheWaitBeforeTheNextRead_GrowsFrom3SecondsTo5Minutes()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(3), FolderModel.RetryDelay(1));
+        Assert.Equal(TimeSpan.FromSeconds(30), FolderModel.RetryDelay(2));
+        Assert.Equal(TimeSpan.FromMinutes(5), FolderModel.RetryDelay(3));
+        Assert.Equal(TimeSpan.FromMinutes(5), FolderModel.RetryDelay(40));
+    }
+
+    [Fact]
     public void AMissingFolder_KeepsItsOriginsAndManualOrder_ForWhenItComesBack()
     {
         SeedOrigins("a.txt", "b.txt");
