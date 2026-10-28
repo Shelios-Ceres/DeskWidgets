@@ -11,6 +11,9 @@ internal sealed class PixelFolderIcons
 {
     private static readonly int[,] Bayer4 = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
 
+    /// <summary>As many as the icon service keeps: every picture it still holds can have its pixel version here.</summary>
+    private const int MaxCached = 400;
+
     private readonly Action _repaint;
     private readonly Dictionary<(string Key, IconImage? Image), PixelCanvas> _cache = [];
 
@@ -33,7 +36,7 @@ internal sealed class PixelFolderIcons
                 if (image is not null)
                 {
                     if (!_cache.TryGetValue((item.Path, image), out var tier2))
-                        _cache[(item.Path, image)] = tier2 = app ? AppOnGrid(image.Pixels) : Photo(image.Pixels, kind == FolderItemKind.Video);
+                        tier2 = BoundedCache.Put(_cache, (item.Path, image), app ? AppOnGrid(image.Pixels) : Photo(image.Pixels, kind == FolderItemKind.Video), MaxCached);
                     return tier2;
                 }
             }

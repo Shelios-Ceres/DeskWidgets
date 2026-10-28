@@ -18,7 +18,8 @@ internal sealed class OriginLog
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     private readonly Dictionary<string, OriginEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
-    private readonly object _gate = new(); // guards _entries
+    private readonly object _gate = new(); // guards _entries and _version
+    private long _version;
 
     public sealed record OriginEntry(
         [property: JsonPropertyName("origin")] string? Origin,
@@ -33,11 +34,24 @@ internal sealed class OriginLog
         }
     }
 
+    /// <summary>Goes up with every entry recorded or renamed, so a scan that began earlier can tell that its list of items is out of date.</summary>
+    public long Version
+    {
+        get
+        {
+            lock (_gate)
+                return _version;
+        }
+    }
+
     /// <summary>Notes that <paramref name="name"/> was added, from <paramref name="origin"/> (null when it was created here).</summary>
     public void Record(string name, string? origin, DateTime addedUtc)
     {
         lock (_gate)
+        {
             _entries[name] = new OriginEntry(origin, addedUtc);
+            _version++;
+        }
     }
 
     public OriginEntry? Get(string name)
@@ -63,7 +77,10 @@ internal sealed class OriginLog
         lock (_gate)
         {
             if (_entries.Remove(oldName, out var entry))
+            {
                 _entries[newName] = entry;
+                _version++;
+            }
         }
     }
 

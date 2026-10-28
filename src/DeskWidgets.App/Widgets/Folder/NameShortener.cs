@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 
 namespace DeskWidgets.Widgets.Folder;
 
@@ -177,7 +178,9 @@ internal static class NameShortener
     /// <summary>Han, kana, hangul and the full-width forms: text that breaks between any two characters.</summary>
     public static bool IsCjk(string element)
     {
-        int codePoint = char.ConvertToUtf32(element, 0);
+        if (!Rune.TryGetRuneAt(element, 0, out var rune))
+            return false; // a lone surrogate (NTFS names may hold one)
+        int codePoint = rune.Value;
         return codePoint is >= 0x2E80 and <= 0x9FFF
             or >= 0xAC00 and <= 0xD7AF
             or >= 0xF900 and <= 0xFAFF

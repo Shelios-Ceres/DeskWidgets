@@ -78,6 +78,60 @@ public class TextServiceTests
     }
 
     [Fact]
+    public void InsertTextAtSelection_TakesTheNullPointersTsfMayPass()
+    {
+        var f = new Fixture("report", selectAll: true);
+        f.Locked(() =>
+        {
+            nint text = Fixture.Pin("你好", out var handle);
+            try
+            {
+                // TS_IAS_NOQUERY: no range and no change record wanted, so all three pointers are null. This used to write through them.
+                Assert.Equal(0, f.Store.InsertTextAtSelection(0x1, text, 2, 0, 0, 0));
+            }
+            finally
+            {
+                handle.Free();
+            }
+        });
+        Assert.Equal("你好", f.Editor.Text);
+
+        // TS_IAS_QUERYONLY: the range only, and no TS_TEXTCHANGE.
+        nint range = System.Runtime.InteropServices.Marshal.AllocHGlobal(8);
+        try
+        {
+            f.Locked(() => Assert.Equal(0, f.Store.InsertTextAtSelection(0x2, 0, 0, range, range + 4, 0)), Read);
+            Assert.Equal((2, 2), (System.Runtime.InteropServices.Marshal.ReadInt32(range), System.Runtime.InteropServices.Marshal.ReadInt32(range + 4)));
+        }
+        finally
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(range);
+        }
+    }
+
+    [Fact]
+    public void AStoppingService_StillTakesTheImesLastEdit_ButNoLongerCallsTheWindow()
+    {
+        var f = new Fixture("re", selectAll: false);
+        int before = f.Changed;
+        f.Store.Quiet(); // the field is going away; the IME may finish a composition as the document is popped
+        f.Locked(() =>
+        {
+            nint text = Fixture.Pin("port", out var handle);
+            try
+            {
+                Assert.Equal(0, f.Store.InsertText(0, text, 4, out _, out _, out _));
+            }
+            finally
+            {
+                handle.Free();
+            }
+        });
+        Assert.Equal("report", f.Editor.Text);
+        Assert.Equal(before, f.Changed);
+    }
+
+    [Fact]
     public void InsertTextAtSelection_ReplacesTheSelection_AndTheEditorFollows()
     {
         var f = new Fixture("report", selectAll: true);
@@ -86,7 +140,7 @@ public class TextServiceTests
             nint text = Fixture.Pin("你好", out var handle);
             try
             {
-                Assert.Equal(0, f.Store.InsertTextAtSelection(0, text, 2, out int start, out int end, out var change));
+                Assert.Equal(0, f.Store.InsertText(0, text, 2, out int start, out int end, out var change));
                 Assert.Equal((0, 2), (start, end));
                 Assert.Equal((0, 6, 2), (change.acpStart, change.acpOldEnd, change.acpNewEnd));
             }
@@ -111,7 +165,7 @@ public class TextServiceTests
             nint text = Fixture.Pin("😀", out var handle);
             try
             {
-                Assert.Equal(0, f.Store.InsertTextAtSelection(0, text, 2, out _, out int end, out _));
+                Assert.Equal(0, f.Store.InsertText(0, text, 2, out _, out int end, out _));
                 Assert.Equal(4, end);
             }
             finally
@@ -173,8 +227,8 @@ public class TextServiceTests
         var f = new Fixture("abc");
         Assert.Equal(NoLock, f.Store.GetEndACP(out _));
         Assert.Equal(NoLock, f.Store.GetSelection(0, 1, 0, out _));
-        Assert.Equal(NoLock, f.Store.InsertTextAtSelection(0, 0, 0, out _, out _, out _));
-        f.Locked(() => Assert.Equal(NoLock, f.Store.InsertTextAtSelection(0, 0, 0, out _, out _, out _)), Read); // a read lock cannot write
+        Assert.Equal(NoLock, f.Store.InsertText(0, 0, 0, out _, out _, out _));
+        f.Locked(() => Assert.Equal(NoLock, f.Store.InsertText(0, 0, 0, out _, out _, out _)), Read); // a read lock cannot write
     }
 
     [Fact]

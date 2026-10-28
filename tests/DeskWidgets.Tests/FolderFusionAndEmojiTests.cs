@@ -148,6 +148,17 @@ public class FolderFusionAndEmojiTests
     // ----- emoji -----
 
     [Fact]
+    public void ALoneSurrogate_IsNoEmoji_AndDoesNotStopThePaint()
+    {
+        // A file name NTFS kept with an unpaired surrogate: Encode ran on every paint of the Pixel card and threw there.
+        Assert.False(PixelEmoji.IsEmojiCluster("\uD83D"));
+        string encoded = PixelEmoji.Encode("Notes \uD83D 🔥");
+        Assert.Contains('\uD83D', encoded);
+        Assert.True(PixelEmoji.IsEmoji(encoded[^1]));
+        Assert.StartsWith("NOTES", PixelFonts.Small.Normalize("Notes \uD83D"), StringComparison.OrdinalIgnoreCase); // the capitals font's normalizing no longer throws
+    }
+
+    [Fact]
     public void AnEmojiIsOneCharacter_WholeClustersAndNothingElse()
     {
         string encoded = PixelEmoji.Encode("🔥 Hot");

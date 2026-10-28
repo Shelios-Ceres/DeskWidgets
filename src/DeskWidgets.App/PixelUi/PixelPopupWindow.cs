@@ -36,7 +36,7 @@ internal abstract class PixelPopupWindow : IDisposable
 
     public int PixelHeight { get; private set; }
 
-    /// <summary>Screen position of the window's top-left corner, as last presented.</summary>
+    /// <summary>Screen position of the window's top-left corner, as last presented or moved (a borderless popup's client area is the whole window).</summary>
     public Win32.POINT Origin { get; private set; }
 
     public int Factor { get; protected set; } = 3;
@@ -80,7 +80,8 @@ internal abstract class PixelPopupWindow : IDisposable
     {
         Factor = factor;
         int width = canvas.Width * factor, height = canvas.Height * factor;
-        EnsureBitmap(width, height);
+        if (!EnsureBitmap(width, height))
+            return; // no bitmap (GDI handles exhausted): the window keeps its last picture rather than writing to address 0
         canvas.CopyScaled(_buffer, factor);
         Marshal.Copy(_buffer, 0, _bits, width * height * 4);
 
@@ -94,10 +95,10 @@ internal abstract class PixelPopupWindow : IDisposable
         PixelHeight = height;
     }
 
-    private void EnsureBitmap(int width, int height)
+    private bool EnsureBitmap(int width, int height)
     {
         if (_bitmap != 0 && _bitmapWidth == width && _bitmapHeight == height)
-            return;
+            return true;
         ReleaseBitmap();
         if (_dc == 0)
         {
@@ -114,10 +115,19 @@ internal abstract class PixelPopupWindow : IDisposable
             biBitCount = 32,
         };
         _bitmap = Native.CreateDIBSection(_dc, ref header, 0, out _bits, 0, 0);
+        if (_bitmap == 0 || _bits == 0)
+        {
+            if (_bitmap != 0)
+                Native.DeleteObject(_bitmap);
+            _bitmap = 0;
+            Core.Diagnostics.Log.Warn($"A pixel popup could not get a {width} x {height} bitmap (GDI handles exhausted?)");
+            return false;
+        }
         _oldBitmap = Native.SelectObject(_dc, _bitmap);
         _bitmapWidth = width;
         _bitmapHeight = height;
         _buffer = new byte[width * height * 4];
+        return true;
     }
 
     private void ReleaseBitmap()
@@ -140,9 +150,16 @@ internal abstract class PixelPopupWindow : IDisposable
         if (s_windows.TryGetValue(hwnd, out var window))
         {
             if (msg == Native.WM_NCDESTROY)
+            {
                 s_windows.Remove(hwnd);
+            }
             else
+            {
+                // Dragged by its title strip (or moved by anyone else): the hit tests go by Origin, so it follows the window.
+                if (msg == Native.WM_MOVE)
+                    window.Origin = new Win32.POINT { X = Native.SignedLow(lParam), Y = Native.SignedHigh(lParam) };
                 return window.OnMessage(msg, wParam, lParam);
+            }
         }
         return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
     }

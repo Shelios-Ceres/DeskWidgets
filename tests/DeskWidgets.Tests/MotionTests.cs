@@ -11,6 +11,23 @@ public class MotionTests
 {
     private static FolderItem Item(string name) => new() { Path = @"D:\Cards\" + name, DisplayName = name, Kind = FolderItemKind.Document, LabelName = name, AddedUtc = DateTime.UtcNow };
 
+    // ----- the frame clock -----
+
+    [Fact]
+    public void ATickThatThrows_IsStopped_AndTheOthersStillRun()
+    {
+        int clockTicks = 0;
+        var broken = new FrameClock.Ticket { Tick = _ => throw new InvalidOperationException("a scene that cannot draw"), IntervalMs = 40, Due = 0, Active = true };
+        var clock = new FrameClock.Ticket { Tick = _ => clockTicks++, IntervalMs = 1000, Due = 0, Active = true };
+
+        FrameClock.RunDue([broken, clock], now: 100); // this used to throw out of the tick, and the one shared timer was never armed again
+
+        Assert.False(broken.Active); // stopped, so it does not fail (and log) every frame
+        Assert.True(clock.Active);
+        Assert.Equal(1, clockTicks);
+        Assert.Equal(1000, clock.Due); // and it is due again on its own beat
+    }
+
     // ----- Bezier -----
 
     [Theory]

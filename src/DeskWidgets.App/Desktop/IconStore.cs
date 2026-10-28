@@ -31,13 +31,29 @@ internal static class IconStore
     public static IconLayoutSettings LoadLayout(bool save = true)
         => LoadLayout(LayoutPath, LegacyFolder, takeOver: !DataRoot.IsTestInstance, save);
 
+    /// <summary>
+    /// The layout, or null when desktop-icons.json is there but stays locked: then nothing may be saved over it yet. <paramref name="wait"/>
+    /// waits the lock out for a moment, which the UI thread must not do.
+    /// </summary>
+    public static IconLayoutSettings? TryLoadLayout(bool wait)
+        => TryLoadLayout(LayoutPath, LegacyFolder, takeOver: !DataRoot.IsTestInstance, save: true, wait ? ReadDelays : []);
+
     /// <param name="takeOver">Whether DesktopRightAlign's settings in <paramref name="legacyFolder"/> may be read when <paramref name="layoutPath"/> does not exist yet.</param>
     internal static IconLayoutSettings LoadLayout(string layoutPath, string legacyFolder, bool takeOver, bool save)
+    {
+        if (TryLoadLayout(layoutPath, legacyFolder, takeOver, save, ReadDelays) is { } layout)
+            return layout;
+        Log.Warn("desktop icons: the layout file stayed locked; starting a new one");
+        return new IconLayoutSettings();
+    }
+
+    /// <param name="waits">The waits between tries at reading our own file while it is locked.</param>
+    internal static IconLayoutSettings? TryLoadLayout(string layoutPath, string legacyFolder, bool takeOver, bool save, TimeSpan[] waits)
     {
         try
         {
             if (File.Exists(layoutPath))
-                return ReadOwn(layoutPath);
+                return ReadOwn(layoutPath, waits);
             string legacy = Path.Combine(legacyFolder, "settings.json");
             if (takeOver && File.Exists(legacy))
             {
@@ -49,6 +65,10 @@ internal static class IconStore
                 }
                 return layout;
             }
+        }
+        catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && File.Exists(layoutPath))
+        {
+            return null; // locked: the caller says so (the arranger retries every pass, and logs a run of failures once)
         }
         catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or UnauthorizedAccessException)
         {
@@ -74,9 +94,9 @@ internal static class IconStore
     /// Our own layout file, read again while it is locked for a moment. One that is there but does not parse is copied aside as
     /// desktop-icons.bad-&lt;time&gt;.json before it is given up: the arranger's first save replaces it, and the order it held would be gone.
     /// </summary>
-    private static IconLayoutSettings ReadOwn(string path)
+    private static IconLayoutSettings ReadOwn(string path, TimeSpan[] waits)
     {
-        string text = ReadWithRetries(path);
+        string text = ReadWithRetries(path, waits);
         try
         {
             return JsonSerializer.Deserialize<IconLayoutSettings>(text, JsonOptions) ?? throw new InvalidDataException($"{path} is empty");
@@ -88,7 +108,7 @@ internal static class IconStore
         }
     }
 
-    private static string ReadWithRetries(string path)
+    private static string ReadWithRetries(string path, TimeSpan[] waits)
     {
         for (int attempt = 0; ; attempt++)
         {
@@ -96,9 +116,9 @@ internal static class IconStore
             {
                 return File.ReadAllText(path);
             }
-            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < ReadDelays.Length)
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < waits.Length)
             {
-                Thread.Sleep(ReadDelays[attempt]);
+                Thread.Sleep(waits[attempt]);
             }
         }
     }

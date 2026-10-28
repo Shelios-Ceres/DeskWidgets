@@ -7,6 +7,17 @@ namespace DeskWidgets.Tests;
 
 public class FolderPanelTests
 {
+    [Fact]
+    public void TheGlassRenameBox_IsNotRemade_WhileTheUserTypesInIt()
+    {
+        const string Renaming = "Report.docx|True|False|True|False", Named = "Report.docx|True|False|False|False";
+        // An icon arriving or a rescan repaints every cell: the box that is up stays, so the typing is neither lost nor half-committed.
+        Assert.False(PanelRename.NameNeedsBuilding(renaming: true, boxShown: true, Renaming, Renaming));
+        Assert.True(PanelRename.NameNeedsBuilding(renaming: true, boxShown: false, Named, Renaming)); // the rename starts: the box is made
+        Assert.True(PanelRename.NameNeedsBuilding(renaming: false, boxShown: false, Renaming, Named)); // it ends: the name comes back
+        Assert.False(PanelRename.NameNeedsBuilding(renaming: false, boxShown: false, Named, Named));
+    }
+
     private static FolderItem Item(string name) => new()
     {
         Path = @"D:\Cards\Projects\" + name,

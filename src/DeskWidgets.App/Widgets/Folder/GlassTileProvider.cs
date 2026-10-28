@@ -97,9 +97,7 @@ internal sealed class GlassTileProvider
     {
         if (_bitmaps.TryGetValue((image, size, size, cover), out var cached))
             return cached;
-        if (_bitmaps.Count > 120)
-            _bitmaps.Clear();
         var bytes = cover ? PixelScaler.CoverToPremultiplied(image.Pixels, size) : PixelScaler.ToPremultiplied(image.Pixels, size, size);
-        return _bitmaps[(image, size, size, cover)] = GlassTiles.ToBitmap(bytes, size, size);
+        return BoundedCache.Put(_bitmaps, (image, size, size, cover), GlassTiles.ToBitmap(bytes, size, size), max: 121);
     }
 }

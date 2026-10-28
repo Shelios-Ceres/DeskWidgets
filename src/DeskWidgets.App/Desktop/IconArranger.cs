@@ -54,7 +54,8 @@ internal sealed class IconArranger : IDisposable
     private readonly Thread _thread;
     private readonly AutoResetEvent _wake = new(false);
     private readonly List<FileSystemWatcher> _watchers = [];
-    private readonly IconLayoutSettings _layout; // used on the arranger's thread only
+    private IconLayoutSettings _layout; // used on the arranger's thread only
+    private bool _layoutLoaded; // false while desktop-icons.json was locked at start: the arranger's thread reads it before anything saves
     private volatile IReadOnlyDictionary<string, Insets> _margins;
     private volatile Win32.RECT[] _blocked = [];
     private volatile bool _enabled;
@@ -73,7 +74,11 @@ internal sealed class IconArranger : IDisposable
     public IconArranger(bool enabled)
     {
         _enabled = enabled;
-        _layout = IconStore.LoadLayout();
+        var loaded = IconStore.TryLoadLayout(wait: false); // this is the UI thread: a locked file is waited for on the arranger's thread
+        _layoutLoaded = loaded is not null;
+        if (!_layoutLoaded)
+            Log.Warn("desktop icons: desktop-icons.json is locked; it is read again before anything is arranged or saved");
+        _layout = loaded ?? new IconLayoutSettings();
         _margins = new Dictionary<string, Insets>(_layout.Margins);
         WatchDesktopFolders();
         _thread = new Thread(Run) { IsBackground = true, Name = "Desktop icons" };
@@ -229,6 +234,14 @@ internal sealed class IconArranger : IDisposable
     {
         if (LegacyToolRunning())
             throw new InvalidOperationException(Strings.IconsLegacyToolRunning);
+        if (!_layoutLoaded)
+        {
+            // desktop-icons.json was locked when the app started; until it reads, nothing is arranged and nothing saved over it.
+            _layout = IconStore.TryLoadLayout(wait: true) ?? throw new IOException("desktop-icons.json is still locked");
+            _layoutLoaded = true;
+            _margins = new Dictionary<string, Insets>(_layout.Margins);
+            MarginsChanged?.Invoke();
+        }
         using var desktop = new ShellDesktop();
         var current = desktop.Capture();
         if (current.Items.Count == 0)
@@ -299,7 +312,7 @@ internal sealed class IconArranger : IDisposable
             _userDragged = false;
             return;
         }
-        bool down = (Win32.GetAsyncKeyState(0x01 /* VK_LBUTTON */) & 0x8000) != 0;
+        bool down = (Win32.GetAsyncKeyState(PrimaryButton(Win32.GetSystemMetrics(Win32.SM_SWAPBUTTON) != 0)) & 0x8000) != 0;
         if (!down && !_drag.Pressed)
             return;
         int x = 0, y = 0;
@@ -318,6 +331,12 @@ internal sealed class IconArranger : IDisposable
             _changed = true;
         }
     }
+
+    /// <summary>
+    /// The virtual key of the button that drags icons. GetAsyncKeyState reads the physical buttons, so with the buttons swapped (a
+    /// left-handed mouse) the primary one is VK_RBUTTON.
+    /// </summary>
+    internal static int PrimaryButton(bool swapped) => swapped ? 0x02 /* VK_RBUTTON */ : 0x01 /* VK_LBUTTON */;
 
     /// <summary>Never move an icon while the user drags something, has a menu open or is renaming an icon.</summary>
     private static bool UserIsInteracting()

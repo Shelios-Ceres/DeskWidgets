@@ -97,7 +97,9 @@ internal sealed class TextService : IDisposable
 
     public void Dispose()
     {
-        _store.Detach();
+        // The store keeps granting locks until the document is popped: popping ends a live composition, and the IME asks for a lock to
+        // finish it. Its edits no longer reach the field, which is going away.
+        _store.Quiet();
         try
         {
             if (_focusAssociated && _threadManager is not null)
@@ -126,6 +128,10 @@ internal sealed class TextService : IDisposable
         catch (Exception ex)
         {
             Log.Warn("Stopping the text service of a Pixel window failed", ex);
+        }
+        finally
+        {
+            _store.Detach();
         }
     }
 
@@ -211,9 +217,20 @@ internal sealed class TextService : IDisposable
 
         private LineEditor Editor => _editor();
 
+        private bool _quiet; // the service is stopping: the IME's last edits are taken but no longer told to the window
+
         public void Detach()
         {
             _sink = null;
+        }
+
+        /// <summary>The field is going away: keep answering the IME (it may finish a composition), without calling back into the window.</summary>
+        public void Quiet() => _quiet = true;
+
+        private void ChangedByService()
+        {
+            if (!_quiet)
+                _changedByService();
         }
 
         // The window's own edits: compare with what the IME last saw, tell it what changed.
@@ -380,7 +397,7 @@ internal sealed class TextService : IDisposable
             if (count == 0)
                 return SOk;
             Editor.SelectRange(Marshal.ReadInt32(selection, 0), Marshal.ReadInt32(selection, 4));
-            _changedByService();
+            ChangedByService();
             return SOk;
         }
 
@@ -452,7 +469,23 @@ internal sealed class TextService : IDisposable
             return ENotImpl;
         }
 
-        public int InsertTextAtSelection(uint flags, nint text, uint cch, out int start, out int end, out TS_TEXTCHANGE change)
+        /// <summary>
+        /// The COM method. TSF may pass null for pacpStart and pacpEnd (with TS_IAS_NOQUERY) and for pChange (with TS_IAS_QUERYONLY), so the
+        /// results are written only through the pointers it gave.
+        /// </summary>
+        public int InsertTextAtSelection(uint flags, nint text, uint cch, nint start, nint end, nint change)
+        {
+            int hr = InsertText(flags, text, cch, out int first, out int last, out var textChange);
+            if (start != 0)
+                Marshal.WriteInt32(start, first);
+            if (end != 0)
+                Marshal.WriteInt32(end, last);
+            if (change != 0)
+                Marshal.StructureToPtr(textChange, change, false);
+            return hr;
+        }
+
+        internal int InsertText(uint flags, nint text, uint cch, out int start, out int end, out TS_TEXTCHANGE change)
         {
             start = end = 0;
             change = default;
@@ -477,12 +510,7 @@ internal sealed class TextService : IDisposable
             return SOk;
         }
 
-        public int InsertEmbeddedAtSelection(uint flags, nint dataObject, out int start, out int end, out TS_TEXTCHANGE change)
-        {
-            start = end = 0;
-            change = default;
-            return ENotImpl;
-        }
+        public int InsertEmbeddedAtSelection(uint flags, nint dataObject, nint start, nint end, nint change) => ENotImpl; // the pointers may be null too
 
         public int RequestSupportedAttrs(uint flags, uint count, nint attributes) => SOk;
 
@@ -564,7 +592,7 @@ internal sealed class TextService : IDisposable
         private void Changed()
         {
             Remember(Editor);
-            _changedByService();
+            ChangedByService();
         }
     }
 
@@ -601,8 +629,8 @@ internal sealed class TextService : IDisposable
         [PreserveSig] int GetEmbedded(int position, ref Guid service, ref Guid riid, out nint punk);
         [PreserveSig] int QueryInsertEmbedded(nint service, nint formatEtc, out int insertable);
         [PreserveSig] int InsertEmbedded(uint flags, int start, int end, nint dataObject, out TS_TEXTCHANGE change);
-        [PreserveSig] int InsertTextAtSelection(uint flags, nint text, uint cch, out int start, out int end, out TS_TEXTCHANGE change);
-        [PreserveSig] int InsertEmbeddedAtSelection(uint flags, nint dataObject, out int start, out int end, out TS_TEXTCHANGE change);
+        [PreserveSig] int InsertTextAtSelection(uint flags, nint text, uint cch, nint start, nint end, nint change); // LONG*, LONG*, TS_TEXTCHANGE*, each may be null
+        [PreserveSig] int InsertEmbeddedAtSelection(uint flags, nint dataObject, nint start, nint end, nint change);
         [PreserveSig] int RequestSupportedAttrs(uint flags, uint count, nint attributes);
         [PreserveSig] int RequestAttrsAtPosition(int position, uint count, nint attributes, uint flags);
         [PreserveSig] int RequestAttrsTransitioningAtPosition(int position, uint count, nint attributes, uint flags);

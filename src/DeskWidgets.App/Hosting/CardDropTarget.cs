@@ -207,11 +207,14 @@ internal sealed class CardDropTarget : IDropTarget
 
     private static void SetDropDescription(IDataObject data, int imageType, string message, string insert)
     {
+        IntPtr handle = 0; // ours until SetData takes it
         try
         {
             const int Chars = 260;
-            IntPtr handle = GlobalAlloc(0x0042 /* GMEM_MOVEABLE | GMEM_ZEROINIT */, (UIntPtr)(4 + Chars * 2 * 2));
-            IntPtr ptr = ShellNative.GlobalLock(handle);
+            handle = GlobalAlloc(0x0042 /* GMEM_MOVEABLE | GMEM_ZEROINIT */, (UIntPtr)(4 + Chars * 2 * 2));
+            IntPtr ptr = handle == 0 ? 0 : ShellNative.GlobalLock(handle);
+            if (ptr == 0)
+                return;
             Marshal.WriteInt32(ptr, imageType);
             WriteUnicode(ptr + 4, message, Chars);
             WriteUnicode(ptr + 4 + Chars * 2, insert, Chars);
@@ -226,10 +229,16 @@ internal sealed class CardDropTarget : IDropTarget
             };
             var medium = new STGMEDIUM { tymed = TYMED.TYMED_HGLOBAL, unionmember = handle, pUnkForRelease = null };
             data.SetData(ref etc, ref medium, true);
+            handle = 0; // the data object owns it now (fRelease)
         }
         catch (Exception)
         {
             // A source that does not take a description simply shows no label next to the cursor; the card's own label remains.
+        }
+        finally
+        {
+            if (handle != 0)
+                GlobalFree(handle); // refused: the memory is still ours
         }
     }
 
@@ -246,4 +255,7 @@ internal sealed class CardDropTarget : IDropTarget
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GlobalFree(IntPtr memory);
 }

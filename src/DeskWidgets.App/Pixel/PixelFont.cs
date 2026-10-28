@@ -61,7 +61,16 @@ internal sealed class PixelFont
         if (!CapitalsOnly)
             return text;
         var builder = new StringBuilder(text.Length);
-        foreach (char c in text.Normalize(NormalizationForm.FormD))
+        string decomposed;
+        try
+        {
+            decomposed = text.Normalize(NormalizationForm.FormD);
+        }
+        catch (ArgumentException)
+        {
+            decomposed = text; // a lone surrogate (NTFS names may hold one) cannot be normalized; the font simply has no glyph for it
+        }
+        foreach (char c in decomposed)
         {
             if (CharUnicodeInfo.GetUnicodeCategory(c) == UnicodeCategory.NonSpacingMark)
                 continue;

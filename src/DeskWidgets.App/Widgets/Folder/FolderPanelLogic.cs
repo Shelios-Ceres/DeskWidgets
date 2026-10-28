@@ -298,6 +298,17 @@ internal sealed class PanelSelection
     }
 }
 
+/// <summary>The Glass panel's rule for its in-place rename box.</summary>
+internal static class PanelRename
+{
+    /// <summary>
+    /// Whether a cell's name layer is made again. The rename box, once shown, is never remade while the user types in it: a repaint (an
+    /// icon arriving, a rescan) would throw away what they typed, and the old box losing the focus would commit the half-typed name.
+    /// </summary>
+    public static bool NameNeedsBuilding(bool renaming, bool boxShown, string oldSignature, string newSignature)
+        => renaming ? !boxShown : oldSignature != newSignature;
+}
+
 /// <summary>Where the Pixel panel opens, as pure arithmetic in screen pixels.</summary>
 internal static class FolderPanelPlacement
 {

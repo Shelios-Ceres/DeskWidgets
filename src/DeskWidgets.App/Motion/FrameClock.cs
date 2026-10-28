@@ -90,17 +90,36 @@ internal static class FrameClock
 
     private static void OnTick()
     {
-        double now = Now;
-        foreach (var ticket in s_tickets.ToList())
+        try
+        {
+            RunDue(s_tickets.ToList(), Now);
+        }
+        finally
+        {
+            Reschedule(); // the one timer is armed again whatever a tick did, or every clock and animation would stop with it
+        }
+    }
+
+    /// <summary>Runs the tickets that are due at <paramref name="now"/>. A tick that throws is logged and its ticket stopped; the others still run.</summary>
+    internal static void RunDue(IReadOnlyList<Ticket> tickets, double now)
+    {
+        foreach (var ticket in tickets)
         {
             if (!ticket.Active || ticket.Due > now + 0.5)
                 continue;
             ticket.Due += ticket.IntervalMs;
             if (ticket.Due < now)
                 ticket.Due = now + ticket.IntervalMs; // fell behind: do not burst
-            ticket.Tick(now);
+            try
+            {
+                ticket.Tick(now);
+            }
+            catch (Exception ex)
+            {
+                Core.Diagnostics.Log.Warn("A timed step failed and was stopped", ex);
+                ticket.Stop(); // once: a broken animation must not log every frame
+            }
         }
-        Reschedule();
     }
 
     [DllImport("winmm.dll")]

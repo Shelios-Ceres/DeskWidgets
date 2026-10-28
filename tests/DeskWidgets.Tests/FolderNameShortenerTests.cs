@@ -17,6 +17,17 @@ public class FolderNameShortenerTests
 
     private static string One(string name, double width) => NameShortener.OneLine(name, width, Width);
 
+    [Fact]
+    public void ANameWithALoneSurrogate_IsShortenedWithoutThrowing()
+    {
+        // NTFS keeps names with an unpaired surrogate (some archive tools make them); char.ConvertToUtf32 threw on them.
+        Assert.False(NameShortener.IsCjk("\uD83D"));
+        Assert.False(NameShortener.IsCjk("\uDC00"));
+        string name = "Quarterly report \uD83D draft.docx";
+        Assert.NotEmpty(One(name, 60));
+        Assert.NotEmpty(NameShortener.TwoLines(name, 60, Width).First);
+    }
+
     private static bool HasLoneSurrogate(string text)
     {
         for (int i = 0; i < text.Length; i++)

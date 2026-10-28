@@ -18,18 +18,27 @@ internal sealed class FolderWatcher : IDisposable
     {
         _rescan = rescan;
         _timer = new Timer(_ => Fire(), null, Timeout.Infinite, Timeout.Infinite);
-        _watcher = new FileSystemWatcher(folder)
+        try
         {
-            IncludeSubdirectories = false,
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.Attributes,
-            InternalBufferSize = 65536,
-        };
-        _watcher.Created += (_, _) => Touch();
-        _watcher.Deleted += (_, _) => Touch();
-        _watcher.Renamed += (_, _) => Touch();
-        _watcher.Changed += (_, _) => Touch();
-        _watcher.Error += (_, _) => Touch();
-        _watcher.EnableRaisingEvents = true;
+            _watcher = new FileSystemWatcher(folder)
+            {
+                IncludeSubdirectories = false,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.Attributes,
+                InternalBufferSize = 65536,
+            };
+            _watcher.Created += (_, _) => Touch();
+            _watcher.Deleted += (_, _) => Touch();
+            _watcher.Renamed += (_, _) => Touch();
+            _watcher.Changed += (_, _) => Touch();
+            _watcher.Error += (_, _) => Touch();
+            _watcher.EnableRaisingEvents = true; // throws for a folder that cannot be listed or a share without change notices
+        }
+        catch
+        {
+            _watcher?.Dispose();
+            _timer.Dispose();
+            throw;
+        }
     }
 
     private void Touch()

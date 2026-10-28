@@ -51,6 +51,21 @@ public class IconStoreTests : IDisposable
     }
 
     [Fact]
+    public void AtStart_ALockedLayout_IsNotWaitedFor_AndNothingMaySaveOverIt()
+    {
+        File.WriteAllText(LayoutFile, """{"Order":["a.lnk","b.lnk"]}""");
+        using (new FileStream(LayoutFile, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var layout = IconStore.TryLoadLayout(LayoutFile, Path.Combine(_root, "legacy"), takeOver: false, save: true, waits: []);
+            Assert.Null(layout); // the arranger reads it later on its own thread, and saves nothing until then
+            Assert.True(clock.ElapsedMilliseconds < 150, $"the UI thread waited {clock.ElapsedMilliseconds} ms"); // it used to sleep up to 850 ms
+        }
+        Assert.Empty(BadFiles); // locked is not damaged
+        Assert.Equal(["a.lnk", "b.lnk"], IconStore.TryLoadLayout(LayoutFile, Path.Combine(_root, "legacy"), false, true, [])!.Order);
+    }
+
+    [Fact]
     public void ALayoutLockedForAMoment_IsReadAgain_NotStartedAfresh()
     {
         File.WriteAllText(LayoutFile, """{"Order":["a.lnk","b.lnk"]}""");

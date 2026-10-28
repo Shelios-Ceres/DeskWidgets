@@ -12,6 +12,27 @@ public class PixelMenuTests
 
     private static MenuEntry Disabled(string text) => new() { Text = text, Kind = MenuKind.Item, Enabled = false };
 
+    /// <summary>A bare pixel popup: a hidden layered window showing a small canvas.</summary>
+    private sealed class Probe : PixelPopupWindow
+    {
+        public Probe() => CreateWindow(noActivate: true);
+
+        public void ShowAt(int x, int y) => Present(new PixelCanvas(4, 4), 1, x, y);
+    }
+
+    [Fact]
+    public void APopupMovedByItsTitleStrip_HitTestsAtItsNewPlace()
+    {
+        using var probe = new Probe();
+        probe.ShowAt(100, 120);
+        Assert.Equal((100, 120), (probe.Origin.X, probe.Origin.Y));
+
+        // A drag by the title strip moves the window without a redraw; the dialog's buttons and title strip are hit-tested from Origin.
+        Win32.SetWindowPos(probe.Hwnd, 0, 400, 300, 0, 0, Win32.SWP_NOSIZE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+
+        Assert.Equal((400, 300), (probe.Origin.X, probe.Origin.Y));
+    }
+
     [Fact]
     public void Navigation_SkipsSeparatorsStatusLinesAndDisabledRows_AndWraps()
     {

@@ -153,6 +153,106 @@ public class FolderOperationTests : IDisposable
         }
     }
 
+    // ----- watching -----
+
+    private FolderModel Watched(Func<List<FolderItem>> scan, Func<string, Action, IDisposable> watch)
+        => new(Folder, FolderSort.Newest, [], action => action(), () => { }, (_, _) => scan(), watch);
+
+    [Fact]
+    public void AFolderThatCannotBeRead_GetsNoWatcher_SoNothingRetriesItOnItsOwnBeat()
+    {
+        int watchers = 0;
+        using var model = Watched(() => throw new UnauthorizedAccessException("no listing"), (_, _) =>
+        {
+            watchers++;
+            throw new UnauthorizedAccessException("no listing");
+        });
+        AndWait(model, model.Start);
+        AndWait(model, model.Rescan);
+        AndWait(model, model.Rescan);
+        Assert.Equal(0, watchers); // each round used to try one, fail, log it and start a 3 s poll beside the back-off
+        Assert.Equal(3, model.FailedReads);
+    }
+
+    [Fact]
+    public void AWatcherThatCannotBeMade_IsTriedOnce_AndTheFolderIsPolledInstead()
+    {
+        int watchers = 0;
+        using var model = Watched(() => [Item("a.txt")], (_, _) =>
+        {
+            watchers++;
+            throw new IOException("this share sends no change notices");
+        });
+        AndWait(model, model.Start);
+        AndWait(model, model.Rescan);
+        AndWait(model, model.Rescan);
+        Assert.Equal(1, watchers); // not once per poll, with a warning each time
+        Assert.Equal(["a.txt"], Names(model.Items));
+    }
+
+    // ----- a drop that lands while a scan runs -----
+
+    [Fact]
+    public void ADropThatLandsWhileAScanRuns_KeepsItsOrigin()
+    {
+        using var scanning = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim(true);
+        var items = new List<FolderItem> { Item("a.txt") };
+        using var model = Model(() =>
+        {
+            scanning.Set();
+            release.Wait(TimeSpan.FromSeconds(5));
+            return [.. items];
+        }, () => { });
+        AndWait(model, model.Start);
+
+        release.Reset();
+        scanning.Reset();
+        model.Rescan(); // the watcher heard the drop's first file: a scan lists the folder before the drop is done
+        Assert.True(scanning.Wait(TimeSpan.FromSeconds(5)));
+        model.Origins.Record("new.txt", @"C:\Users\asus\Desktop\new.txt", Day); // the drop finishes and records where new.txt came from
+        AndWait(model, release.Set); // the listing from before, without new.txt, arrives
+
+        Assert.Equal(@"C:\Users\asus\Desktop\new.txt", model.Origins.OriginOf("new.txt")); // a list older than the record does not prune it
+
+        items.Add(Item("new.txt"));
+        AndWait(model, model.Rescan);
+        Assert.Equal(@"C:\Users\asus\Desktop\new.txt", model.Origins.OriginOf("new.txt"));
+        items.RemoveAt(1);
+        AndWait(model, model.Rescan);
+        Assert.Null(model.Origins.OriginOf("new.txt")); // a list read after the record still prunes what is gone
+    }
+
+    [Fact]
+    public async Task PostingToAWorkerThatIsBeingDisposed_NeverThrows()
+    {
+        // The model's timers post from thread-pool threads, where a throw ends the process.
+        for (int round = 0; round < 200; round++)
+        {
+            var worker = new StaWorker("test worker");
+            using var go = new ManualResetEventSlim();
+            var poster = Task.Run(() =>
+            {
+                go.Wait();
+                for (int i = 0; i < 200; i++)
+                    worker.Post(() => { });
+            });
+            go.Set();
+            worker.Dispose();
+            await poster;
+        }
+    }
+
+    [Fact]
+    public void AnIconCache_StartsOverAtItsLimit_InsteadOfGrowingForGood()
+    {
+        var cache = new Dictionary<string, int>();
+        for (int i = 0; i < 10; i++)
+            BoundedCache.Put(cache, "picture " + i, i, max: 4);
+        Assert.InRange(cache.Count, 1, 4);
+        Assert.Equal(9, cache["picture 9"]); // the newest is always kept
+    }
+
     // ----- removals: only what is gone is forgotten -----
 
     [Fact]

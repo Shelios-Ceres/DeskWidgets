@@ -7,6 +7,14 @@ public class DesktopDragWatcherTests
     private static DesktopDragWatcher Watcher() => new(4);
 
     [Fact]
+    public void WithTheButtonsSwapped_TheRightPhysicalButtonIsTheOneThatDrags()
+    {
+        // GetAsyncKeyState reads physical buttons: a left-handed mouse drags icons with VK_RBUTTON.
+        Assert.Equal(0x01, IconArranger.PrimaryButton(swapped: false));
+        Assert.Equal(0x02, IconArranger.PrimaryButton(swapped: true));
+    }
+
+    [Fact]
     public void AClickWithoutMovingIsNotADrag()
     {
         var watcher = Watcher();

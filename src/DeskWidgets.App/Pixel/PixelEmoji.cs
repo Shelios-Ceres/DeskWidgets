@@ -92,7 +92,9 @@ internal static class PixelEmoji
     /// <summary>Whether a grapheme cluster is an emoji: a pictograph or flag (U+1F000 to U+1FAFF), a keycap, a BMP character that asks for emoji presentation (U+FE0F), or one that is an emoji by default.</summary>
     internal static bool IsEmojiCluster(string element)
     {
-        int first = char.ConvertToUtf32(element, 0);
+        if (!Rune.TryGetRuneAt(element, 0, out var rune))
+            return false; // a lone surrogate (NTFS names may hold one) is no emoji
+        int first = rune.Value;
         if (first is >= 0x1F000 and <= 0x1FAFF)
             return true;
         if (element.Contains('⃣') || (first >= 0x2000 && element.Contains('️')))

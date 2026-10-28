@@ -188,7 +188,7 @@ internal sealed class GlassFolderPanel : IFolderPanel
             _root!.Loaded += (_, _) =>
             {
                 Refresh();
-                _search.Focus(FocusState.Programmatic);
+                FocusSearchUnlessRenaming();
                 RunPanelMotion(opening: true);
             };
             return;
@@ -198,9 +198,16 @@ internal sealed class GlassFolderPanel : IFolderPanel
         {
             if (!_shown)
                 return;
-            _search.Focus(FocusState.Programmatic);
+            FocusSearchUnlessRenaming();
             RunPanelMotion(opening: true);
         });
+    }
+
+    /// <summary>The search field takes the focus as the panel opens, unless a rename started from the card's menu already has its box up.</summary>
+    private void FocusSearchUnlessRenaming()
+    {
+        if (_renaming is null && !_renamingFolder)
+            _search.Focus(FocusState.Programmatic);
     }
 
     private enum PanelSide
@@ -1118,7 +1125,8 @@ internal sealed class GlassFolderPanel : IFolderPanel
         // The name, and the box while it is being renamed.
         bool renaming = _renaming == item.FileName;
         string nameSignature = $"{item.DisplayName}|{selected}|{item.TargetMissing}|{renaming}|{Dark}";
-        if (renaming || cell.NameSignature != nameSignature)
+        bool boxShown = renaming && _itemBox is { } box && cell.NameLayer.Children.Contains(box);
+        if (PanelRename.NameNeedsBuilding(renaming, boxShown, cell.NameSignature, nameSignature))
         {
             cell.NameSignature = nameSignature;
             BuildName(cell, index, item, selected, renaming);

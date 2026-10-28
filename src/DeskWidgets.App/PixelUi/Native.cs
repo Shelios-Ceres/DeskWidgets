@@ -7,6 +7,7 @@ namespace DeskWidgets.PixelUi;
 internal static class Native
 {
     public const uint WM_DESTROY = 0x0002;
+    public const uint WM_MOVE = 0x0003;
     public const uint WM_ACTIVATE = 0x0006;
     public const uint WM_ERASEBKGND = 0x0014;
     public const uint WM_SETCURSOR = 0x0020;

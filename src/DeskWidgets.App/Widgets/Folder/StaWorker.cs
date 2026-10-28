@@ -32,10 +32,17 @@ internal sealed class StaWorker : IDisposable
         }
     }
 
+    /// <summary>Queues a job; after <see cref="Dispose"/> it is dropped. Callers include timer threads, where a throw would end the process.</summary>
     public void Post(Action job)
     {
-        if (!_jobs.IsAddingCompleted)
+        try
+        {
             _jobs.Add(job);
+        }
+        catch (InvalidOperationException) when (_jobs.IsAddingCompleted)
+        {
+            // Disposed between the caller's own check and this call.
+        }
     }
 
     public Task<T> Run<T>(Func<T> job)

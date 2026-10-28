@@ -47,6 +47,7 @@ internal static class Win32
 
     public const int SM_CXSMICON = 49;
     public const int SM_CXDRAG = 68;
+    public const int SM_SWAPBUTTON = 23;
     public const int SM_CYDRAG = 69;
     public const int SM_CYSMICON = 50;
 

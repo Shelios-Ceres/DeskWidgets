@@ -132,8 +132,13 @@ internal sealed class PixelMenu
 
     public void OnMouseMove()
     {
-        if (_closing || !TryHit(out var level))
+        if (_closing)
             return;
+        if (!TryHit(out var level))
+        {
+            StopScrolling(); // left the menu from a scroll arrow: the list stops, as a native menu's does
+            return;
+        }
         Win32.GetCursorPos(out var point);
 
         int scrollRow = level.ScrollRowAt(point.X, point.Y);
@@ -440,6 +445,9 @@ internal sealed class PixelMenu
 
     private void OpenSub(MenuLevel parent, int row, bool selectEntry)
     {
+        // Opened now (a click, Right, Enter, or the hover timer itself): a hover timer still pending would open it again over the user's choice.
+        Native.KillTimer(Root.Hwnd, SubmenuTimer);
+        _pendingLevel = -1;
         CloseAbove(parent);
         var entry = parent.Items[row];
         if (entry.Kind != MenuKind.Submenu || entry.Children.Count == 0)

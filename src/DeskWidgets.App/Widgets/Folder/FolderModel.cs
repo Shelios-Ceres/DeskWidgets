@@ -19,9 +19,11 @@ internal sealed class FolderModel : IDisposable
     private readonly Action<Action> _toUi;
     private readonly Action _persist;
     private readonly Func<string, OriginLog, List<FolderItem>> _scan;
+    private readonly Func<string, Action, IDisposable> _watch;
     private readonly StaWorker _worker = new("Big Folder scanner");
     private readonly object _gate = new();
-    private FolderWatcher? _watcher;
+    private IDisposable? _watcher;
+    private bool _watchFailed; // no watcher could be made for this folder: it is polled instead, and that was logged once
     private Timer? _missingPoll;
     private Timer? _retry;
     private int _failedReads;
@@ -39,7 +41,9 @@ internal sealed class FolderModel : IDisposable
 
     /// <param name="toUi">Runs a scan's result on the UI thread.</param>
     /// <param name="scan">Reads the folder (tests stand in for <see cref="FolderScanner.Scan"/>).</param>
-    internal FolderModel(string path, FolderSort sort, IEnumerable<string> order, Action<Action> toUi, Action persist, Func<string, OriginLog, List<FolderItem>> scan)
+    /// <param name="watch">Starts watching the folder, calling back on changes (tests stand in for <see cref="FolderWatcher"/>).</param>
+    internal FolderModel(string path, FolderSort sort, IEnumerable<string> order, Action<Action> toUi, Action persist, Func<string, OriginLog, List<FolderItem>> scan,
+        Func<string, Action, IDisposable>? watch = null)
     {
         Path = path;
         Sort = sort;
@@ -47,6 +51,7 @@ internal sealed class FolderModel : IDisposable
         _toUi = toUi;
         _persist = persist;
         _scan = scan;
+        _watch = watch ?? ((folder, changed) => new FolderWatcher(folder, changed));
         _originPath = OriginLog.PathFor(path);
         Origins = OriginLog.Load(_originPath);
     }
@@ -96,6 +101,7 @@ internal sealed class FolderModel : IDisposable
         }
         string path = Path;
         var origins = Origins;
+        long originsVersion = origins.Version;
         _worker.Post(() =>
         {
             bool exists = false;
@@ -111,13 +117,14 @@ internal sealed class FolderModel : IDisposable
                 error = ex; // logged by NoteRead, once per run of failures
                 exists = Directory.Exists(path);
             }
-            _toUi(() => Apply(path, exists, items, error));
+            _toUi(() => Apply(path, exists, items, error, originsVersion));
         });
     }
 
     /// <param name="items">What the scan found; null when the folder exists but could not be read this time.</param>
     /// <param name="error">Why the read failed, when it did.</param>
-    private void Apply(string scannedPath, bool exists, List<FolderItem>? items, Exception? error)
+    /// <param name="originsVersion">The origin log's version when the scan began.</param>
+    private void Apply(string scannedPath, bool exists, List<FolderItem>? items, Exception? error, long originsVersion)
     {
         bool again;
         lock (_gate)
@@ -142,12 +149,13 @@ internal sealed class FolderModel : IDisposable
             {
                 _all = items;
                 Resort();
-                // Only a folder that was read in full says which items are gone.
-                if (Origins.Prune(items.Select(i => i.FileName)))
+                // Only a folder that was read in full says which items are gone, and only if nothing was recorded while it was read: a drop
+                // that finished mid-scan is in the log but not in this list (the rescan the drop asked for prunes instead).
+                if (Origins.Version == originsVersion && Origins.Prune(items.Select(i => i.FileName)))
                     Origins.Save(_originPath);
             }
             // Otherwise the read failed (a network blip, a lock), which is not an empty folder: the items, the order and the origins stay.
-            Watch(exists);
+            Watch(exists, readable: items is not null);
             NoteRead(failed: exists && items is null, error);
             Changed?.Invoke();
         }
@@ -170,27 +178,43 @@ internal sealed class FolderModel : IDisposable
         }
     }
 
-    private void Watch(bool exists)
+    /// <summary>
+    /// A folder that reads is watched; one where no watcher can be made (a share without change notices) is polled instead, said once. A
+    /// missing folder is polled until it is back. A folder that is there but cannot be read gets no watcher (it could not be made either)
+    /// and no poll: the back-off in <see cref="NoteRead"/> is its only timer.
+    /// </summary>
+    private void Watch(bool exists, bool readable)
     {
-        if (exists && _watcher is null)
-        {
-            _missingPoll?.Dispose();
-            _missingPoll = null;
-            try
-            {
-                _watcher = new FolderWatcher(Path, Rescan);
-            }
-            catch (Exception ex)
-            {
-                Log.Warn("Watching a Big Folder failed; polling instead", ex);
-                _missingPoll = new Timer(_ => Rescan(), null, MissingPoll, MissingPoll);
-            }
-        }
-        else if (!exists)
+        if (!exists)
         {
             _watcher?.Dispose();
             _watcher = null;
+            _watchFailed = false; // the folder that comes back may be watchable
             _missingPoll ??= new Timer(_ => Rescan(), null, MissingPoll, MissingPoll);
+            return;
+        }
+        if (!readable)
+        {
+            if (!_watchFailed)
+            {
+                _missingPoll?.Dispose();
+                _missingPoll = null;
+            }
+            return;
+        }
+        if (_watcher is not null || _watchFailed)
+            return;
+        _missingPoll?.Dispose();
+        _missingPoll = null;
+        try
+        {
+            _watcher = _watch(Path, Rescan);
+        }
+        catch (Exception ex)
+        {
+            _watchFailed = true;
+            Log.Warn("Watching a Big Folder failed; polling it instead", ex);
+            _missingPoll = new Timer(_ => Rescan(), null, MissingPoll, MissingPoll);
         }
     }
 
@@ -226,6 +250,7 @@ internal sealed class FolderModel : IDisposable
     {
         _watcher?.Dispose();
         _watcher = null;
+        _watchFailed = false;
         StopRetrying(); // the old folder's failures say nothing about the new one
         Path = path;
         _originPath = OriginLog.PathFor(path);
@@ -243,6 +268,7 @@ internal sealed class FolderModel : IDisposable
     {
         _watcher?.Dispose();
         _watcher = null;
+        _watchFailed = false;
         Path = newPath;
         _originPath = OriginLog.PathFor(newPath);
         Origins.Save(_originPath);
