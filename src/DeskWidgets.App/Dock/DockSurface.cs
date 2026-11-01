@@ -26,8 +26,12 @@ internal enum DockPointerKind
 /// </summary>
 internal readonly record struct DockPointer(DockPointerKind Kind, double X, double Y, int ScreenX, int ScreenY, bool Left, bool Right, bool Middle, bool Shift);
 
-/// <summary>One program as the bar shows it: the saved item and what is known about it now.</summary>
-internal sealed record DockItemView(DockItem Item, bool Missing)
+/// <summary>
+/// One program as the bar shows it: the saved item and what is known about it now. <paramref name="CustomKey"/> is its custom tile's key
+/// (<see cref="DockCustomKeys"/>), found off the UI thread; null means none, or not known yet (the surface then draws the real or generic icon
+/// and never reads the exe itself).
+/// </summary>
+internal sealed record DockItemView(DockItem Item, bool Missing, DockRunState State = DockRunState.Idle, string? CustomKey = null)
 {
     public string Name => Item.Name;
 }
@@ -73,8 +77,18 @@ internal interface IDockSurface : IDisposable
     /// <summary>Pointer input over the window, in bar coordinates. Raised on the UI thread.</summary>
     event Action<DockPointer>? Pointer;
 
-    /// <summary>The pointer is over a label the surface drew or over the headroom: only the controller's own state decides what the window is "in use" for.</summary>
+    /// <summary>
+    /// Shows the window without activating it: the first time, and again after <see cref="Hide"/> (the controller calls it before the slide-in).
+    /// Calling it while shown does nothing.
+    /// </summary>
     void Show();
+
+    /// <summary>
+    /// Hides the window (the controller calls it when the slide-out ends): a parked window at the screen's bottom edge would show on a screen
+    /// stacked below. Hover, press and capture are cleared, nothing is drawn or timed while hidden; <see cref="MoveWindowTo"/> and
+    /// <see cref="PlaceWindow"/> still work.
+    /// </summary>
+    void Hide();
 
     /// <summary>
     /// Puts the window at <paramref name="window"/> and the bar at <paramref name="bar"/> (both screen pixels; the bar lies inside the window),
@@ -90,6 +104,12 @@ internal interface IDockSurface : IDisposable
 
     /// <summary>The hovered icon (-1: none) and the label to show above it.</summary>
     void SetHover(int index, string? label);
+
+    /// <summary>
+    /// An icon's run state changed (Build B): <paramref name="how"/> says how, so it can play D3 (opening: the running look wipes in to half-way and
+    /// holds), D4 (opened: the rest, with a pop only when started here) or D5 (closed). The items from <see cref="SetItems"/> carry the state too.
+    /// </summary>
+    void SetRunState(int index, DockRunState state, DockRunTransition how);
 
     /// <summary>The pressed icon (-1: none).</summary>
     void SetPressed(int index);

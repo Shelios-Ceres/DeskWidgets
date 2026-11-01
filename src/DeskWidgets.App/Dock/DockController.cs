@@ -26,6 +26,9 @@ internal interface IDockHost
 
     void RemoveDock(DockController dock);
 
+    /// <summary>Whether another dock than <paramref name="self"/> is on this screen (one dock per screen).</summary>
+    bool OtherDockOn(DockController self, string? device);
+
     /// <summary>What the window tracker says for a screen.</summary>
     WindowTracker.Verdict VerdictFor(nint monitor);
 
@@ -42,7 +45,8 @@ internal sealed class DockController : IDisposable
 {
     private const double DragThresholdDip = 4;
     private const int LeaveHideMs = 600;
-    private const int ExitMs = 150;
+    private const int ExitMs = 150; // Pixel's slide away
+    private const int GlassHideMs = 280; // Glass hides on the Move token (HANDOFF section 5, D6)
     private const int EnterMs = 240;
 
     private readonly IDockHost _host;
@@ -59,7 +63,12 @@ internal sealed class DockController : IDisposable
     private bool _disposed;
     private FrameClock.Ticket? _slide;
     private FrameClock.Ticket? _leave;
+    private DockRect _strip; // the edge strip's rectangle, screen pixels
     private readonly HashSet<string> _missing = [];
+    private readonly Dictionary<string, string?> _customKeys = []; // DockItem.Key -> custom tile key (null: none), found by CheckMissing's worker
+    private readonly DockRunStates _runStates = new();
+    private IReadOnlyList<RunningWindow> _windows = [];
+    private FrameClock.Ticket? _expiry;
     private readonly StaWorker _worker = new("Dock checks");
 
     // Pointer state.
@@ -105,8 +114,17 @@ internal sealed class DockController : IDisposable
         _edge.Reached += () => Reveal("pointer at the edge");
         _edge.DragReached += () => Reveal("drag at the edge");
         FindMonitor();
-        Relayout(change: new DockChange(DockChangeKind.Reset), animateWindow: false);
-        _surface.Show();
+        // Over a maximized window the dock starts hidden: it must not show for a frame first.
+        if (_monitor.Device is not null && _host.VerdictFor(MonitorHandle()).ShouldHide)
+        {
+            _hidden = true;
+            _ruleHides = true;
+        }
+        Relayout(new DockChange(DockChangeKind.Reset));
+        if (_hidden)
+            _edge.SetVisible(true);
+        else
+            _surface.Show();
         EvaluateRule();
         CheckMissing();
         _surface.AttachDropTarget(new DockDropTarget(this));
@@ -121,11 +139,11 @@ internal sealed class DockController : IDisposable
         _surface.Dispose();
         _surface = _host.CreateSurface();
         _surface.Pointer += OnPointer;
-        Relayout(change: new DockChange(DockChangeKind.Reset), animateWindow: false);
-        _surface.Show();
+        _hover = -1; // the new surface knows no hover
+        Relayout(new DockChange(DockChangeKind.Reset)); // a hidden dock is placed below the edge by this
+        if (!_hidden)
+            _surface.Show();
         _surface.AttachDropTarget(new DockDropTarget(this));
-        if (_hidden)
-            _surface.MoveWindowTo(_layout.Window.X, _layout.HiddenTop);
     }
 
     private void FindMonitor()
@@ -142,18 +160,24 @@ internal sealed class DockController : IDisposable
     public void OnDisplayChanged()
     {
         FindMonitor();
-        Relayout(new DockChange(DockChangeKind.None), animateWindow: false);
+        Relayout(new DockChange(DockChangeKind.None));
+        CheckMissing(); // a drive may have come or gone with the screens
     }
 
     private DockRect Work => new(_monitor.Work.Left, _monitor.Work.Top, _monitor.Work.Width, _monitor.Work.Height);
 
     private int PxOf(double dip) => (int)Math.Round(dip * _scale);
 
-    private void Relayout(DockChange change, bool animateWindow, bool redrawItems = true)
+    private void UpdateScale() => _scale = Win32.GetScaleAt(new Win32.POINT { X = _monitor.Work.Left + 1, Y = _monitor.Work.Top + 1 });
+
+    private nint MonitorHandle() => Win32.MonitorFromPoint(new Win32.POINT { X = _monitor.Work.Left + 1, Y = _monitor.Work.Top + 1 }, Win32.MONITOR_DEFAULTTONEAREST);
+
+    /// <summary>Places the window, the strip and the bar and draws it all again. Also a bar that only moved: the picture must follow its hit boxes (B2-2).</summary>
+    private void Relayout(DockChange change)
     {
         if (_surface is null || _monitor.Device is null)
             return;
-        _scale = Win32.GetScaleAt(new Win32.POINT { X = _monitor.Work.Left + 1, Y = _monitor.Work.Top + 1 });
+        UpdateScale();
         bool pixel = _host.Theme == WidgetTheme.Pixel;
         int count = Settings.Items.Count;
         // A pixel bar is whole art pixels, a whole factor of screen pixels each (art pixel = 2 DIPs), as every Pixel card is.
@@ -165,17 +189,23 @@ internal sealed class DockController : IDisposable
         int overhang = PxOf(DockGeometry.LabelMaxWidthDip / 2);
         int offset = PxOf(Settings.OffsetDip);
         _layout = DockPlacement.Compute(Work, _monitor.Bounds.Bottom, length, height, headroom, edgeGap, overhang, offset);
-        _edge.Place(new DockRect(_monitor.Work.Left, _monitor.Work.Top, _monitor.Work.Width, _monitor.Work.Height), Math.Max(2, PxOf(DockGeometry.EdgeStripDip)));
+        // Only the stretch under the dock, plus about one icon slot each side (B2-16): the edge anywhere else brings nothing up.
+        int margin = pixel ? (DockGeometry.PixelSlotArt(Settings.IconSize) + DockGeometry.PixelSlotGapArt) * factor : PxOf(DockGeometry.IconDip(Settings.IconSize) + DockGeometry.GapDip);
+        _strip = DockVisibility.EdgeStrip(Work, _layout.Bar, Math.Max(2, PxOf(DockGeometry.EdgeStripDip)), margin);
+        _edge.Place(_strip);
 
         _surface.PlaceWindow(_layout.Window, _layout.Bar, _scale);
-        if (redrawItems)
-            _surface.SetItems(Views(Settings.Items), Settings.IconSize, change);
+        _surface.SetItems(Views(Settings.Items), Settings.IconSize, change);
         if (_hidden)
             _surface.MoveWindowTo(_layout.Window.X, _layout.HiddenTop);
         RefreshLabelFor(_hover);
     }
 
-    private IReadOnlyList<DockItemView> Views(IEnumerable<DockItem> items) => [.. items.Select(item => new DockItemView(item, _missing.Contains(item.Key)))];
+    // A key the worker has not resolved yet falls back to the match that reads no file (AUMID, exe name, Steam id): the exe's version info
+    // is read only by CheckMissing's worker (a network exe would stall the UI), and the redraw that follows brings the full key.
+    private IReadOnlyList<DockItemView> Views(IEnumerable<DockItem> items)
+        => [.. items.Select(item => new DockItemView(item, _missing.Contains(item.Key), _runStates.StateOf(item.Key),
+            _customKeys.TryGetValue(item.Key, out var key) ? key : DockCustomKeys.Quick(item)))];
 
     // ---------------------------------------------------------------- hiding and showing
 
@@ -184,8 +214,7 @@ internal sealed class DockController : IDisposable
     {
         if (_surface is null || _disposed)
             return;
-        nint monitor = Win32.MonitorFromPoint(new Win32.POINT { X = _monitor.Work.Left + 1, Y = _monitor.Work.Top + 1 }, Win32.MONITOR_DEFAULTTONEAREST);
-        var verdict = _host.VerdictFor(monitor);
+        var verdict = _host.VerdictFor(MonitorHandle());
         _ruleHides = verdict.ShouldHide;
         if (!_ruleHides)
         {
@@ -197,6 +226,12 @@ internal sealed class DockController : IDisposable
             // A full-screen window in front also takes back a dock that a drag or the pointer had brought up.
             if (verdict.FullScreen)
                 _revealed = false;
+            else if (InUse && !_hidden)
+            {
+                // Never away mid-use (a menu, a drag): treat it as brought up, so its close or end hides it (B2-7).
+                _revealed = true;
+                return;
+            }
             Slide(hide: true);
         }
     }
@@ -209,11 +244,11 @@ internal sealed class DockController : IDisposable
     {
         if (!_hidden || _surface is null)
             return;
-        nint monitor = Win32.MonitorFromPoint(new Win32.POINT { X = _monitor.Work.Left + 1, Y = _monitor.Work.Top + 1 }, Win32.MONITOR_DEFAULTTONEAREST);
-        if (_host.VerdictFor(monitor).FullScreen)
+        if (_host.VerdictFor(MonitorHandle()).FullScreen)
             return; // the edge brings nothing back over a full-screen window
         _revealed = true;
         Slide(hide: false);
+        ScheduleLeaveHide(); // the pointer may never visit the bar: it hides again once it is off the edge (B2-1)
     }
 
     private void ScheduleLeaveHide()
@@ -223,8 +258,17 @@ internal sealed class DockController : IDisposable
             return;
         _leave = FrameClock.After(LeaveHideMs, () =>
         {
-            if (InUse || _disposed)
+            if (_disposed)
                 return;
+            // In use: the menu's close or the drop's end asks again. The pointer still on the edge or the bar: look again later.
+            if (InUse)
+                return;
+            Win32.GetCursorPos(out var cursor);
+            if (DockVisibility.StaysRevealed(false, _layout.Bar, _strip, cursor.X, cursor.Y))
+            {
+                ScheduleLeaveHide();
+                return;
+            }
             _revealed = false;
             Slide(hide: true);
         });
@@ -232,7 +276,7 @@ internal sealed class DockController : IDisposable
 
     private void CancelLeaveHide() => _leave?.Stop();
 
-    /// <summary>Slides the window off the bottom edge or back (D6: Exit 150 ms, Enter 240 ms). A request in the direction already running is ignored.</summary>
+    /// <summary>Slides the window off the bottom edge or back (D6: Glass hides on Move 280 ms, Pixel on Exit 150 ms; both reveal on Enter 240 ms). A request in the direction already running is ignored.</summary>
     private void Slide(bool hide)
     {
         if (_surface is null || _hidden == hide && _slide is null)
@@ -246,7 +290,14 @@ internal sealed class DockController : IDisposable
         int from = _surface.WindowRect.Y, to = hide ? _layout.HiddenTop : _layout.Window.Y;
         int x = _layout.Window.X;
         if (hide)
+        {
             _surface.SetHover(-1, null);
+            _hover = -1; // or the next hover of the same icon would be ignored as "no change" (B2-10)
+        }
+        else
+        {
+            _surface.Show(); // a hidden dock's window is hidden, not parked below the screen (B2-13)
+        }
         if (from == to)
         {
             FinishSlide(hide);
@@ -258,12 +309,13 @@ internal sealed class DockController : IDisposable
             FinishSlide(hide);
             return;
         }
-        int duration = hide ? ExitMs : EnterMs;
+        bool glass = _host.Theme != WidgetTheme.Pixel;
+        int duration = hide ? (glass ? GlassHideMs : ExitMs) : EnterMs;
         double start = FrameClock.Now;
         _slide = FrameClock.Every(8, now =>
         {
             double t = Math.Min(1, (now - start) / duration);
-            double eased = hide ? t * t * t : 1 - Math.Pow(1 - t, 3);
+            double eased = hide ? (glass ? Bezier.Move.At(t) : t * t * t) : 1 - Math.Pow(1 - t, 3);
             _surface?.MoveWindowTo(x, (int)Math.Round(from + (to - from) * eased));
             if (t >= 1)
             {
@@ -276,6 +328,8 @@ internal sealed class DockController : IDisposable
 
     private void FinishSlide(bool hide)
     {
+        if (hide)
+            _surface?.Hide();
         _edge.SetVisible(hide);
     }
 
@@ -352,15 +406,18 @@ internal sealed class DockController : IDisposable
             OpenMenu(p);
             return;
         }
-        _down = p;
+        _down = default;
         _dragging = false;
         _dragKind = DragKind.None;
         if (!p.Left && !p.Middle)
             return;
         _pressed = IconAtPointer(p);
+        if (_pressed < 0 && !OverBar(p))
+            return; // on the label or the headroom: not a press on anything (B2-8)
+        _down = p;
         if (_pressed >= 0)
             _surface?.SetPressed(_pressed);
-        else if (OverBar(p))
+        else
             _barOffsetStart = Settings.OffsetDip == 0 ? 0 : PxOf(Settings.OffsetDip);
     }
 
@@ -412,10 +469,11 @@ internal sealed class DockController : IDisposable
     {
         // The bar follows the pointer along the bottom edge, or onto another screen's (D3, PROPOSAL 3.1). No motion of its own.
         var at = Win32.MonitorAt(new Win32.POINT { X = p.ScreenX, Y = p.ScreenY });
-        if (at is { } screen && !string.Equals(screen.Device, _monitor.Device, StringComparison.OrdinalIgnoreCase))
+        if (at is { } screen && !string.Equals(screen.Device, _monitor.Device, StringComparison.OrdinalIgnoreCase) && !_host.OtherDockOn(this, screen.Device))
         {
-            // On another screen the bar's centre goes under the pointer.
+            // On another screen the bar's centre goes under the pointer. A screen that has a dock of its own is not for this one (one dock per screen).
             _monitor = screen;
+            UpdateScale(); // this screen's scale, not the last one's (B2-9)
             Settings.Monitor = screen.Device;
             _down = p;
             _barOffsetStart = p.ScreenX - (screen.Work.Left + screen.Work.Width / 2);
@@ -424,7 +482,7 @@ internal sealed class DockController : IDisposable
         // Clamped by the layout, which gives back what fits.
         var clamped = DockPlacement.ClampOffset(offsetPx, _monitor.Work.Width, _layout.Bar.Width, PxOf(DockGeometry.EdgeGapDip));
         Settings.OffsetDip = clamped / _scale;
-        Relayout(new DockChange(DockChangeKind.None), animateWindow: false, redrawItems: false); // only the window moves; the picture is the same
+        Relayout(new DockChange(DockChangeKind.None));
     }
 
     private void PointerUp(DockPointer p)
@@ -482,13 +540,70 @@ internal sealed class DockController : IDisposable
     private void Click(int index, DockPointer p)
     {
         var item = Settings.Items[index];
-        if (_missing.Contains(item.Key))
+        // A click on a running program switches to its window; middle-click or Shift+click starts another copy (PROPOSAL 3.4, 3.8).
+        bool another = p.Middle || p.Shift;
+        if (!another && _runStates.StateOf(item.Key) == DockRunState.Running && DockRunning.WindowsOf(item, _windows) is { Count: > 0 } windows)
         {
-            OpenMissing(item, p);
+            DockSwitcher.Do(DockRunning.PlanSwitch([.. windows.Select(w => w.Handle)], Win32.ForegroundWindow()));
             return;
         }
-        Report(DockLauncher.Start(item, Handle));
+        if (!another && _runStates.StateOf(item.Key) == DockRunState.Opening)
+            return; // it is opening: another click would only start a second copy
+        Start(item, p.ScreenX, p.ScreenY);
     }
+
+    /// <summary>
+    /// Starts the program on the worker (a Store app's activation took 460 ms: the dock's own release must not wait for it) after looking again
+    /// whether it is there (a drive may have come back, or a program gone). If the dock can tell when it is running, its icon goes into the
+    /// opening state at once until the first window comes (D3); a start that fails, or a program that is gone, takes it back.
+    /// </summary>
+    private void Start(DockItem item, int screenX, int screenY, bool asAdministrator = false)
+    {
+        bool tracks = item.SupportsRunning && _runStates.Started(item.Key, Now); // a program that was missing and came back is tracked too: the check below takes it back if it is not there
+        if (tracks)
+        {
+            ApplyRunState(item.Key, DockRunState.Opening, DockRunTransition.Opening);
+            ScheduleExpiry();
+        }
+        var copy = item.Copy();
+        nint owner = Handle;
+        var ui = DispatcherQueue.GetForCurrentThread();
+        _worker.Post(() =>
+        {
+            bool exists = DockLauncher.Exists(copy);
+            string? error = exists ? DockLauncher.Start(copy, owner, asAdministrator) : null;
+            ui.TryEnqueue(() =>
+            {
+                if (_disposed || _surface is null)
+                    return;
+                if (tracks && (!exists || error is not null) && _runStates.Cancel(item.Key))
+                    ApplyRunState(item.Key, DockRunState.Idle, DockRunTransition.TimedOut);
+                if (SetMissing(item, !exists))
+                {
+                    if (!exists)
+                        OpenMissing(item, screenX, screenY);
+                    return;
+                }
+                Report(error);
+            });
+        });
+    }
+
+    /// <summary>Notes that a program is, or is no longer, missing and redraws if that changed it. Returns whether it is missing.</summary>
+    private bool SetMissing(DockItem item, bool missing)
+    {
+        if (missing != _missing.Contains(item.Key))
+        {
+            if (missing)
+                _missing.Add(item.Key);
+            else
+                _missing.Remove(item.Key);
+            _surface?.SetItems(Views(Settings.Items), Settings.IconSize, new DockChange(DockChangeKind.None));
+        }
+        return missing;
+    }
+
+    private static TimeSpan Now => TimeSpan.FromMilliseconds(FrameClock.Now);
 
     private void Report(string? error)
     {
@@ -496,7 +611,7 @@ internal sealed class DockController : IDisposable
             _host.ShowWarning(error);
     }
 
-    private void OpenMissing(DockItem item, DockPointer p)
+    private void OpenMissing(DockItem item, int screenX, int screenY)
     {
         if (_host.Theme == WidgetTheme.Pixel)
         {
@@ -508,7 +623,7 @@ internal sealed class DockController : IDisposable
             new MenuEntry { Text = Strings.DockMissingHeader(item.Name), Kind = MenuKind.Item, Enabled = false, Glyph = "" },
             MenuEntry.Separator(),
             MenuEntry.Item(Strings.DockRemoveFromDock, () => Remove(item), glyph: "", icon: PixelIcons.Remove),
-        ], p.ScreenX, p.ScreenY);
+        ], screenX, screenY);
     }
 
     private void OpenMenu(DockPointer p)
@@ -539,9 +654,9 @@ internal sealed class DockController : IDisposable
 
     internal IReadOnlyList<MenuEntry> AppMenu(DockItem item)
     {
-        var rows = new List<MenuEntry> { MenuEntry.Item(Strings.DockOpen, () => Report(DockLauncher.Start(item, Handle)), glyph: "") };
+        var rows = new List<MenuEntry> { MenuEntry.Item(Strings.DockOpen, () => StartFromMenu(item), glyph: "") };
         if (!item.IsStoreApp)
-            rows.Add(MenuEntry.Item(Strings.FolderRunAsAdministrator, () => Report(DockLauncher.Start(item, Handle, asAdministrator: true)), glyph: "", icon: PixelIcons.Shield));
+            rows.Add(MenuEntry.Item(Strings.FolderRunAsAdministrator, () => StartFromMenu(item, asAdministrator: true), glyph: "", icon: PixelIcons.Shield));
         rows.Add(new MenuEntry
         {
             Text = Strings.FolderOpenFileLocation, Kind = MenuKind.Item, Enabled = !string.IsNullOrEmpty(item.ExePath) && File.Exists(item.ExePath),
@@ -557,10 +672,16 @@ internal sealed class DockController : IDisposable
         return rows;
     }
 
+    private void StartFromMenu(DockItem item, bool asAdministrator = false)
+    {
+        Win32.GetCursorPos(out var cursor);
+        Start(item, cursor.X, cursor.Y, asAdministrator);
+    }
+
     private void ShowMoreOptions(DockItem item)
     {
         Win32.GetCursorPos(out var cursor);
-        Report(ShellContextMenu.Show([item.ExePath!], Handle, cursor.X, cursor.Y, onOpen: () => Report(DockLauncher.Start(item, Handle)), onRename: null, onDelete: null));
+        Report(ShellContextMenu.Show([item.ExePath!], Handle, cursor.X, cursor.Y, onOpen: () => StartFromMenu(item), onRename: null, onDelete: null));
     }
 
     internal IReadOnlyList<MenuEntry> BarMenu()
@@ -587,7 +708,7 @@ internal sealed class DockController : IDisposable
             return;
         Settings.IconSize = size;
         _host.RequestSave();
-        Relayout(new DockChange(DockChangeKind.Resized), animateWindow: true);
+        Relayout(new DockChange(DockChangeKind.Resized));
     }
 
     /// <summary>Adds programs at <paramref name="slot"/> (-1: the end), skipping ones already on the dock. Returns how many went in.</summary>
@@ -606,7 +727,7 @@ internal sealed class DockController : IDisposable
         if (added == 0)
             return 0;
         _host.RequestSave();
-        Relayout(new DockChange(DockChangeKind.Added, first), animateWindow: true);
+        Relayout(new DockChange(DockChangeKind.Added, first));
         CheckMissing();
         return added;
     }
@@ -618,10 +739,11 @@ internal sealed class DockController : IDisposable
             return;
         Settings.Items.RemoveAt(index);
         _missing.Remove(item.Key);
+        _runStates.Forget(item.Key);
         _hover = -1;
         _host.RequestSave();
         // D11: the icon goes (the surface draws it leaving), then the bar shortens.
-        Relayout(new DockChange(DockChangeKind.Removed, index), animateWindow: true);
+        Relayout(new DockChange(DockChangeKind.Removed, index));
     }
 
     /// <summary>"Add taskbar apps": the taskbar's pins that are not on the dock yet, in the taskbar's order. Read off the UI thread.</summary>
@@ -646,18 +768,75 @@ internal sealed class DockController : IDisposable
     public void CheckMissing()
     {
         var items = Settings.Items.Select(i => i.Copy()).ToList();
+        var unkeyed = items.Where(i => !_customKeys.ContainsKey(i.Key)).ToList();
         var ui = DispatcherQueue.GetForCurrentThread();
         _worker.Post(() =>
         {
             var missing = items.Where(item => !DockLauncher.Exists(item)).Select(item => item.Key).ToHashSet();
+            // The custom tiles' keys, once per program: this may read an exe's version info, which is why it is here and not in a draw.
+            var keys = unkeyed.Select(item => (item.Key, Value: DockCustomKeys.Resolve(item))).ToList();
             ui.TryEnqueue(() =>
             {
-                if (_disposed || _surface is null || _missing.SetEquals(missing))
+                if (_disposed)
+                    return;
+                // A redraw is due when a key differs from what the bar shows now (the no-read match Views falls back to).
+                bool newKey = false;
+                foreach (var (key, value) in keys)
+                {
+                    string? shown = _customKeys.TryGetValue(key, out var known) ? known
+                        : Settings.Items.FirstOrDefault(i => i.Key == key) is { } item ? DockCustomKeys.Quick(item) : value;
+                    newKey |= shown != value;
+                    _customKeys[key] = value;
+                }
+                if (_surface is null || _missing.SetEquals(missing) && !newKey)
                     return;
                 _missing.Clear();
                 _missing.UnionWith(missing);
                 _surface.SetItems(Views(Settings.Items), Settings.IconSize, new DockChange(DockChangeKind.None));
             });
+        });
+    }
+
+    // ---------------------------------------------------------------- running programs (Build B)
+
+    /// <summary>The taskbar's windows changed (the manager read them): see which of this dock's programs have one.</summary>
+    public void OnWindows(IReadOnlyList<RunningWindow> windows)
+    {
+        _windows = windows;
+        if (_surface is null || _disposed)
+            return;
+        var running = Settings.Items.Where(i => i.SupportsRunning && DockRunning.WindowsOf(i, windows).Count > 0).Select(i => i.Key).ToHashSet();
+        // What is already running when the dock starts is shown as it is, with no wipe.
+        bool first = !_haveWindows;
+        _haveWindows = true;
+        foreach (var (key, state, how) in _runStates.WindowsNow(running, Settings.Items.Select(i => i.Key)))
+            ApplyRunState(key, state, first ? DockRunTransition.None : how);
+        ScheduleExpiry();
+    }
+
+    private bool _haveWindows;
+
+    private void ApplyRunState(string key, DockRunState state, DockRunTransition how)
+    {
+        // While an icon is dragged the surface shows the preview order, which is not the saved one.
+        int index = (_preview ?? Settings.Items).FindIndex(i => i.Key == key);
+        if (index >= 0)
+            _surface?.SetRunState(index, state, how);
+    }
+
+    /// <summary>One timer, only while some icon is opening: when the earliest one runs out, it goes back to idle (D3: not an error).</summary>
+    private void ScheduleExpiry()
+    {
+        _expiry?.Stop();
+        _expiry = null;
+        if (_runStates.NextExpiry() is not { } due)
+            return;
+        double wait = Math.Max(1, (due - Now).TotalMilliseconds);
+        _expiry = FrameClock.After((int)Math.Min(wait, int.MaxValue), () =>
+        {
+            foreach (string key in _runStates.Expire(Now))
+                ApplyRunState(key, DockRunState.Idle, DockRunTransition.TimedOut);
+            ScheduleExpiry();
         });
     }
 
@@ -710,6 +889,7 @@ internal sealed class DockController : IDisposable
         _disposed = true;
         _slide?.Stop();
         _leave?.Stop();
+        _expiry?.Stop();
         _edge.Dispose();
         if (_surface is not null)
         {

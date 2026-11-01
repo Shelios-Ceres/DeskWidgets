@@ -34,7 +34,15 @@ internal sealed partial class GlassDockSurface
         public Canvas Root = null!;
         public Grid Lift = null!;
         public Grid TileHost = null!;
+        public Grid IdleHost = null!;
+        public Grid RunHost = null!;
         public string? TileState;
+
+        // The running look over the idle one, cut from the top by an inset clip (HANDOFF 5, D3 to D5): 1 = none of it shows, 0 = all.
+        public Func<FrameworkElement>? BuildRunning;
+        public string? RunTileState;
+        public InsetClip? RunClip;
+        public DockRunState RunState;
         public bool Loading;
         public double Size;
 
@@ -102,7 +110,7 @@ internal sealed partial class GlassDockSurface
 
     private double IconDip => DockGeometry.IconDip(_size);
 
-    private bool Animate => _shown && MotionSettings.Enabled;
+    private bool Animate => _shown && !_parked && MotionSettings.Enabled; // a hidden dock snaps: nothing to see, nothing left running
 
     private GlassPalette Palette => GlassPalette.For(_root.ActualTheme);
 
@@ -242,7 +250,7 @@ internal sealed partial class GlassDockSurface
     {
         _snapNext = false;
         foreach (var slot in _slots.Concat(_leaving))
-            _stage.Children.Remove(slot.Root);
+            Drop(slot);
         _slots.Clear();
         _leaving.Clear();
         _hoverKey = _pressedKey = _dragKey = null;
@@ -292,6 +300,8 @@ internal sealed partial class GlassDockSurface
             {
                 slot.View = view;
                 UpdateTile(slot, fade: true);
+                if (view.State != slot.RunState)
+                    ApplyRun(slot, view.State, DockRunTransition.None);
             }
             else
             {
@@ -336,13 +346,17 @@ internal sealed partial class GlassDockSurface
     private Slot NewSlot(DockItemView view)
     {
         double icon = IconDip;
-        var tileHost = new Grid { Width = icon, Height = icon, IsHitTestVisible = false };
+        var idleHost = new Grid { Width = icon, Height = icon, IsHitTestVisible = false };
+        var runHost = new Grid { Width = icon, Height = icon, IsHitTestVisible = false };
+        var tileHost = new Grid { Width = icon, Height = icon, IsHitTestVisible = false, Children = { idleHost, runHost } };
         var lift = new Grid { Width = icon, Height = icon, IsHitTestVisible = false, Children = { tileHost } };
         var root = new Canvas { Width = icon, Height = icon, IsHitTestVisible = false, Children = { lift } };
         Canvas.SetZIndex(root, 2);
-        var slot = new Slot { Key = view.Item.Key, View = view, Root = root, Lift = lift, TileHost = tileHost, Size = icon };
+        var slot = new Slot { Key = view.Item.Key, View = view, Root = root, Lift = lift, TileHost = tileHost, IdleHost = idleHost, RunHost = runHost, Size = icon };
         GlassMotion.VisualOf(lift).CenterPoint = new Vector3(Centre(slot), 0);
+        GlassMotion.VisualOf(tileHost).CenterPoint = new Vector3(Centre(slot), 0);
         UpdateTile(slot, fade: false);
+        ApplyRun(slot, view.State, DockRunTransition.None);
         _stage.Children.Add(root);
         return slot;
     }
@@ -353,15 +367,18 @@ internal sealed partial class GlassDockSurface
     private void UpdateTile(Slot slot, bool fade)
     {
         slot.TileHost.Opacity = slot.View.Missing ? 0.4 : 1;
-        var (state, build, loading) = _tiles!.Describe(slot.View.Item, Palette, Dark, slot.Size, Scale);
+        var (state, build, buildRunning, loading) = _tiles!.Describe(slot.View, Palette, Dark, slot.Size, Scale);
+        slot.BuildRunning = buildRunning;
         if (state == slot.TileState)
             return;
         bool wasLoading = slot.Loading;
         slot.TileState = state;
         slot.Loading = loading;
         var tile = build();
-        slot.TileHost.Children.Clear();
-        slot.TileHost.Children.Add(tile);
+        slot.IdleHost.Children.Clear();
+        slot.IdleHost.Children.Add(tile);
+        if (slot.RunTileState is not null)
+            EnsureRunTile(slot);
         if (fade && wasLoading && !loading && MotionSettings.Enabled)
         {
             // The picture was on its way: it fades in over the plate that stood in for it (as GlassTileProvider does).
@@ -391,7 +408,7 @@ internal sealed partial class GlassDockSurface
     {
         if (!animate)
         {
-            _stage.Children.Remove(slot.Root);
+            Drop(slot);
             return;
         }
         GlassMotion.LeaveItem(slot.Lift, Centre(slot));
@@ -404,8 +421,20 @@ internal sealed partial class GlassDockSurface
         After((int)after.TotalMilliseconds + 40, () =>
         {
             _leaving.Remove(slot);
-            _stage.Children.Remove(slot.Root);
+            Drop(slot);
         });
+    }
+
+    /// <summary>Takes an icon out of the tree and lets go of its clip (a Composition object holds a handle until it is disposed).</summary>
+    private void Drop(Slot slot)
+    {
+        _stage.Children.Remove(slot.Root);
+        if (slot.RunClip is { } clip)
+        {
+            GlassMotion.VisualOf(slot.RunHost).Clip = null;
+            clip.Dispose();
+            slot.RunClip = null;
+        }
     }
 
     private Slot? Find(string? key) => key is null ? null : _slots.FirstOrDefault(slot => slot.Key == key);
@@ -530,12 +559,93 @@ internal sealed partial class GlassDockSurface
         Layout(GlassMotion.Move);
     }
 
+    // ---------------------------------------------------------------- running (D3 to D5)
+
+    /// <summary>HANDOFF 5's one new token: Start, 600 ms Out, the opening wipe.</summary>
+    private static readonly TimeSpan StartDuration = TimeSpan.FromMilliseconds(600);
+
+    /// <summary>The pop of D4: 1 to 1.06 at 45 % and back (Move).</summary>
+    private const float PopScale = 1.06f;
+
+    public void SetRunState(int index, DockRunState state, DockRunTransition how)
+    {
+        if (_disposed || index < 0 || index >= _slots.Count)
+            return;
+        ApplyRun(_slots[index], state, how);
+    }
+
+    /// <summary>
+    /// The running art's clip, an inset from the top: Idle shows none of it, Opening the bottom half, Running all of it. D3: 100 % to 50 %
+    /// (Start), then it simply stays there (the key frame ends; no timer, no loop) until the next state. D4: on to 0 (Enter), with the pop for a
+    /// program started here; started elsewhere it wipes in (Move) without one. D5 and a timed-out opening: back to 100 % (Move). Every
+    /// change starts from where the clip is now. A redraw (<see cref="DockRunTransition.None"/>), or no motion, puts the clip at its end at once.
+    /// </summary>
+    private void ApplyRun(Slot slot, DockRunState state, DockRunTransition how)
+    {
+        slot.RunState = state;
+        float shown = state switch { DockRunState.Running => 0f, DockRunState.Opening => 0.5f, _ => 1f };
+        if (slot.RunClip is null && shown >= 1f)
+            return; // idle and never shown: nothing to draw, nothing made
+        EnsureRunTile(slot);
+        if (slot.RunClip is not { } clip)
+            return;
+        float inset = shown * (float)slot.Size;
+        if (how == DockRunTransition.None || !Animate)
+        {
+            clip.StopAnimation("TopInset");
+            clip.TopInset = inset;
+            var tile = GlassMotion.VisualOf(slot.TileHost);
+            tile.StopAnimation("Scale");
+            tile.Scale = Vector3.One;
+            return;
+        }
+        var (duration, curve) = how switch
+        {
+            DockRunTransition.Opening => (StartDuration, Bezier.Out),
+            DockRunTransition.OpenedHere => (GlassMotion.Enter, Bezier.Out),
+            _ => (GlassMotion.Move, Bezier.Move), // OpenedElsewhere, Closed, TimedOut
+        };
+        var compositor = clip.Compositor;
+        var wipe = compositor.CreateScalarKeyFrameAnimation();
+        wipe.InsertKeyFrame(1f, inset, Easing(compositor, curve));
+        wipe.Duration = duration;
+        clip.StartAnimation("TopInset", wipe);
+        if (how == DockRunTransition.OpenedHere)
+        {
+            var visual = GlassMotion.VisualOf(slot.TileHost);
+            var ease = Easing(visual.Compositor, Bezier.Move);
+            var pop = visual.Compositor.CreateVector3KeyFrameAnimation();
+            pop.InsertKeyFrame(0.45f, new Vector3(PopScale, PopScale, 1), ease);
+            pop.InsertKeyFrame(1f, Vector3.One, ease);
+            pop.Duration = GlassMotion.Move;
+            visual.StartAnimation("Scale", pop);
+        }
+    }
+
+    /// <summary>Makes the running art (and its clip, fully closed) the first time it is needed, and again when the idle tile changed.</summary>
+    private void EnsureRunTile(Slot slot)
+    {
+        if (slot.BuildRunning is null)
+            return;
+        if (slot.RunClip is null)
+        {
+            var visual = GlassMotion.VisualOf(slot.RunHost);
+            slot.RunClip = visual.Compositor.CreateInsetClip(0, (float)slot.Size, 0, 0);
+            visual.Clip = slot.RunClip;
+        }
+        if (slot.RunTileState == slot.TileState)
+            return;
+        slot.RunTileState = slot.TileState;
+        slot.RunHost.Children.Clear();
+        slot.RunHost.Children.Add(slot.BuildRunning());
+    }
+
     // ---------------------------------------------------------------- hover, press, drag
 
     public void SetHover(int index, string? label)
     {
-        if (_disposed)
-            return;
+        if (_disposed || _parked)
+            return; // nothing can be hovered on a hidden dock (Hide cleared it)
         var slot = index >= 0 && index < _slots.Count && label is not null ? _slots[index] : null;
         string? key = slot?.Key;
         if (key != _hoverKey)
@@ -551,6 +661,18 @@ internal sealed partial class GlassDockSurface
             HideLabel(snap: false);
         else
             ShowLabel(slot, label!);
+    }
+
+    /// <summary>Hover and press as if the pointer had never been there, at once (the window is being hidden): no lift, no label, no pressed scale.</summary>
+    private void ClearPointerLooks()
+    {
+        if (Find(_hoverKey) is { } hovered && hovered.Key != _dragKey)
+            Translate(hovered.Lift, Vector2.Zero, TimeSpan.Zero, Bezier.Out);
+        _hoverKey = null;
+        if (Find(_pressedKey) is { } pressed)
+            GlassMotion.ScaleTo(pressed.Lift, 1, TimeSpan.Zero, GlassEase.Out, Centre(pressed));
+        _pressedKey = null;
+        HideLabel(snap: true);
     }
 
     /// <summary>The picture only: the box (and so what the controller hit-tests) stays where it is (HANDOFF 11.3).</summary>
@@ -781,6 +903,8 @@ internal sealed partial class GlassDockSurface
         _barClip?.Dispose();
         _barClipObject = null;
         _barClip = null;
+        foreach (var slot in _slots.Concat(_leaving).ToList())
+            Drop(slot);
         _stage.Children.Clear();
         _root.Children.Clear();
         _slots.Clear();

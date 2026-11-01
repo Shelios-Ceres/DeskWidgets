@@ -28,10 +28,10 @@ internal sealed class DockEdgeStrip : IDisposable
     /// <summary>A file drag came over the strip.</summary>
     public event Action? DragReached;
 
-    /// <summary>Places the strip along <paramref name="area"/>'s bottom, <paramref name="height"/> pixels high. Takes effect on the next <see cref="SetVisible"/> or at once while shown.</summary>
-    public void Place(DockRect area, int height)
+    /// <summary>Places the strip at <paramref name="rect"/> (screen pixels). Takes effect on the next <see cref="SetVisible"/> or at once while shown.</summary>
+    public void Place(DockRect rect)
     {
-        _rect = new DockRect(area.X, area.Bottom - height, area.Width, height);
+        _rect = rect;
         if (_hwnd != 0)
             Win32.SetWindowPos(_hwnd, Win32.HWND_TOP, _rect.X, _rect.Y, _rect.Width, _rect.Height, Win32.SWP_NOACTIVATE | (_visible ? 0u : Win32.SWP_NOZORDER));
     }

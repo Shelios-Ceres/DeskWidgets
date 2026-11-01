@@ -79,6 +79,9 @@ internal sealed class PixelDockPainter
     private readonly Dictionary<string, int> _lift = [];
 
     private readonly HashSet<string> _hidden = [];
+
+    /// <summary>Each icon's running look (section 1) and where its D3 to D5 frames are.</summary>
+    private readonly Dictionary<string, RunLook> _run = [];
     private readonly HashSet<string> _popping = [];
     private int _popFrame;
     private readonly List<LeavingCell> _leaving = [];
@@ -185,11 +188,12 @@ internal sealed class PixelDockPainter
             foreach (var view in oldItems)
             {
                 if (!keep.Contains(view.Item.Key) && _shownX.TryGetValue(view.Item.Key, out int x) && !_hidden.Contains(view.Item.Key))
-                    leaving.Add(new LeavingCell(_art.Icon(palette, view, IconArt), x + HaloRoom, IconTop));
+                    leaving.Add(Snapshot(palette, view, x));
             }
         }
         Items = items;
         Size = size;
+        SyncRunLooks();
         if (Gap > items.Count)
             Gap = items.Count;
 
@@ -427,7 +431,8 @@ internal sealed class PixelDockPainter
                 Plate(canvas, sx, SlotTop, SlotArt, p.Select);
             else if (pressed)
                 Plate(canvas, sx, SlotTop, SlotArt, p.Shade);
-            int lift = flash ? 0 : pressed ? -1 : _lift.GetValueOrDefault(key);
+            var look = view.Missing ? null : _run.GetValueOrDefault(key);
+            int lift = flash ? 0 : pressed ? -1 : Math.Max(_lift.GetValueOrDefault(key), look?.HopLift ?? 0);
             if (_popping.Contains(key))
             {
                 if (_popFrame == 1)
@@ -438,7 +443,13 @@ internal sealed class PixelDockPainter
                 }
                 lift = 1;
             }
-            BlitDissolved(_art.Icon(p, view, icon), canvas, sx + HaloRoom, IconTop - lift);
+            if (flash)
+            {
+                // The FLASH plate carries the icon alone: a running one keeps its awake drawing, without its halo (the mock's rule).
+                BlitDissolved(_art.Icon(p, view, icon, awake: look?.IsRunningAtRest == true), canvas, sx + HaloRoom, IconTop);
+                continue;
+            }
+            DrawLook(canvas, p, view, look, sx, SlotTop - lift);
         }
         if (_gapShown && Gap >= 0)
             DottedBox(canvas, TargetBarLeft + Pad + Gap * Pitch + HaloRoom, IconTop, icon, icon, p.Soft);
@@ -453,6 +464,208 @@ internal sealed class PixelDockPainter
             int right = Math.Min(CanvasWidth - ShadowOffset, ScreenRight - LabelGap);
             int x = Math.Clamp(lx + SlotArt / 2 - width / 2, left, Math.Max(left, right - width));
             canvas.Blit(plate, x, Math.Max(0, Head - LabelGap - height));
+        }
+    }
+
+    /// <summary>
+    /// One icon in its run look, its slot box's top-left at (x, y): the idle drawing, the running one (awake inside its halo), or a DISSOLVE
+    /// between them (D3 to D5) on the 4 × 4 Bayer mask laid from the bar's left edge, as the design's frames are.
+    /// </summary>
+    private void DrawLook(PixelCanvas canvas, PixelPalette p, DockItemView view, RunLook? look, int x, int y)
+    {
+        int size = IconArt;
+        if (look is null || look.IsIdleAtRest)
+        {
+            BlitDissolved(_art.Icon(p, view, size), canvas, x + HaloRoom, y + HaloRoom);
+            return;
+        }
+        var running = _art.Running(p, view, size);
+        if (look.IsRunningAtRest)
+        {
+            BlitDissolved(running, canvas, x, y);
+            return;
+        }
+        var idle = _art.Icon(p, view, size);
+        for (int sy = 0; sy < running.Height; sy++)
+        {
+            for (int sx = 0; sx < running.Width; sx++)
+            {
+                if (_dissolve > 0 && PixelMotion.BayerAt(x + sx, y + sy) >= 4 * _dissolve)
+                    continue;
+                // The design's frames lay the mask from the bar's left edge and the window's top.
+                uint value = look.ShowsRunning(PixelMotion.BayerAt(x + sx - BarLeft, y + sy)) ? running.Get(sx, sy) : idle.Get(sx - HaloRoom, sy - HaloRoom);
+                if (value != 0)
+                    canvas.Set(x + sx, y + sy, value);
+            }
+        }
+    }
+
+    /// <summary>What a leaving icon looked like at rest (D11 LEAVEs that picture): the running look's halo goes with it.</summary>
+    private LeavingCell Snapshot(PixelPalette p, DockItemView view, int slotX)
+    {
+        var look = view.Missing ? null : _run.GetValueOrDefault(view.Item.Key);
+        if (look is not null && !look.IsIdleAtRest)
+            return new LeavingCell(_art.Running(p, view, IconArt), slotX, SlotTop);
+        return new LeavingCell(_art.Icon(p, view, IconArt), slotX + HaloRoom, IconTop);
+    }
+
+    // ----- the running look (D3 to D5) -----
+
+    /// <summary>
+    /// An icon's run state changed. With <paramref name="animate"/> it plays its moment: <see cref="DockRunTransition.Opening"/> the hop and
+    /// DISSOLVE frames 1 and 2, then holds (a still frame: nothing ticks); OpenedHere and OpenedElsewhere the rest of the DISSOLVE (D4; from
+    /// idle all four frames); Closed DISSOLVEs to idle (D5); TimedOut goes back the way it came. Frame 0 is shown at once. Returns whether
+    /// it still has frames to play (step them with <see cref="StepRuns"/>).
+    /// </summary>
+    public bool SetRun(string key, DockRunState state, DockRunTransition how, bool animate)
+    {
+        if (!_run.TryGetValue(key, out var look))
+            _run[key] = look = RunLook.AtRest(state);
+        if (!animate || how == DockRunTransition.None)
+        {
+            look.Snap(state);
+            return false;
+        }
+        look.Begin(state, hop: how == DockRunTransition.Opening);
+        return look.Animating;
+    }
+
+    /// <summary>One Pixel frame of every icon whose run look is moving. Returns whether any still is.</summary>
+    public bool StepRuns()
+    {
+        bool more = false;
+        foreach (var look in _run.Values)
+        {
+            if (look.Animating)
+            {
+                look.Step();
+                more |= look.Animating;
+            }
+        }
+        return more;
+    }
+
+    public bool RunsAnimating => _run.Values.Any(l => l.Animating);
+
+    /// <summary>Every run look at the state it is heading for, at once (the dock is being hidden: no frames left to step).</summary>
+    public void SnapRuns()
+    {
+        foreach (var look in _run.Values)
+        {
+            if (look.Animating)
+                look.Snap(look.Target);
+        }
+    }
+
+    /// <summary>The list's states are the controller's: a look that shows (or is heading for) another state takes the list's at once.</summary>
+    private void SyncRunLooks()
+    {
+        var keys = new HashSet<string>();
+        foreach (var view in Items)
+        {
+            string key = view.Item.Key;
+            keys.Add(key);
+            if (!_run.TryGetValue(key, out var look))
+                _run[key] = RunLook.AtRest(view.State);
+            else if (look.Target != view.State)
+                look.Snap(view.State);
+        }
+        foreach (var key in _run.Keys.ToList())
+        {
+            if (!keys.Contains(key))
+                _run.Remove(key);
+        }
+    }
+
+    /// <summary>
+    /// The DISSOLVE between an icon's idle and running pictures as quarters: going forward, the running picture shows where the Bayer value is
+    /// below 4 × <see cref="K"/>; going back (D5 from running), the idle one does. At rest a look is idle, running, or D3's hold (forward, K = 2).
+    /// </summary>
+    private sealed class RunLook
+    {
+        private static readonly int[] HopLifts = [1, 2, 3, 3, 2, 1, 0];
+
+        private bool _forward = true;
+        private int _targetK;
+        private int _hop = -1;
+
+        public int K { get; private set; }
+
+        public DockRunState Target { get; private set; }
+
+        public bool Animating => _hop >= 0 || K != _targetK;
+
+        public int HopLift => _hop >= 0 ? HopLifts[_hop] : 0;
+
+        public bool IsIdleAtRest => !Animating && (_forward ? K == 0 : K == 4);
+
+        public bool IsRunningAtRest => !Animating && (_forward ? K == 4 : K == 0);
+
+        public bool ShowsRunning(int bayer) => _forward ? bayer < 4 * K : bayer >= 4 * K;
+
+        public static RunLook AtRest(DockRunState state)
+        {
+            var look = new RunLook();
+            look.Snap(state);
+            return look;
+        }
+
+        public void Snap(DockRunState state)
+        {
+            Target = state;
+            _forward = true;
+            _hop = -1;
+            K = _targetK = state switch { DockRunState.Running => 4, DockRunState.Opening => 2, _ => 0 };
+        }
+
+        public void Begin(DockRunState state, bool hop)
+        {
+            Target = state;
+            if (state == DockRunState.Idle)
+            {
+                // D5 from running uses the closing mask (idle comes in where Bayer is low); from D3's hold it goes back the way it came.
+                if (_forward && K == 4 && _hop < 0)
+                    (_forward, K) = (false, 0);
+                _hop = -1;
+                _targetK = _forward ? 0 : 4;
+            }
+            else
+            {
+                // Opening and running go forward; one interrupted half-way back keeps its mask and turns round.
+                if (!_forward && K == 4)
+                    (_forward, K) = (true, 0);
+                if (!_forward && state == DockRunState.Opening)
+                    (_forward, K) = (true, 4 - K);
+                int full = state == DockRunState.Opening ? 2 : 4;
+                _targetK = _forward ? full : 4 - full;
+                if (hop && _forward && K == 0)
+                    _hop = 0; // frame 0 of the hop, shown at once
+            }
+            if (_hop < 0)
+                StepK(); // frame 0 of a DISSOLVE is its first quarter, shown at once
+        }
+
+        public void Step()
+        {
+            if (_hop >= 0)
+            {
+                if (++_hop < HopLifts.Length)
+                    return;
+                _hop = -1;
+            }
+            StepK();
+        }
+
+        private void StepK()
+        {
+            K += Math.Sign(_targetK - K);
+            if (!Animating && !_forward && (K == 0 || K == 4))
+            {
+                // Back at rest: keep it in the forward form.
+                _forward = true;
+                K = 4 - K;
+                _targetK = K;
+            }
         }
     }
 

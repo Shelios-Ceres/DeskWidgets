@@ -12,23 +12,22 @@ namespace DeskWidgets.Dock;
 /// </summary>
 internal sealed class GlassDockTiles
 {
-    // The art key per program, found once per run (an exe's version info is read for it): null means "no custom tile".
-    private static readonly Dictionary<string, string?> s_art = [];
-
     private readonly Action _repaint;
     private readonly Dictionary<(IconImage Image, int Size), WriteableBitmap> _bitmaps = [];
 
     public GlassDockTiles(Action repaint) => _repaint = repaint;
 
     /// <summary>
-    /// What the tile for <paramref name="item"/> would show now, as a key (a tile is rebuilt only when it changes), and how to build it.
-    /// <paramref name="loading"/> is true while the picture is still on its way.
+    /// What the tile for <paramref name="item"/> would show now, as a key (a tile is rebuilt only when it changes), how to build its idle look
+    /// and its running look (HANDOFF 4). <c>Loading</c> is true while the picture is still on its way. The custom tile's key comes with the view
+    /// (<see cref="DockItemView.CustomKey"/>, found off the UI thread); until it does, the real icon stands in and the tile changes when it comes.
     /// </summary>
-    public (string State, Func<FrameworkElement> Build, bool Loading) Describe(DockItem item, GlassPalette palette, bool dark, double size, double scale)
+    public (string State, Func<FrameworkElement> Build, Func<FrameworkElement> BuildRunning, bool Loading) Describe(DockItemView view, GlassPalette palette, bool dark, double size, double scale)
     {
+        var item = view.Item;
         string theme = dark ? "d" : "l";
-        if (ArtFor(item) is { } key && GlassTileArt.ForApp(key) is { } art)
-            return ($"art|{key}|{theme}|{size}", () => GlassTiles.Designed(art, dark, size), false);
+        if (view.CustomKey is { } key && GlassTileArt.ForApp(key) is { } art)
+            return ($"art|{key}|{theme}|{size}", () => GlassTiles.Designed(art, dark, size), () => GlassDockRunning.Designed(key, art, dark, size), false);
 
         if (IconPath(item) is { } path)
         {
@@ -38,27 +37,18 @@ internal sealed class GlassDockTiles
             if (!icons.TryGet(request, out var image))
             {
                 icons.Request(request, _repaint);
-                return ($"loading|{theme}|{size}", () => GlassTiles.Loading(palette, size), true);
+                return ($"loading|{theme}|{size}", () => GlassTiles.Loading(palette, size), () => GlassTiles.Loading(palette, size), true);
             }
             if (image is not null)
-                return ($"real|{path}|{pixels}|{theme}|{image.GetHashCode()}", () => GlassTiles.RealIcon(palette, Bitmap(image, pixels), image.FullBleed, size, scale), false);
+            {
+                return ($"real|{path}|{pixels}|{theme}|{image.GetHashCode()}",
+                    () => GlassTiles.RealIcon(palette, Bitmap(image, pixels), image.FullBleed, size, scale),
+                    () => GlassDockRunning.RealIcon(Bitmap(image, pixels), GlassDockRunning.AccentFor(image, dark), size, scale),
+                    false);
+            }
         }
-        return ($"app|{theme}|{size}", () => GlassTiles.Designed(GlassTileArt.For(FolderItemKind.App), dark, size), false);
-    }
-
-    /// <summary>The custom tile's key: by AUMID, exe name or Steam id first (no file read), then by the exe's product and description.</summary>
-    private static string? ArtFor(DockItem item)
-    {
-        if (s_art.TryGetValue(item.Key, out var known))
-            return known;
-        string? key = AppIconPack.Match(item.Identity());
-        if (key is null && !string.IsNullOrEmpty(item.ExePath))
-        {
-            var exe = FolderScanner.ExeIdentity(item.ExePath);
-            key = AppIconPack.Match(item.Identity(exe.ProductName, exe.FileDescription));
-        }
-        s_art[item.Key] = key;
-        return key;
+        var generic = GlassTileArt.For(FolderItemKind.App);
+        return ($"app|{theme}|{size}", () => GlassTiles.Designed(generic, dark, size), () => GlassDockRunning.Designed(null, generic, dark, size), false);
     }
 
     /// <summary>What to ask the Shell for: the exe, else the Start entry (<c>shell:AppsFolder\&lt;AUMID&gt;</c>); a bare link has no icon of its own.</summary>

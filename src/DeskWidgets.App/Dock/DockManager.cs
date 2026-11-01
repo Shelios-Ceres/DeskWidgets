@@ -18,6 +18,7 @@ internal sealed class DockManager : IDockHost, IDisposable
     private readonly List<DockSettings> _store;
     private readonly List<DockController> _docks = [];
     private WindowTracker? _tracker;
+    private readonly RunningScanner _scanner = new();
     private FrameClock.Ticket? _settle;
     private bool _disposed;
 
@@ -34,18 +35,63 @@ internal sealed class DockManager : IDockHost, IDisposable
 
     public WidgetTheme Theme => _theme();
 
-    /// <summary>Opens the saved docks. One per screen: a second saved for the same screen is dropped.</summary>
+    /// <summary>Opens the saved docks, one per screen (see <see cref="Reconcile"/>).</summary>
     public void Start()
     {
-        foreach (var settings in _store.ToList())
+        Reconcile();
+        PublishWindows();
+    }
+
+    /// <summary>
+    /// Matches the saved docks to the screens there are (B2-3): one dock per screen, and no program is ever dropped from the settings. A dock saved
+    /// for the same screen as another merges into it; a dock whose screen is gone and whose fallback (the primary screen) is taken keeps its
+    /// settings and waits, closed, for its screen to come back (<see cref="OnDisplayChanged"/> looks again).
+    /// </summary>
+    private void Reconcile()
+    {
+        var screens = Win32.GetMonitors().Select(m => m.Device).Where(d => d is not null).Select(d => d!).ToList();
+        string primary = PrimaryDevice() ?? screens.FirstOrDefault() ?? "";
+        var settings = _store.ToList();
+        var plan = DockScreens.Plan([.. settings.Select(s => s.Monitor)], screens, primary);
+        for (int i = 0; i < settings.Count; i++)
         {
-            if (_docks.Any(d => SameScreen(d.Settings.Monitor, settings.Monitor)))
+            var open = _docks.FirstOrDefault(d => d.Settings == settings[i]);
+            if (plan[i].Fate == DockFate.Open && open is null)
+                Open(settings[i]);
+            else if (plan[i].Fate != DockFate.Open && open is not null)
             {
-                _store.Remove(settings);
-                continue;
+                _docks.Remove(open);
+                open.Dispose();
             }
-            Open(settings);
         }
+        bool merged = false;
+        for (int i = 0; i < settings.Count; i++)
+        {
+            if (plan[i].Fate != DockFate.Merge)
+                continue;
+            var into = settings[plan[i].Target];
+            var extra = settings[i].Items.Where(item => !into.Items.Any(existing => existing.Key == item.Key)).Select(item => item.Copy()).ToList();
+            if (_docks.FirstOrDefault(d => d.Settings == into) is { } dock)
+                dock.Add(extra);
+            else
+                into.Items.AddRange(extra);
+            _store.Remove(settings[i]);
+            merged = true;
+        }
+        if (merged)
+            RequestSave();
+    }
+
+    /// <summary>Reads the taskbar's windows once and tells every dock (which programs have a window now). Runs only when the set of windows changed.</summary>
+    private void PublishWindows()
+    {
+        if (_disposed || _docks.Count == 0)
+            return;
+        var windows = _scanner.Scan();
+        if (_tracker is not null)
+            _tracker.TrackedWindows = [.. windows.Select(w => w.Handle)];
+        foreach (var dock in _docks.ToList())
+            dock.OnWindows(windows);
     }
 
     private static bool SameScreen(string? a, string? b) => string.Equals(a ?? PrimaryDevice(), b ?? PrimaryDevice(), StringComparison.OrdinalIgnoreCase);
@@ -83,12 +129,15 @@ internal sealed class DockManager : IDockHost, IDisposable
             foreach (var dock in _docks.ToList())
                 dock.EvaluateRule();
         };
+        _tracker.WindowSetChanged += PublishWindows;
     }
 
     // ---------------------------------------------------------------- adding and removing a dock
 
     /// <summary>Whether the screen under the pointer (or the primary one) already has a dock: the menu row is greyed then.</summary>
     public bool ScreenHasDock(string? device) => _docks.Any(d => SameScreen(d.Settings.Monitor, device));
+
+    bool IDockHost.OtherDockOn(DockController self, string? device) => _docks.Any(d => d != self && SameScreen(d.Settings.Monitor, device));
 
     /// <summary>The screen the pointer is on: where "Dock" in a menu adds one.</summary>
     public static string? ScreenUnderPointer()
@@ -101,6 +150,7 @@ internal sealed class DockManager : IDockHost, IDisposable
         var settings = new DockSettings { Monitor = device };
         _store.Add(settings);
         Open(settings);
+        PublishWindows();
         RequestSave();
         return _docks.FirstOrDefault(d => d.Settings == settings);
     }
@@ -129,8 +179,10 @@ internal sealed class DockManager : IDockHost, IDisposable
 
     public void OnDisplayChanged()
     {
+        Reconcile(); // a screen came or went: a dormant dock may open, an open one may have lost its screen to another
         foreach (var dock in _docks)
             dock.OnDisplayChanged();
+        PublishWindows();
     }
 
     /// <summary>The docks' rectangles the desktop icons keep clear of, also while a dock is hidden (or the icons would jump each time it shows).</summary>

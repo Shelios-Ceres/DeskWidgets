@@ -27,6 +27,11 @@ internal sealed partial class GlassDockSurface : IDockSurface
     private const int MA_NOACTIVATE = 3;
     private const uint WM_MOUSEACTIVATE = 0x0021;
     private const long WS_EX_TOPMOST = 0x8, WS_EX_NOACTIVATE = 0x08000000;
+    private const int SW_HIDE = 0, SW_SHOWNOACTIVATE = 4;
+    private static readonly nint HwndTopmost = -1;
+
+    /// <summary>The room WinUI puts between a flyout placed on top and its target, made up for in the menu's anchor.</summary>
+    private const double MenuPlacementGapDip = 6;
 
     private readonly Window _window = new();
     private readonly GlassDockBackdrop _glass = new();
@@ -43,6 +48,7 @@ internal sealed partial class GlassDockSurface : IDockSurface
     private DockRect _applied; // what the window was last set to
     private bool _windowDirty;
     private bool _shown;
+    private bool _parked; // hidden by Hide (the slide-out ended), until Show
     private bool _disposed;
     private bool _captured;
     private MenuFlyout? _menu;
@@ -91,8 +97,21 @@ internal sealed partial class GlassDockSurface : IDockSurface
 
     public void Show()
     {
-        if (_shown || _disposed)
+        if (_disposed)
             return;
+        if (_shown)
+        {
+            if (!_parked)
+                return;
+            // Back from Hide: where the controller last put it, then shown without the focus and back on top of the topmost band.
+            // The styles and the region stayed with the window; no D15 fade (that is the new dock's moment, the slide-in is this one's).
+            _parked = false;
+            ApplyWindow();
+            ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
+            Win32.SetWindowPos(_hwnd, HwndTopmost, 0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+            return;
+        }
+        _parked = false;
         ApplyWindow();
         _window.AppWindow.Show(false); // without taking the focus
         Win32.MakeTransparentToolWindow(_hwnd); // showing may re-apply presenter styles
@@ -110,6 +129,22 @@ internal sealed partial class GlassDockSurface : IDockSurface
             GlassMotion.FadeTo(_root, 1, GlassMotion.Enter, GlassEase.Out);
             _glass.FadeIn(GlassMotion.Enter);
         }
+    }
+
+    public void Hide()
+    {
+        if (_disposed || _parked)
+            return;
+        _parked = true;
+        // No Cancel or Leave to the controller: it is the one hiding the dock, and its own state goes with it.
+        if (_captured)
+        {
+            _captured = false; // first, so the capture-lost event this raises is not a cancel
+            _root.ReleasePointerCaptures();
+        }
+        ClearPointerLooks();
+        if (_shown)
+            ShowWindow(_hwnd, SW_HIDE);
     }
 
     public void PlaceWindow(DockRect window, DockRect bar, double scale)
@@ -237,7 +272,7 @@ internal sealed partial class GlassDockSurface : IDockSurface
     /// <summary>Raises <see cref="Pointer"/> at the cursor, in the controller's bar coordinates (DIPs; negative Y is the headroom).</summary>
     private void Raise(DockPointerKind kind, bool left, bool right, bool middle, bool shift)
     {
-        if (_disposed || !Win32.GetCursorPos(out var cursor))
+        if (_disposed || _parked || !Win32.GetCursorPos(out var cursor))
             return;
         double x = (cursor.X - _bar.X) / Scale, y = (cursor.Y - _bar.Y) / Scale;
         Pointer?.Invoke(new DockPointer(kind, x, y, cursor.X, cursor.Y, left, right, middle, shift));
@@ -320,8 +355,6 @@ internal sealed partial class GlassDockSurface : IDockSurface
         var menu = new MenuFlyout { ShouldConstrainToRootBounds = false };
         foreach (var item in FlyoutMenuAdapter.Build(entries))
             menu.Items.Add(item);
-        bool invoked = false;
-        WatchClicks(menu.Items, () => invoked = true);
         nint previous = Win32.ForegroundWindow();
         menu.Opened += (_, _) =>
         {
@@ -336,9 +369,10 @@ internal sealed partial class GlassDockSurface : IDockSurface
             if (!_disposed)
             {
                 SetExStyle(WS_EX_NOACTIVATE, on: true);
-                // Dismissed without a choice: the window the user was in gets the focus back. After a choice the focus is left alone,
-                // so a program the row started can still come to the front.
-                if (!invoked && previous != 0 && previous != _hwnd && Win32.ForegroundWindow() == _hwnd)
+                // Dismissed or chosen ("Icon size", "Remove from dock"...): a tool window must not stay the foreground window, so the window
+                // the user was in gets the focus back whenever the dock still has it. A program a row started has already taken the
+                // foreground (the Open rows run before Closed, and it was started by the foreground process): then the dock is not it.
+                if (previous != 0 && previous != _hwnd && Win32.ForegroundWindow() == _hwnd && IsWindow(previous))
                     Win32.SetForegroundWindow(previous);
             }
             closed();
@@ -356,7 +390,9 @@ internal sealed partial class GlassDockSurface : IDockSurface
         // as wide as the icon (an icon's menu) or one DIP wide at the pointer (the bar's), 8 DIP above the bar.
         double left = icon >= 0 ? barLeftDip + DockGeometry.IconLeftDip(_size, icon) : (screenX - _actual.X) / Scale - 0.5;
         double width = icon >= 0 ? DockGeometry.IconDip(_size) : 1;
-        double y = (_bar.Y - _actual.Y) / Scale - DockGeometry.LabelGapDip;
+        // WinUI leaves about 6 DIP between a Top-placed flyout and its target (measured live at 150 %: the menu's bottom was 14 DIP above the bar
+        // with the anchor at 8), so the anchor sits that much lower for the menu's bottom to land 8 DIP above the bar.
+        double y = (_bar.Y - _actual.Y) / Scale - DockGeometry.LabelGapDip + MenuPlacementGapDip;
         var anchor = new Border
         {
             Width = width, Height = 1, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
@@ -365,17 +401,6 @@ internal sealed partial class GlassDockSurface : IDockSurface
         _root.Children.Add(anchor);
         menu.Closed += (_, _) => _root.Children.Remove(anchor);
         menu.ShowAt(anchor, new FlyoutShowOptions { Placement = FlyoutPlacementMode.Top });
-    }
-
-    private static void WatchClicks(IList<MenuFlyoutItemBase> items, Action clicked)
-    {
-        foreach (var item in items)
-        {
-            if (item is MenuFlyoutItem row)
-                row.Click += (_, _) => clicked();
-            else if (item is MenuFlyoutSubItem sub)
-                WatchClicks(sub.Items, clicked);
-        }
     }
 
     // ---------------------------------------------------------------- drops, language, the end
@@ -445,6 +470,12 @@ internal sealed partial class GlassDockSurface : IDockSurface
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     private static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(nint hwnd, int command);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(nint hwnd);
 
     [DllImport("user32.dll")]
     private static extern int SetWindowRgn(nint hwnd, nint region, bool redraw);

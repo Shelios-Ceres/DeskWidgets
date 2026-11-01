@@ -89,8 +89,8 @@ internal static class TaskbandPins
             if (path.Length > 0)
             {
                 // A classic pin: its target is the shortcut in the taskbar's folder.
-                if (IsPinnedFolderFile(path) && File.Exists(path))
-                    return DockIdentity.FromPath(path);
+                if (IsPinnedFolderFile(path) && !File.Exists(path))
+                    return null; // a stale pin: its shortcut is gone
                 return DockIdentity.FromPath(path);
             }
 

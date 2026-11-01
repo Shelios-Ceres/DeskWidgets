@@ -70,7 +70,10 @@ A theme may change how information is presented (rings ↔ battery bars, full ci
 
 - Dock (one row, at the chosen icon size):
   - Every app at that size, with its name in a label above the bar on hover.
-  - States: idle; hover (the icon lifts and the label shows the name); pressed; missing (the app can no longer be found: its icon is dimmed, and a click offers to remove it). The running, opening and closing states are planned for Phase 15.4: a running app shows its running icon, with no dot, and its opening and closing are animated.
+  - States: idle; hover (the icon lifts and the label shows the name); pressed; missing (the app can no longer be found: its icon is dimmed, and a click offers to remove it); running, opening and closing (below). A running app shows its running icon, with no dot, and its opening and closing are animated.
+    - **Running:** the program has a taskbar window. The window is matched by its AppUserModelID, then by its process's, then by its exe path (for the apps with custom icons, also by the launcher table the icons use), never by title. A program with only a tray icon is not running. A link that has only a URL, such as a Steam link, has no running state.
+    - **Click:** a click on a running program brings its frontmost window forward, restoring it first if it is minimized. If that window is already in front, the click minimizes it when it is the program's only window; with several windows, the click brings the next one forward, in a fixed order by window handle. Middle-click or Shift+click starts another copy instead.
+    - **Opening:** a program the dock starts goes into the opening state at once. It stays there until its first window comes, or for 10 s, and then goes back to idle, which is not an error. A start that fails also goes back to idle at once. Each start first checks, at the click, that the program is still there: a missing one is marked as missing, and one that has come back starts. A click while the program is opening does nothing (it would only start a second copy); middle-click or Shift+click still does.
   - Empty: "Drop apps here", centred in the bar.
 
 ### 2.4 What colors mean
@@ -102,7 +105,7 @@ Each theme's exact values are in section 8.
 
 - **Must**: the whole card can be dragged, so content must not intercept pointer events. No buttons, text boxes or scroll areas on the card; all settings go in the right-click menu.
   - **Exception (approved 2026-10-21, Big Folder only):** the Big Folder's cells and header take a click: a press and release that stay within the system's drag threshold. A press that moves farther is still a drag of the card, wherever it starts. The Big Folder card also accepts dropped files. It still has no buttons, text boxes or scroll areas: searching, selecting, sorting and renaming happen in the panel, which is a separate window.
-- **Dock (2026-10-31; an exception to the card rule above, because the dock holds apps and is not a card):** its apps take clicks, and it takes drops. A click on an app starts it. A drag that starts on an app reorders it; holding an app over another makes a group (planned, Phase 15.5). A drag that starts on the bar's ends moves the bar along the bottom edge, or onto another screen's bottom edge.
+- **Dock (2026-10-31; an exception to the card rule above, because the dock holds apps and is not a card):** its apps take clicks, and it takes drops. A click on an app starts it, or, for a running app, brings its window forward or minimizes it (2.3). A drag that starts on an app reorders it; holding an app over another makes a group (planned, Phase 15.5). A drag that starts on the bar's ends moves the bar along the bottom edge, or onto another screen's bottom edge.
 - **Dock, drops:** a program dropped on the bar is added, never opened with it. The dock keeps a reference, and the file is not moved, copied or made. Only programs are added in this build; opening files with an app is planned (Phase 15.5). "Add apps…" opens Windows' Applications folder to drag from. "Add taskbar apps" adds the apps pinned to the taskbar that the dock does not have yet, in the taskbar's order. It never changes the taskbar.
 - **Dock, menus:** right-click an app for Open, Run as administrator (not for Store apps), Open file location, Remove from dock and Show more options (Windows' own menu, as in the Big Folder). Right-click the bar for Add apps…, Add taskbar apps, Icon size (Small, Medium and Large) and Remove dock, which asks first. Removing goes only through these menus; dragging an app off the bar never removes it.
 - **Must**: purely decorative layers set `IsHitTestVisible = false`.
@@ -141,7 +144,7 @@ The dock is the one widget above windows. It is not a widget type and has no car
 - **Must**: it hides, sliding down off the bottom edge, while a window on its screen is maximized. Minimized windows, windows on another virtual desktop and tool windows don't count. A large window that is not maximized stays under the dock.
 - **Must**: it hides for a full-screen window (a game, a video or a slide show). A window counts as full screen when it covers its whole monitor **and** the Shell reports a busy state (`SHQueryUserNotificationState`: full-screen Direct3D or presentation mode). Both must be true; the Shell's state alone is not enough. While such a window is in front, the bottom edge does not bring the dock back.
 - **Should**: when the full-screen test is unclear, hide. A dock that hides once too often is less harmful than one that sits over a game.
-- **Must**: it comes back, sliding up, when the pointer reaches the bottom edge under it, or when a file drag reaches that edge. It slides away again a short time after the pointer leaves (600 ms in Glass; see 4.2 for Pixel), but never while its menu, a group's panel or a drag is in use.
+- **Must**: it comes back, sliding up, when the pointer reaches the bottom edge under the dock or about one icon slot (an icon and its gap) beside it on either side, or when a file drag reaches that stretch. The edge strip covers only that stretch, not the whole bottom edge. It slides away again 600 ms after the pointer is off both the edge strip and the bar, in both themes; while the pointer rests on either, it stays. It never slides away while its menu, a group's panel or a drag is in use. A dock opened over a maximized window starts hidden. Once it has slid away, its window is hidden, not parked below the screen.
 - **Must**: it reserves no space. Maximized windows keep the whole screen, which is why the dock hides for them.
 
 ---
@@ -156,7 +159,7 @@ Tokens of one kind go in one place, not scattered across widgets.
 | Palette | A light and a dark set, named by the roles of section 8 | `Widgets/GlassPalette.cs` | `Pixel/PixelPalette.cs` |
 | Fonts | Family, type scale, weights, fallback fonts | Segoe UI Variable Display / Text | `Pixel/PixelFonts.cs` (3×5, 5×7) + `Pixel/SystemGlyphs.cs` (SimSun 12 px) + `Pixel/FusionGlyphs.cs` (Fusion 8 px, Big Folder only) |
 | Icons | Device icons, charging indicator, empty-state icon | Segoe Fluent Icons (`Widgets/Battery/DeviceGlyphs.cs`) | `Pixel/PixelSprites.cs` |
-| Motion | Which changes animate, duration, easing | Battery ring: 700 ms cubic ease-out; the Big Folder's moments (4.1): Quick 100, Exit 150, Enter 240, Move 280, Press 80, Release 200, Blend 250 ms with three easings; Start 600 ms for the dock's opening (planned, 4.1); the second hand ticks once a second | Stepped frames of T = 40 ms (GROW, SHRINK, DISSOLVE, MOVE, POP, LEAVE, FLASH, STEP, WIPE, HOP), whole art pixels, no alpha (4.2); the second hand ticks once a second |
+| Motion | Which changes animate, duration, easing | Battery ring: 700 ms cubic ease-out; the Big Folder's moments (4.1): Quick 100, Exit 150, Enter 240, Move 280, Press 80, Release 200, Blend 250 ms with three easings; Start 600 ms for the dock's opening (4.1); the second hand ticks once a second | Stepped frames of T = 40 ms (GROW, SHRINK, DISSOLVE, MOVE, POP, LEAVE, FLASH, STEP, WIPE, HOP), whole art pixels, no alpha (4.2); the second hand ticks once a second |
 
 ---
 
@@ -227,16 +230,20 @@ Font sizes (current values; new widgets pick the nearest):
   - Pressed: the tile scales to 94 % about its centre.
   - Missing: the tile at 40 % opacity, and the label reads "Can't find {name}". The missing app is dimmed by opacity, not with the `Inactive` role. A click opens a small menu: a disabled row "{name} can't be found", then "Remove from dock".
   - Adding (a program dragged over the bar): a tile-sized slot in `Hover` (radius 0.225) opens where the program will land. The icons after it slide aside, and the bar grows by one icon and one gap.
-  - Running, opening and closing (planned, Phase 15.4): the running art swaps the tile's light and colour (a custom icon on a coloured tile turns white, and one on a white tile turns coloured), with no dot, no outline and no shadow. A real icon gets an accent plate.
+  - Running, opening and closing: the running art swaps the tile's light and colour (a custom icon on a coloured tile turns white, and one on a white tile turns coloured), with no dot, no outline and no shadow. The 13 custom apps use the paint table of the design handoff. A generic app tile (an app with no icon of its own) swaps by the same rule.
+    - **A real icon** keeps its picture, drawn at 68 % of the tile on an accent plate instead of the white tile plate. The plate is computed once for each icon picture and cached:
+      - its hue is the saturation-weighted mean hue of the icon's pixels that are opaque (alpha ≥ 200) and saturated (HSL saturation ≥ 0.35);
+      - its saturation is the larger of the mean saturation of those pixels and 0.55, and its lightness is 0.38 on the light bar or 0.42 on the dark bar;
+      - an icon that is white, grey or mostly transparent (fewer than 2 % of its opaque pixels are saturated) gets the neutral plate `#3A3A3C`.
   - Open with and group forming (planned, Phase 15.5).
-- **Colours:** the dock uses the section 8 roles Primary, Hover, Tile plate and Tile sheen now. Its planned states use Pressed, Select, On select and Drop tint. The running white tile (`#FFFFFF` to `#F2F2F7`) and the accent plate are new values for the running build; they will be added to section 8 then.
+- **Colours:** the dock uses the section 8 roles Primary, Hover, Tile plate and Tile sheen now. The running look adds the running white tile (`#FFFFFF` to `#F2F2F7`) and the accent plate, both listed in section 8. Its planned states (groups and Open with) use Pressed, Select, On select and Drop tint.
 - **Menus:** `MenuEntry` rows through `MenuFlyout`, with the words of 2.7.
-- **Motion:** Phase 12's vocabulary (above), plus one new token, **Start** 600 ms Out, for the opening wipe (planned, Phase 15.4). With "Animation effects" off, every moment is one frame. The moments, by name:
+- **Motion:** Phase 12's vocabulary (above), plus one new token, **Start** 600 ms Out, for the opening wipe. With "Animation effects" off, every moment is one frame. The moments, by name:
   - **D1 Hover:** the icon lifts (Quick 100). The label fades in and rises 4 DIP (Enter 240). Moving to the next icon slides the label (Quick 100); leaving the bar drops the icon back and fades the label out (Exit 150).
   - **D2 Press:** the tile presses (Press 80); the release (Release 200) confirms the click.
-  - **D3 Opening (planned):** the running art's clip goes from 100 % to 50 % (Start 600), then holds without a loop until the first window appears. With no window after 10 s, the art wipes back down (Move 280) and the icon is idle again.
-  - **D4 Opened (planned):** the clip goes to 0 (Enter 240), and the tile pops from 1 to 1.06 at 45 % and back to 1 (Move 280). An app started elsewhere wipes from 100 % to 0 (Move 280), without the pop.
-  - **D5 Closing (planned):** the clip goes from 0 to 100 % (Move 280).
+  - **D3 Opening:** the running art's clip goes from 100 % to 50 % (Start 600), so the art rises from the bottom, then holds without a loop until the first window appears. With no window after 10 s, the art wipes back down (Move 280) and the icon is idle again, which is not an error.
+  - **D4 Opened:** for an app started from the dock, the clip goes to 0 (Enter 240), and the tile pops from 1 to 1.06 at 45 % and back to 1 (Move 280). An app started elsewhere wipes from 100 % to 0 (Move 280), without the pop.
+  - **D5 Closing:** the clip goes from 0 to 100 % (Move 280), so the running art sinks away.
   - **D6 Hide and reveal:** hiding slides the bar down by its height + 12 DIP (Move 280); revealing slides it up (Enter 240). It stays up while its menu or a drag is in use, or while a group's panel is open (planned). It slides away 600 ms after the pointer leaves; that is a delay, not a motion.
   - **D7 Reorder:** the dragged icon follows the pointer, lifted, at full opacity; the others slide to their new places (Move 280); the drop settles it (Move 280).
   - **D8 Group forming (planned):** after 500 ms over a target, the target's plate fades in (Quick 100). Release replaces both with the group icon, which settles from 92 % (Release 200). Moving away fades the plate out (Exit 150).
@@ -313,7 +320,7 @@ Added 2026-10-13.
 - **Window:** the bar sits 4 art pixels (8 DIP) above the screen's bottom edge. The window has 21 art pixels (42 DIP) of transparent room above the bar for the name plate, and is wide enough for the widest label at either end.
 - **Icons:** each size is drawn on its own grid and is never scaled. Custom apps and file types use the sprite roles of section 8. A tile has a 1-px ink outline, its fill, a shade lip along its bottom edge and a corner stair from the top: [3, 2, 1] at 20, [4, 2, 1, 1] at 24 and [5, 3, 2, 1, 1] at 32. Real icons use the Big Folder's tier-2 rule at the dock's size.
 - **Frame and shadow:** the card's frame (outline, Panel fill, a 1-px Highlight row, two Shade rows at the bottom and the stair [4, 2, 1, 1]), with the menus' hard 2-px Shadow down and to the right. The dock is the one card with a shadow, because it floats over windows. Desktop cards keep none.
-- **Halo:** a running icon has a 1-px halo that follows its shape, 2 art pixels out (planned, Phase 15.4). The halo uses the sprite roles; the dock adds no colour roles.
+- **Halo:** a running icon has a 1-px halo that follows its shape, 2 art pixels out. Its colour is the custom app's own colour from its sprite, the generic tile's slate, or else the most common coloured sprite-role pixel of the icon (ink, white, silver, slate and dusk do not count; blue when there is none). Every halo is then kept readable on the bar: on the light bar yellow steps down to orange, and cyan and lime step down two places (to blue and teal); on the dark bar purple, navy, teal and dusk step up one place. The halo uses the sprite roles; the dock adds no colour roles.
 - **States:**
   - Idle: the idle drawing.
   - Hover: the icon lifts 2 art pixels (4 DIP) at every size, and the name plate shows. The hit box stays where the slot is; the lift moves only the picture.
@@ -322,7 +329,7 @@ Added 2026-10-13.
   - Adding: a dotted box in `Soft`, one slot and one gap wide, opens where the program will land; the icons after it move aside by one slot.
   - Reordering: the dragged icon rides with the pointer, 6 px up and undimmed. Its old slot is a dotted box in `Faint` until the others move.
   - Empty: a dotted box in `Faint`, inset by the halo room, with "DROP APPS HERE" in `Soft`, centred. The pixel font draws it in capitals.
-  - Running, opening and closing (planned, Phase 15.4): the awake drawing and the halo, with the hop and dissolve of the motion below.
+  - Running, opening and closing: the awake drawing and the halo, with the hop and dissolve of the motion below. A real icon and the generic tile keep their one drawing, with the halo.
   - Open with, group tiles and group panels (planned, Phase 15.5).
 - **Name plate:** a menu-style plate (outline, Panel fill, a 1-px Highlight row, one Shade row, corners [2, 1] and the hard 2-px Shadow). It is 13 art pixels tall for pixel-font text, or 15 for Fusion (26 or 30 DIP). Its text sits 5 px in from each side. Its bottom is 4 art pixels above the bar's top; it is centred over the icon and kept 4 pixels inside the screen. It is at most 120 art pixels wide (240 DIP); a longer name is shortened in the middle by `NameShortener`.
 - **Fonts:** the name plate, the empty text and the dock's other labels follow the Fusion rule of the Big Folder above. Each text uses `PixelFonts.Regular` (5×7) if it spells all of it; otherwise Fusion Pixel 8 px if it covers all of it; otherwise the 12 px SimSun bitmap font for all of it. This extends that rule to the dock's labels and empty text. Menus and dialogs keep SimSun.
@@ -330,10 +337,10 @@ Added 2026-10-13.
 - **Motion:** stepped frames of T = 40 ms, on whole art pixels with no alpha. The moments are Glass's (4.1), D1 to D15, in pixel form:
   - **D1 Hover:** lift 1 px, then 2 px (2 frames); the plate shows on the second frame. Leaving: down 1 px in one frame, and the plate goes at once.
   - **D2 Press:** a `Shade` plate, 1 px down. Release: one FLASH frame in `Select`, and the app starts at once.
-  - **D3 Opening (planned):** a HOP (the icon lifts 1, 2, 3, 3, 2, 1 and 0 art pixels, 280 ms), then DISSOLVE frames 1 and 2 into the awake drawing. It holds, without a loop, until the first window appears.
-  - **D4 Opened (planned):** DISSOLVE frames 3 and 4.
-  - **D5 Closing (planned):** DISSOLVE from the awake drawing back to idle (4 frames, 160 ms).
-  - **D6 Hide and reveal:** STEP. The bar moves up from below the edge by ceil(distance / 6) pixels a frame (at most 6 frames, 240 ms), and back down the same way. The scene is drawn once and the window moves at each step; while hidden, the window is parked below the edge. The delay before it slides away after the pointer leaves is not yet set for Pixel (Glass uses 600 ms).
+  - **D3 Opening:** a HOP (the icon lifts 1, 2, 3, 3, 2, 1 and 0 art pixels, 280 ms), then DISSOLVE frames 1 and 2 into the awake drawing. It holds, without a loop, until the first window appears.
+  - **D4 Opened:** DISSOLVE frames 3 and 4. An app started elsewhere dissolves in all four frames, from idle. There is no pop in Pixel.
+  - **D5 Closing:** DISSOLVE from the awake drawing back to idle (4 frames, 160 ms). A timeout (no window after 10 s) dissolves back to idle from the hold, in two frames.
+  - **D6 Hide and reveal:** STEP. The window moves once a Pixel frame (40 ms), to where the slide of Glass's D6 (4.1) is by then, so the bar steps rather than glides, up and back down. The scene is drawn once and the window moves at each step. It slides away 600 ms after the pointer leaves, as in Glass. Once it has slid away, the window is hidden, not parked below the screen.
   - **D7 Reorder:** the dragged icon rides 6 px up with the pointer. When the pointer passes the middle of the next slot, that icon MOVEs over (3 frames) and the gap follows. The drop is instant.
   - **D8 Group forming (planned):** when the hold timer fires, the target turns into a group tile at once. On release, the dragged app's slot closes up (MOVE), and the group POPs (1 px up, then at rest).
   - **D9 Group panel (planned):** GROW up from the dock at full width (heights 1/3, 2/3, then all; 120 ms); SHRINK back (2/3, 1/3; 80 ms).
@@ -475,6 +482,13 @@ Roles added by the Big Folder:
 
 The file-type tile colors (light and dark pairs) are in the Glass design's `ICONS.md` and in `GlassTiles`. Under Pixel, the Big Folder uses the roles above (Select, Open fill, Shade and so on) and the sprite roles below.
 
+Roles added by the dock (Glass; the Pixel dock adds none, because its halo uses the sprite roles below):
+
+| Role | Used for | Glass (light / dark) |
+|---|---|---|
+| Running tile | The running look of a custom icon or the generic app tile: the white tile under the tile sheen | `#FFFFFF` to `#F2F2F7`, top to bottom, in both modes |
+| Accent plate | The running look of a real icon: the plate behind its picture | Computed for each icon, not a fixed value (4.1): the hue comes from the icon's own colours, lightness 0.38 (light) or 0.42 (dark); `#3A3A3C` for an icon that is white, grey or mostly transparent |
+
 Pixel sprite roles: 16 fixed colors, the same by day and by night, for the Big Folder's file-type and app sprites (`PixelPalette.Sprite(symbol)`; the symbols are those of `sprites.txt`):
 
 | Symbol | Color | Symbol | Color | Symbol | Color | Symbol | Color |
@@ -566,3 +580,4 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-31 | All | Added the dock (Phase 15, build A): a bar of apps at the bottom edge of each screen. 2.2, 2.3, 2.7 and 2.8 changed; new 2.11 (above windows; showing and hiding); the section 3 motion row (Start and HOP); Appendix B changed | The user asked for a dock bar for programs: "现在我们来做一个新的widget。这个widget有点不太一样，算一个dock栏，里面只能放一些程序" |
 | 2026-10-31 | Glass | Dock subsection in 4.1: geometry, the cards' glass with no outline or shadow, the name label, states, motion D1 to D15 and the Start 600 ms token | The user approved the Glass dock design on 2026-10-31 |
 | 2026-10-31 | Pixel | Dock subsection in 4.2: art sizes 20, 24 and 32, bar geometry, the card's frame with a hard 2-px shadow (the dock is the one card with one), the name plate, the Fusion rule of Phase 8 extended to the dock's labels and empty text, stepped motion with a new HOP move | The user approved the Pixel dock design on 2026-10-31; the dock floats over windows, so it takes the menus' hard shadow |
+| 2026-11-01 | All | Dock running programs (Phase 15.4): a running app shows its running icon and its opening and closing moments (D3 to D5), and a click brings its window forward or minimizes it. Level: a change to a shared rule for the click and for hiding and reveal (2.3, 2.7, 2.11, made in both themes in one change), and a redesign within each theme for the running look and its motion (4.1, 4.2, 8). The edge strip covers only the stretch under the dock | The user asked for running programs to show a running icon, with opening and closing animations: "运行中的程序额外设计一套图标，打开、关闭的时候都加上相应的动画"; the user approved the designs and decided "只在程序坞下方那一段" for the edge strip |

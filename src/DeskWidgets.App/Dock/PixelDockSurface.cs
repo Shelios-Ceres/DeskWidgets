@@ -30,6 +30,7 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
     private PixelCanvas? _canvas;
 
     private FrameClock.Ticket? _liftTicket;
+    private FrameClock.Ticket? _runTicket;
     private FrameClock.Ticket? _moveTicket;
     private FrameClock.Ticket? _gapClose;
     private FrameClock.Ticket? _flashTicket;
@@ -54,6 +55,7 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
     private bool _upPending;
     private int _upIcon = -1;
     private string? _hoverKey;
+    private bool _parked; // hidden by Hide (the slide-out ended), until Show
     private bool _disposed;
 
     public PixelDockSurface()
@@ -75,10 +77,62 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
 
     public void Show()
     {
-        if (Hwnd == 0)
+        if (Hwnd == 0 || _disposed)
             return;
+        if (_parked)
+        {
+            // Nothing was drawn while hidden: what changed since shows with the window.
+            _parked = false;
+            Render();
+        }
+        else if (Win32.IsVisible(Hwnd))
+        {
+            return;
+        }
         ShowWindow(activate: false);
         Win32.SetWindowPos(Hwnd, HwndTopmost, 0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+    }
+
+    public void Hide()
+    {
+        if (Hwnd == 0 || _disposed || _parked)
+            return;
+        _parked = true;
+        // No Cancel or Leave to the controller: it is the one hiding the dock, and its own state goes with it.
+        _holding = false; // first, so losing the capture is not a Cancel
+        _tracking = false;
+        _upPending = false;
+        _dragSeen = false;
+        if (Native.GetCapture() == Hwnd)
+            Native.ReleaseCapture();
+
+        // Every look ends where it was heading, at once, and every ticket stops: a hidden dock draws nothing and wakes nothing.
+        _hoverKey = null;
+        _painter.Label = null;
+        _painter.LabelIndex = -1;
+        _painter.LabelShown = false;
+        _painter.StepLifts(null, snap: true);
+        _painter.Pressed = -1;
+        _painter.Flash = -1;
+        _painter.DragIndex = -1;
+        _motion.Cancel();
+        _gapClose?.Stop();
+        _gapClose = null;
+        _painter.ClearGap();
+        _painter.Snap();
+        _painter.SnapRuns();
+        foreach (var ticket in new[] { _liftTicket, _runTicket, _flashTicket, _repaint })
+            ticket?.Stop();
+        _liftTicket = _runTicket = _flashTicket = _repaint = null;
+        // The slide's last step may still be waiting for its frame: the window goes where the controller left it.
+        _moveTicket?.Stop();
+        _moveTicket = null;
+        if (_pendingMove is { } pending)
+        {
+            _pendingMove = null;
+            ApplyMove(pending.X, pending.Y);
+        }
+        HideWindow();
     }
 
     // ---------------------------------------------------------------- placing and moving
@@ -124,6 +178,11 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
     public void MoveWindowTo(int x, int y)
     {
         int realX = x + _windowDx;
+        if (_parked)
+        {
+            ApplyMove(realX, y); // hidden: no steps to see, no ticket to leave running
+            return;
+        }
         // D6 is stepped: the window moves at most once a Pixel frame (40 ms), to where the controller's slide is by then.
         if (!MotionSettings.Enabled || _moveTicket is null)
         {
@@ -169,7 +228,7 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
         _placedSinceItems = false;
         int shift = _pendingShift;
         _pendingShift = 0;
-        bool animate = MotionSettings.Enabled && _painted && !_resetPositions;
+        bool animate = MotionSettings.Enabled && _painted && !_resetPositions && !_parked;
         _resetPositions = false;
 
         if (_gapClose is not null)
@@ -220,8 +279,8 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
 
     public void SetHover(int index, string? label)
     {
-        if (_disposed)
-            return;
+        if (_disposed || _parked)
+            return; // nothing can be hovered on a hidden dock (Hide cleared it)
         string? key = index >= 0 && index < _painter.Items.Count ? _painter.Items[index].Item.Key : null;
         if (key is not null && key == _hoverKey)
         {
@@ -275,7 +334,7 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
             return;
         _painter.Pressed = index;
         // D2: a press let go over the icon it began on, with no drag in between, is a click: one FLASH frame on Select.
-        if (index < 0 && was >= 0 && _upPending && _upIcon == was && !_dragSeen && MotionSettings.Enabled)
+        if (index < 0 && was >= 0 && _upPending && _upIcon == was && !_dragSeen && MotionSettings.Enabled && !_parked)
         {
             _flashTicket?.Stop();
             _painter.Flash = was;
@@ -314,7 +373,7 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
         if (index == _painter.Gap)
             return;
         _motion.Cancel();
-        Play(_painter.SetGap(index, MotionSettings.Enabled && _painted));
+        Play(_painter.SetGap(index, MotionSettings.Enabled && _painted && !_parked));
     }
 
     public void SetDrag(int index, double x)
@@ -329,6 +388,29 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
         _painter.DragIndex = index;
         _painter.DragCenter = center;
         Render();
+    }
+
+    public void SetRunState(int index, DockRunState state, DockRunTransition how)
+    {
+        if (_disposed || index < 0 || index >= _painter.Items.Count)
+            return;
+        // D3 to D5. Several icons can be in their moments at once: one ticket steps them all, and it stops when every look is still
+        // (D3's half-way hold included), so nothing wakes the app while the dock is at rest.
+        bool more = _painter.SetRun(_painter.Items[index].Item.Key, state, how, MotionSettings.Enabled && _painted && !_parked);
+        Render();
+        if (more && _runTicket is null)
+        {
+            _runTicket = FrameClock.Every(StepAnimator.FrameMs, _ =>
+            {
+                bool again = _painter.StepRuns();
+                Render();
+                if (!again)
+                {
+                    _runTicket?.Stop();
+                    _runTicket = null;
+                }
+            });
+        }
     }
 
     public void ShowMenu(IReadOnlyList<MenuEntry> entries, int screenX, int screenY, Action closed)
@@ -351,18 +433,14 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
             _drop.RegisterOn(Hwnd, target);
     }
 
-    public void ApplyLanguage()
-    {
-        _painter.ForgetText();
-        _art.Forget();
-    }
+    public void ApplyLanguage() => _painter.ForgetText();
 
     private static PixelPalette Palette() => CurrentPalette();
 
     private void Render()
     {
-        if (_disposed || Hwnd == 0 || !_placed || _painter.CanvasWidth <= 0)
-            return;
+        if (_disposed || _parked || Hwnd == 0 || !_placed || _painter.CanvasWidth <= 0)
+            return; // a hidden dock is drawn by Show
         int width = _painter.CanvasWidth, height = _painter.CanvasHeight;
         if (_canvas is null || _canvas.Width != width || _canvas.Height != height)
             _canvas = new PixelCanvas(width, height);
@@ -374,8 +452,8 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
     /// <summary>A real icon came: one repaint for however many come together.</summary>
     private void RepaintSoon()
     {
-        if (_disposed || _repaint is not null)
-            return;
+        if (_disposed || _parked || _repaint is not null)
+            return; // hidden: Show draws
         _repaint = FrameClock.After(1, () =>
         {
             _repaint = null;
@@ -476,7 +554,7 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
 
     private void Raise(DockPointerKind kind, nint lParam, (bool Left, bool Right, bool Middle, bool Shift) buttons)
     {
-        if (_disposed)
+        if (_disposed || _parked)
             return;
         var (x, y) = BarDips(lParam);
         int screenX = _x + Native.SignedLow(lParam), screenY = _y + Native.SignedHigh(lParam);
@@ -513,6 +591,7 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
         _gapClose?.Stop();
         _flashTicket?.Stop();
         _repaint?.Stop();
+        _runTicket?.Stop();
         _drop.Revoke();
         if (Hwnd != 0 && Native.GetCapture() == Hwnd)
             Native.ReleaseCapture();

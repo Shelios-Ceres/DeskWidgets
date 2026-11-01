@@ -149,7 +149,8 @@ internal static class PixelDockPreview
 
     private static PixelCanvas Sizes(PixelPalette p, PixelDockArt art, bool dark)
     {
-        var demo = Demo(Strings.IsChinese);
+        // As the design's sheet: WeChat, Chrome (hovered), ChatGPT and Explorer running.
+        var demo = Demo(Strings.IsChinese).Select((v, i) => i is 0 or 4 or 7 or 11 ? v with { State = DockRunState.Running } : v).ToList();
         var rows = new List<(string, PixelCanvas)>();
         foreach (var size in Enum.GetValues<DockIconSize>())
         {
@@ -166,6 +167,10 @@ internal static class PixelDockPreview
         var rows = new List<(string, PixelCanvas)>
         {
             ("IDLE", Dock(p, art, word, DockIconSize.Medium)),
+            ("RUNNING: AWAKE ART + HALO", Dock(p, art, [word[0] with { State = DockRunState.Running }], DockIconSize.Medium)),
+            ("RUNNING + HOVER", Dock(p, art, [word[0] with { State = DockRunState.Running }], DockIconSize.Medium, d => Hover(d, 0))),
+            ("OPENING: HELD HALF-WAY (D3)", Dock(p, art, [word[0] with { State = DockRunState.Opening }], DockIconSize.Medium)),
+            ("RUNNING, REAL ICONS: THEIR OWN HALO COLOUR", Dock(p, art, Demo(Strings.IsChinese).Skip(10).Select(v => v with { State = DockRunState.Running }).ToList(), DockIconSize.Medium)),
             ("HOVER: UP 2 PX, NAME ABOVE", Dock(p, art, word, DockIconSize.Medium, d => Hover(d, 0))),
             ("PRESSED: SHADE PLATE, 1 PX DOWN", Dock(p, art, word, DockIconSize.Medium, d => d.Pressed = 0)),
             ("CLICK: ONE SELECT FRAME", Dock(p, art, word, DockIconSize.Medium, d => d.Flash = 0)),
@@ -220,6 +225,57 @@ internal static class PixelDockPreview
         {
             for (int i = 0; i < shots.Count; i++)
                 rows.Add(($"{name} FRAME {i + 1}/{shots.Count}", shots[i]));
+        }
+
+        // D3, then D4: the hop, DISSOLVE frames 1 and 2, the hold (nothing ticks), then frames 3 and 4 when the window comes.
+        {
+            var d = Painter(p, art, demo, Size);
+            string key = demo[3].Item.Key;
+            var shots = new List<PixelCanvas>();
+            bool more = d.SetRun(key, DockRunState.Opening, DockRunTransition.Opening, animate: true);
+            shots.Add(Paint(d, p));
+            while (more)
+            {
+                more = d.StepRuns();
+                shots.Add(Paint(d, p));
+            }
+            more = d.SetRun(key, DockRunState.Running, DockRunTransition.OpenedHere, animate: true);
+            shots.Add(Paint(d, p));
+            while (more)
+            {
+                more = d.StepRuns();
+                shots.Add(Paint(d, p));
+            }
+            Strip("D3 OPENING, D4 OPENED:", shots);
+        }
+
+        // D5: the last window went; and D3's end, no window in time (back the way it came). Two icons at once.
+        {
+            var d = Painter(p, art, demo.Select((v, i) => i == 4 ? v with { State = DockRunState.Running } : i == 5 ? v with { State = DockRunState.Opening } : v).ToList(), Size);
+            var shots = new List<PixelCanvas>();
+            bool more = d.SetRun(demo[4].Item.Key, DockRunState.Idle, DockRunTransition.Closed, animate: true);
+            more |= d.SetRun(demo[5].Item.Key, DockRunState.Idle, DockRunTransition.TimedOut, animate: true);
+            shots.Add(Paint(d, p));
+            while (more)
+            {
+                more = d.StepRuns();
+                shots.Add(Paint(d, p));
+            }
+            Strip("D5 CLOSED (CHROME) + TIMED OUT (EDGE):", shots);
+        }
+
+        // D4 for a program started elsewhere: all four DISSOLVE frames, no hop.
+        {
+            var d = Painter(p, art, demo, Size);
+            var shots = new List<PixelCanvas>();
+            bool more = d.SetRun(demo[1].Item.Key, DockRunState.Running, DockRunTransition.OpenedElsewhere, animate: true);
+            shots.Add(Paint(d, p));
+            while (more)
+            {
+                more = d.StepRuns();
+                shots.Add(Paint(d, p));
+            }
+            Strip("D4 OPENED ELSEWHERE:", shots);
         }
 
         // D1: lift 1, then 2 with the plate; leaving: down 1 and the plate gone at once, then at rest.

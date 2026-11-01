@@ -32,7 +32,7 @@ internal static class DockLauncher
         {
             var manager = (IApplicationActivationManager)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C"))!)!;
             int hr = manager.ActivateApplication(aumid, null, 0, out _);
-            return hr >= 0 ? null : new Win32Exception(hr).Message;
+            return hr >= 0 ? null : Marshal.GetExceptionForHR(hr)?.Message ?? $"0x{hr:X8}";
         }
         catch (Exception ex)
         {

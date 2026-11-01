@@ -30,11 +30,22 @@ internal sealed class WindowTracker : IDisposable
     private readonly Dictionary<nint, bool> _zoomed = [];
     private readonly Action<Action>? _post;
     private bool _scanQueued;
+    private bool _setChanged;
     private nint _foreground;
     private bool _foregroundCovers;
 
     /// <summary>Raised on the thread that made the tracker, after the events settled. The argument says which event started it.</summary>
     public event Action<string>? Changed;
+
+    /// <summary>
+    /// Raised after <see cref="Changed"/> when a taskbar window appeared, went, hid, showed, was cloaked or uncloaked or was minimized: the set of
+    /// windows the dock matches its programs against may have changed. Never for a window that only moved (the pointer's and a drag's flood of
+    /// <c>LOCATIONCHANGE</c> stays out of this path).
+    /// </summary>
+    public event Action? WindowSetChanged;
+
+    /// <summary>The windows the dock currently knows as its programs' windows: their destruction is relevant (a destroyed window can no longer be asked).</summary>
+    public HashSet<nint> TrackedWindows { get; set; } = [];
 
     public long Callbacks { get; private set; }
 
@@ -61,7 +72,7 @@ internal sealed class WindowTracker : IDisposable
             _hooks.Add(NativeMethods.SetWinEventHook(min, max, 0, _callback, 0, 0, 0));
         if (includeLocationChange)
             _hooks.Add(NativeMethods.SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, 0, _callback, 0, 0, 0));
-        Rescan("start");
+        ScanAll(); // at once: a dock started over a maximized window must not show for a frame before the first scan
     }
 
     private void OnEvent(nint hook, uint ev, nint hwnd, int idObject, int idChild, uint thread, uint time)
@@ -91,7 +102,7 @@ internal sealed class WindowTracker : IDisposable
                 // Only a top-level window the taskbar would list can change the answer (a Chrome video fires a burst of tooltip and overlay
                 // windows: 10 scans a second before this filter). A destroyed window can no longer be asked: it counts if the last scan saw it maximized.
                 relevant = ev == EVENT_OBJECT_DESTROY
-                    ? _zoomed.ContainsKey(hwnd) || hwnd == _foreground
+                    ? _zoomed.ContainsKey(hwnd) || hwnd == _foreground || TrackedWindows.Contains(hwnd)
                     : NativeMethods.GetAncestor(hwnd, 2 /* GA_ROOT */) == hwnd && NativeMethods.IsTaskbarWindow(hwnd);
                 break;
             default:
@@ -100,6 +111,8 @@ internal sealed class WindowTracker : IDisposable
         }
         if (!relevant)
             return;
+        if (ev != EVENT_SYSTEM_FOREGROUND && ev != EVENT_OBJECT_LOCATIONCHANGE)
+            _setChanged = true;
         Relevant++;
         Rescan(NativeMethods.EventName(ev));
     }
@@ -119,6 +132,11 @@ internal sealed class WindowTracker : IDisposable
             ScanMsTotal += ms;
             ScanMsMax = Math.Max(ScanMsMax, ms);
             Changed?.Invoke(reason);
+            if (_setChanged)
+            {
+                _setChanged = false;
+                WindowSetChanged?.Invoke();
+            }
         }
         if (_post is null)
             Run();
@@ -211,17 +229,24 @@ internal sealed class WindowTracker : IDisposable
         /// <summary>The taskbar's own idea of a window: visible, unowned, not a tool window (unless it asks for the taskbar), not cloaked, not a shell surface, not ours.</summary>
         public static bool IsTaskbarWindow(nint h)
         {
-            if (GetWindow(h, 4 /* GW_OWNER */) != 0 || IsShellSurface(h))
-                return false;
-            long ex = (long)GetWindowLongPtr(h, -20);
-            if ((ex & 0x80) != 0 && (ex & 0x40000) == 0) // TOOLWINDOW without APPWINDOW
-                return false;
-            if ((ex & 0x08000000) != 0) // NOACTIVATE: a dock or an overlay, never "the user's window"
-                return false;
-            if (DwmGetWindowAttribute(h, 14 /* DWMWA_CLOAKED */, out int cloaked, 4) == 0 && cloaked != 0)
-                return false;
+            bool owned = GetWindow(h, 4 /* GW_OWNER */) != 0;
+            bool cloaked = DwmGetWindowAttribute(h, 14 /* DWMWA_CLOAKED */, out int cloakedValue, 4) == 0 && cloakedValue != 0;
             GetWindowThreadProcessId(h, out uint pid);
-            return pid != (uint)Environment.ProcessId;
+            return CountsOnTheTaskbar(owned, IsShellSurface(h), (long)GetWindowLongPtr(h, -20), cloaked, pid == (uint)Environment.ProcessId);
+        }
+
+        /// <summary>
+        /// The taskbar's own idea of a window, as a rule on facts (so it can be tested without windows): not owned by another window, not a shell
+        /// surface, not a tool window unless it asks for the taskbar (<c>WS_EX_APPWINDOW</c>), not <c>WS_EX_NOACTIVATE</c> (a dock or an overlay),
+        /// not cloaked (another virtual desktop), and not ours.
+        /// </summary>
+        public static bool CountsOnTheTaskbar(bool owned, bool shellSurface, long exStyle, bool cloaked, bool ours)
+        {
+            if (owned || shellSurface || cloaked || ours)
+                return false;
+            if ((exStyle & 0x80) != 0 && (exStyle & 0x40000) == 0) // TOOLWINDOW without APPWINDOW
+                return false;
+            return (exStyle & 0x08000000) == 0;
         }
 
         public static bool CoversMonitor(nint h)

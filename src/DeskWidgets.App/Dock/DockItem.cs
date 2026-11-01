@@ -56,6 +56,10 @@ internal sealed class DockItem
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? IconPath { get; set; }
 
+    /// <summary>Whether the dock can tell if it is running: it needs an AUMID or an exe to match a window with. A Steam link has neither (its window is the game's own exe).</summary>
+    [JsonIgnore]
+    public bool SupportsRunning => !string.IsNullOrEmpty(ExePath) || !string.IsNullOrEmpty(Aumid);
+
     /// <summary>A Store app: it has a package AUMID ("Package!App") and no exe path of its own. It gets no "Run as administrator".</summary>
     [JsonIgnore]
     public bool IsStoreApp => string.IsNullOrEmpty(ExePath) && Aumid is { Length: > 0 } aumid && aumid.Contains('!');
