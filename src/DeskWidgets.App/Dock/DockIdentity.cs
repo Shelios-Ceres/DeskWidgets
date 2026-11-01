@@ -33,6 +33,28 @@ internal static partial class DockIdentity
         return extension is ".lnk" or ".url" || ProgramExtensions.Contains(extension) ? DockDropKind.Candidate : DockDropKind.NotAProgram;
     }
 
+    /// <summary>
+    /// A link's icon file is asked of the Shell, which opens it: a UNC path or a URL there would make Windows connect to a remote host and send
+    /// the user's NTLM credentials. Only a rooted path on a fixed local drive is accepted; anything else is no icon (the generic tile).
+    /// </summary>
+    public static string? SafeIconPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+        string trimmed = path.Trim().Trim('"');
+        // "C:\..." only: no "\\server", no "\\?\UNC", no "scheme://", no relative path, no drive-relative "C:foo".
+        if (trimmed.Length < 4 || !char.IsAsciiLetter(trimmed[0]) || trimmed[1] != ':' || (trimmed[2] != '\\' && trimmed[2] != '/') || trimmed.Contains("://", StringComparison.Ordinal))
+            return null;
+        try
+        {
+            return new DriveInfo(trimmed[..1]).DriveType == DriveType.Fixed ? trimmed : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     public static bool IsProgramFile(string path) => ProgramExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
 
     /// <summary>A parsing name of the form <c>{known-folder GUID}\rest</c> (WeChat's and Tencent Meeting's "AUMID"): the GUID and the rest.</summary>
@@ -141,7 +163,7 @@ internal static partial class DockIdentity
         string? url = lines.FirstOrDefault(l => l.StartsWith("URL=", StringComparison.OrdinalIgnoreCase))?[4..];
         // The link's own icon file (Steam keeps one per game); the dock keeps the path so the link needs no file afterwards.
         string? icon = lines.FirstOrDefault(l => l.StartsWith("IconFile=", StringComparison.OrdinalIgnoreCase))?[9..];
-        return url is null ? null : new DockItem { Name = Path.GetFileNameWithoutExtension(urlPath), Url = url, IconPath = string.IsNullOrWhiteSpace(icon) ? null : icon };
+        return url is null ? null : new DockItem { Name = Path.GetFileNameWithoutExtension(urlPath), Url = url, IconPath = SafeIconPath(icon) };
     }
 
     /// <summary>A Start or Applications-folder item (it has no path): its parsing name is the AUMID, a known-folder path or a steam address.</summary>

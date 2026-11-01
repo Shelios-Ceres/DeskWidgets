@@ -107,7 +107,7 @@ internal sealed class PixelDockArt
     private static string? IconPath(DockItem item)
         => !string.IsNullOrEmpty(item.ExePath) ? item.ExePath
             : !string.IsNullOrEmpty(item.Aumid) ? @"shell:AppsFolder\" + item.Aumid
-            : !string.IsNullOrEmpty(item.IconPath) ? item.IconPath // a link's own icon file
+            : DockIdentity.SafeIconPath(item.IconPath) is { } linkIcon ? linkIcon // a link's own icon file, local only (a UNC path would send credentials)
             : null;
 
     private (long Stamp, string? Fallback) RequestFor(DockItem item)

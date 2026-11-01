@@ -253,16 +253,38 @@ public class DockCoreTests : IDisposable
     public void ASteamUrlFile_IsAProgram_AndAWebLinkIsNot()
     {
         string steam = Path.Combine(_folder, "Game.url");
-        File.WriteAllText(steam, "[InternetShortcut]\r\nURL=steam://rungameid/431960\r\nIconFile=x.ico\r\n");
+        File.WriteAllText(steam, "[InternetShortcut]\r\nURL=steam://rungameid/431960\r\nIconFile=C:\\Games\\x.ico\r\n");
         var item = DockIdentity.FromUrlFile(steam);
         Assert.NotNull(item);
         Assert.Equal("steam://rungameid/431960", item!.Url);
         Assert.Equal("Game", item.Name);
-        Assert.Equal("x.ico", item.IconPath);
+        Assert.Equal(@"C:\Games\x.ico", item.IconPath);
+
+        // A network icon file is dropped, not kept: asking the Shell for it would send the user's credentials to that host.
+        string remote = Path.Combine(_folder, "Remote.url");
+        File.WriteAllText(remote, "[InternetShortcut]\r\nURL=steam://rungameid/1\r\nIconFile=\\\\attacker\\share\\x.ico\r\n");
+        Assert.Null(DockIdentity.FromUrlFile(remote)!.IconPath);
 
         string web = Path.Combine(_folder, "Site.url");
         File.WriteAllText(web, "[InternetShortcut]\r\nURL=https://example.com/\r\n");
         Assert.Null(DockIdentity.FromUrlFile(web));
+    }
+
+    [Theory]
+    [InlineData(@"C:\Games\icon.ico", true)]
+    [InlineData(@"c:/Games/icon.ico", true)]
+    [InlineData(@"\\attacker\share\icon.ico", false)] // a UNC path would make Windows send the user's NTLM credentials
+    [InlineData(@"\\?\UNC\attacker\share\icon.ico", false)]
+    [InlineData("https://example.com/icon.ico", false)]
+    [InlineData("file://attacker/share/icon.ico", false)]
+    [InlineData("icon.ico", false)]
+    [InlineData("C:icon.ico", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void ALinksIconFile_IsAcceptedOnlyOnAFixedLocalDrive(string? path, bool accepted)
+    {
+        // C: is a fixed drive on any machine these tests run on.
+        Assert.Equal(accepted, DockIdentity.SafeIconPath(path) is not null);
     }
 
     // ----- the taskbar's pins -----

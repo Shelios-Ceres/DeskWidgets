@@ -65,7 +65,7 @@ internal sealed class GlassDockTiles
     private static string? IconPath(DockItem item)
         => !string.IsNullOrEmpty(item.ExePath) ? item.ExePath
             : !string.IsNullOrEmpty(item.Aumid) ? @"shell:AppsFolder\" + item.Aumid
-            : !string.IsNullOrEmpty(item.IconPath) ? item.IconPath // a link's own icon file
+            : DockIdentity.SafeIconPath(item.IconPath) is { } linkIcon ? linkIcon // a link's own icon file, local only (a UNC path would send credentials)
             : null;
 
     /// <summary>An exe that also has an AUMID: its Start entry, tried when the exe gives no good icon.</summary>

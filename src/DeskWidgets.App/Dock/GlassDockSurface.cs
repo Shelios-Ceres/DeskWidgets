@@ -352,11 +352,19 @@ internal sealed partial class GlassDockSurface : IDockSurface
         // on the icon, the bar's on the pointer; kept 8 DIP inside the screen. A MenuFlyout with Placement Top does the keeping and the rest.
         double barLeftDip = (_bar.X - _actual.X) / Scale;
         int icon = DockGeometry.IconAt(_size, _views.Count, (screenX - _bar.X) / Scale);
-        double x = icon >= 0
-            ? barLeftDip + DockGeometry.IconLeftDip(_size, icon) + DockGeometry.IconDip(_size) / 2
-            : (screenX - _actual.X) / Scale;
+        // A Position puts the menu's LEFT edge at the point; a target element is centred over, so the menu opens over a one-DIP-high anchor that is
+        // as wide as the icon (an icon's menu) or one DIP wide at the pointer (the bar's), 8 DIP above the bar.
+        double left = icon >= 0 ? barLeftDip + DockGeometry.IconLeftDip(_size, icon) : (screenX - _actual.X) / Scale - 0.5;
+        double width = icon >= 0 ? DockGeometry.IconDip(_size) : 1;
         double y = (_bar.Y - _actual.Y) / Scale - DockGeometry.LabelGapDip;
-        menu.ShowAt(_root, new FlyoutShowOptions { Position = new Windows.Foundation.Point(x, y), Placement = FlyoutPlacementMode.Top });
+        var anchor = new Border
+        {
+            Width = width, Height = 1, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(left, y, 0, 0), IsHitTestVisible = false, Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+        };
+        _root.Children.Add(anchor);
+        menu.Closed += (_, _) => _root.Children.Remove(anchor);
+        menu.ShowAt(anchor, new FlyoutShowOptions { Placement = FlyoutPlacementMode.Top });
     }
 
     private static void WatchClicks(IList<MenuFlyoutItemBase> items, Action clicked)
