@@ -28,6 +28,9 @@ internal sealed class AppSettings
     public string? FolderRoot { get; set; }
 
     public List<WidgetPlacement> Widgets { get; set; } = [];
+
+    /// <summary>The docks (Phase 15): at most one per screen, saved with their programs. A file from before the dock has none.</summary>
+    public List<Dock.DockSettings> Docks { get; set; } = [];
 }
 
 /// <summary>One widget on the desktop: its type, size, position and per-widget options.</summary>

@@ -29,6 +29,7 @@ internal sealed class WidgetHost
     private IconArrangerStatus _iconStatus = new(IconArrangerState.Off, 0, null);
     private TrayIcon? _tray;
     private ShowDesktopWatcher? _showDesktop;
+    private Dock.DockManager? _docks;
     private bool _overDesktop; // Win+D has lifted the desktop over the widgets, so they sit above it for now
     private bool _exiting;
     private bool _dirty; // a change is waiting to be saved
@@ -106,6 +107,7 @@ internal sealed class WidgetHost
         _settings.Current.Theme = theme;
         foreach (var window in _windows)
             window.ApplyTheme(theme);
+        _docks?.SetTheme();
         RequestSave(); // after the cards have their new sizes, so the icon arranger hears of them
         _tray?.SetPixelIcon(theme == WidgetTheme.Pixel);
     }
@@ -126,6 +128,8 @@ internal sealed class WidgetHost
         }
         foreach (var placement in settings.Widgets.ToList())
             Open(placement);
+        _docks = new Dock.DockManager(() => Theme, RequestSave, ShowWarning, settings.Docks);
+        _docks.Start();
         _icons.SetBlocked(GetCardRects(except: null));
 
         _tray = new TrayIcon(TrayTooltip(), Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
@@ -185,6 +189,18 @@ internal sealed class WidgetHost
         Open(placement, enter: true);
         RequestSave();
         return _windows.LastOrDefault();
+    }
+
+    /// <summary>The "Dock" row of the Add widget menus (PROPOSAL 3.9): adds a dock to the screen the pointer is on, greyed when that screen has one.</summary>
+    internal MenuEntry DockMenuRow()
+    {
+        string? screen = Dock.DockManager.ScreenUnderPointer();
+        return new MenuEntry
+        {
+            Text = Strings.DockName, Kind = MenuKind.Item, Glyph = "", Icon = PixelIcons.Dock,
+            Enabled = _docks is not null && !_docks.ScreenHasDock(screen),
+            Click = () => _docks?.AddDock(screen),
+        };
     }
 
     public void RemoveWidget(WidgetWindow window)
@@ -248,7 +264,7 @@ internal sealed class WidgetHost
     }
 
     public IEnumerable<Win32.RECT> GetCardRects(WidgetWindow? except)
-        => _windows.Where(w => w != except).Select(w => w.CardRect).ToList();
+        => [.. _windows.Where(w => w != except).Select(w => w.CardRect), .. _docks?.BlockedRects() ?? []];
 
     private static readonly TimeSpan DisplaySettle = TimeSpan.FromMilliseconds(250);
 
@@ -268,6 +284,7 @@ internal sealed class WidgetHost
             return;
         foreach (var window in _windows)
             window.EnsureOnScreen();
+        _docks?.OnDisplayChanged();
         _icons.SetBlocked(GetCardRects(except: null)); // a new scale changes a card's size even where nothing moved
         _icons.Invalidate();
     }
@@ -341,6 +358,7 @@ internal sealed class WidgetHost
         _exiting = true;
         Flush();
         _displayTimer.Stop();
+        _docks?.Dispose();
         foreach (var window in _windows.ToList())
             window.CloseFromHost();
         _windows.Clear();
@@ -451,6 +469,7 @@ internal sealed class WidgetHost
         RequestSave();
         foreach (var window in _windows)
             window.ApplyLanguage();
+        _docks?.ApplyLanguage();
         _tray?.SetTooltip(TrayTooltip());
         Services.Devices.RefreshAll(); // demo devices are named in the UI language
     }
@@ -549,7 +568,7 @@ internal sealed class WidgetHost
     [
         .. DataRoot.IsTestInstance ? new[] { MenuEntry.Status(Strings.TestInstanceStatus(DataRoot.Path)), MenuEntry.Separator() } : Array.Empty<MenuEntry>(),
         MenuEntry.Sub(Strings.AddWidget,
-            [.. WidgetCatalog.All.Select(factory => MenuEntry.Item(factory.DisplayName, () => AddWidget(factory), glyph: factory.Glyph, icon: PixelIcons.ForWidget(factory.TypeId)))],
+            [.. WidgetCatalog.All.Select(factory => MenuEntry.Item(factory.DisplayName, () => AddWidget(factory), glyph: factory.Glyph, icon: PixelIcons.ForWidget(factory.TypeId))), DockMenuRow()],
             icon: PixelIcons.Add),
         MenuEntry.Item(Strings.RefreshDevices, Services.Devices.RefreshAll, icon: PixelIcons.Refresh),
         MenuEntry.Separator(),

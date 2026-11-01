@@ -143,7 +143,7 @@ internal static class Win32
     }
 
     /// <summary>A monitor: its device name (e.g. \\.\DISPLAY1), whether it is the primary one, and its work area.</summary>
-    public readonly record struct MonitorArea(string Device, bool Primary, RECT Work);
+    public readonly record struct MonitorArea(string Device, bool Primary, RECT Work, RECT Bounds = default);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct WNDCLASSEX
@@ -442,7 +442,7 @@ internal static class Win32
     private static MonitorArea? DescribeMonitor(nint monitor)
     {
         var info = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>(), szDevice = string.Empty };
-        return GetMonitorInfoEx(monitor, ref info) ? new MonitorArea(info.szDevice, (info.dwFlags & 1) != 0 /* MONITORINFOF_PRIMARY */, info.rcWork) : null;
+        return GetMonitorInfoEx(monitor, ref info) ? new MonitorArea(info.szDevice, (info.dwFlags & 1) != 0 /* MONITORINFOF_PRIMARY */, info.rcWork, info.rcMonitor) : null;
     }
 
     public static double GetScaleAt(POINT point)

@@ -146,6 +146,12 @@ internal static class PixelIcons
 
     public static readonly PixelSprite Sort = new(".#.###.", ".#.....", ".#.##..", ".#.....", "###.#..", ".#.....", ".......");
 
+    /// <summary>Two apps over a bar: the "Dock" row of the Add widget menus.</summary>
+    public static readonly PixelSprite Dock = new(".......", ".##.##.", ".##.##.", ".......", "#######", ".......", ".......");
+
+    /// <summary>A screen with a taskbar along its bottom: "Add taskbar apps" (Dock).</summary>
+    public static readonly PixelSprite TaskbarApps = new("#######", "#.....#", "#.....#", "#.....#", "#.###.#", "#######", ".......");
+
     /// <summary>The 7×7 icon of a widget type in the "Add widget" submenu.</summary>
     public static PixelSprite? ForWidget(string typeId) => typeId switch
     {

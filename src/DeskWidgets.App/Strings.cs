@@ -189,5 +189,25 @@ internal static class Strings
     public static string FolderRootPickerTitle => T("选择新的大文件夹的默认位置", "Choose where new Big Folders are made");
     public static string FolderOperationFailed(string detail) => T($"没能完成操作：{detail}", $"That didn't work: {detail}");
 
+    // ---- Dock (Phase 15) ----
+
+    public static string DockName => T("程序坞", "Dock");
+    public static string DockEmpty => T("将应用拖到这里", "Drop apps here");
+    public static string DockCantFind(string name) => T($"找不到“{name}”", $"Can't find {name}");
+    public static string DockMissingHeader(string name) => T($"找不到“{name}”", $"{name} can't be found");
+    public static string DockOpen => T("打开", "Open");
+    public static string DockRemoveFromDock => T("从程序坞中移除", "Remove from dock");
+    public static string DockAddTaskbarApps => T("添加任务栏上的应用", "Add taskbar apps");
+    public static string DockIconSize => T("图标大小", "Icon size");
+    public static string DockRemoveDock => T("移除程序坞", "Remove dock");
+    public static string DockRemoveDockQuestion => T("要移除这个程序坞吗？里面的应用不会被删除，只是不再显示在这里。", "Remove this dock? Its programs aren't deleted; they just stop showing here.");
+    public static string DockMissingQuestion(string name) => T($"找不到“{name}”。要把它从程序坞中移除吗？", $"{name} can't be found. Remove it from the dock?");
+    public static string DockOnlyPrograms => T("程序坞只能放程序（应用、程序的快捷方式、Steam 游戏）。", "The dock only holds programs (apps, shortcuts to programs, Steam games).");
+    public static string DockNoTaskbarApps => T("没有读到任务栏上固定的应用。", "No apps pinned to the taskbar were found.");
+    public static string DockNoNewTaskbarApps => T("任务栏上的应用都已经在程序坞里了。", "Every app pinned to the taskbar is already on the dock.");
+    public static string DockAddedHere => T("这个屏幕已经有程序坞了。", "This screen already has a dock.");
+    public static string Remove => T("移除", "Remove");
+    public static string Cancel => T("取消", "Cancel");
+
     public static string IconsLegacyToolRunning => T("旧的「桌面图标靠右排列」程序还在运行，请先退出它", "The old DesktopRightAlign tool is still running; quit it first");
 }

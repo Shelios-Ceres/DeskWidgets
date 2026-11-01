@@ -42,6 +42,7 @@ Where to switch: tray menu or any widget's right-click menu → "Theme" ("主题
 - **May**: deviate slightly because of whole-number scaling (Pixel is slightly larger than Glass at 125% and 175% scaling).
 - **Must**: draw content inside the card. The window is the card, and anything drawn outside is clipped.
 - **Must**: don't add a size that exists for only one theme.
+- **Dock** (the exception to the footprint rule above; see 2.11): it is not on the desktop grid and has no size of its own. It sits on a screen's bottom edge, centred unless the user has slid it, and its length follows its icons. Small, Medium and Large are icon sizes: Glass 40, 48 or 64 DIP; Pixel 20, 24 or 32 art pixels, which are the same 40, 48 or 64 DIP. Padding and gap are 12 DIP (6 art pixels) at every size. The bar is 64, 72 or 88 DIP high, and its bottom edge sits 8 DIP (4 art pixels) above the screen's bottom edge. There is one dock per screen. The desktop icon arranger counts the dock's area, so desktop icons keep out from under it.
 
 ### 2.3 Minimum information
 
@@ -53,6 +54,7 @@ A theme may change how information is presented (rings ↔ battery bars, full ci
 | Clock | Weekday, time, date | Same as small | Not supported |
 | World clock | 4 dials + a city label (full name or three-letter code) | 4 dials, each with city name, time and local date | One row per city: dial, city name, time difference from local time (including today/yesterday/tomorrow), time, local date |
 | Big Folder | Header with the folder's name and item count; 2×2 cells | Same header; 4×2 cells | Same header; 4×4 cells |
+| Dock | Every app at 40 DIP (Pixel 20 art px) | Every app at 48 DIP (Pixel 24 art px) | Every app at 64 DIP (Pixel 32 art px) |
 
 - With no devices, show the empty-state text (`Strings.NoDevices`).
 - When "Show disconnected devices" is on, disconnected devices must be clearly dimmed, with "—" in place of the charge.
@@ -65,6 +67,11 @@ A theme may change how information is presented (rings ↔ battery bars, full ci
   - **Search** (both panels, one shared matcher, `Search/NameSearch.cs`; Phase 13, 2026-10-24): a name matches if it contains the typed text in any case, or, when the text is Latin letters and digits only and the name has Chinese in it, if the text spells a run of its characters by their pinyin **initials** ("bz" finds 壁纸, "qqyy" finds QQ音乐, across spaces and "&") or by **whole syllables with the last one cut short** ("bizhi", "biz"). A character with several readings (行, 乐) matches any of them. The table is built from the Unicode Han Database by `tools/Make-PinyinTable.ps1` (Unicode License v3, notice shipped beside the exe).
   - **Show more options** (the last row of the item menu, in both themes and in the card's menu; Phase 13, 2026-10-24): Windows' own context menu for the item or the selection (Open with, Send to, compress, the apps' own entries), through `IContextMenu`. It is **Windows' menu in both themes**, drawn by the system as Glass's message boxes are; Pixel cannot restyle it. Open, Rename and Delete in it run our own code (the Recycle Bin, the origin log, the in-place rename); Paste is left out. The panel stays up while the menu is up and while a command it starts runs. **Risk:** the entries come from shell extensions that run in our process (as thumbnail handlers do); a slow one blocks the UI thread while the menu builds (about 0.3 to 1.2 s with a dozen extensions installed), and a crash inside one cannot be caught.
   - Where a new card's folder is made: in the **default location** if the user has chosen one (the card's menu, "Default location for new folders…", saved as the top-level `FolderRoot` setting; the folder is created if it is missing), else under the user profile on the Desktop's drive. "Change folder…" still points one card at any folder.
+
+- Dock (one row, at the chosen icon size):
+  - Every app at that size, with its name in a label above the bar on hover.
+  - States: idle; hover (the icon lifts and the label shows the name); pressed; missing (the app can no longer be found: its icon is dimmed, and a click offers to remove it). The running, opening and closing states are planned for Phase 15.4: a running app shows its running icon, with no dot, and its opening and closing are animated.
+  - Empty: "Drop apps here", centred in the bar.
 
 ### 2.4 What colors mean
 
@@ -95,6 +102,9 @@ Each theme's exact values are in section 8.
 
 - **Must**: the whole card can be dragged, so content must not intercept pointer events. No buttons, text boxes or scroll areas on the card; all settings go in the right-click menu.
   - **Exception (approved 2026-10-21, Big Folder only):** the Big Folder's cells and header take a click: a press and release that stay within the system's drag threshold. A press that moves farther is still a drag of the card, wherever it starts. The Big Folder card also accepts dropped files. It still has no buttons, text boxes or scroll areas: searching, selecting, sorting and renaming happen in the panel, which is a separate window.
+- **Dock (2026-10-31; an exception to the card rule above, because the dock holds apps and is not a card):** its apps take clicks, and it takes drops. A click on an app starts it. A drag that starts on an app reorders it; holding an app over another makes a group (planned, Phase 15.5). A drag that starts on the bar's ends moves the bar along the bottom edge, or onto another screen's bottom edge.
+- **Dock, drops:** a program dropped on the bar is added, never opened with it. The dock keeps a reference, and the file is not moved, copied or made. Only programs are added in this build; opening files with an app is planned (Phase 15.5). "Add apps…" opens Windows' Applications folder to drag from. "Add taskbar apps" adds the apps pinned to the taskbar that the dock does not have yet, in the taskbar's order. It never changes the taskbar.
+- **Dock, menus:** right-click an app for Open, Run as administrator (not for Store apps), Open file location, Remove from dock and Show more options (Windows' own menu, as in the Big Folder). Right-click the bar for Add apps…, Add taskbar apps, Icon size (Small, Medium and Large) and Remove dock, which asks first. Removing goes only through these menus; dragging an app off the bar never removes it.
 - **Must**: purely decorative layers set `IsHitTestVisible = false`.
 - **Must** (opaque themes): contrast between body text and background ≥ 4.5:1, and ≥ 3:1 for big numbers. The faint colors used only for tick marks and separators (Pixel's `Faint`) must not be used for body text.
 - Glass's background is live, so contrast can't be guaranteed; see "Known trade-off" in 4.1.
@@ -103,6 +113,7 @@ Each theme's exact values are in section 8.
 
 - **Must**: use almost no CPU when idle. Redraw only when data changes or the clock ticks (aligned to the whole second or minute); no loop that refreshes every frame; transition animations last at most 1 second.
 - **Should**: reuse canvases, bitmaps and brushes instead of allocating large objects on every redraw.
+- **Must** (the dock): window tracking runs on window events only, never on a timer, and a hidden dock costs nothing. Every dock moment lasts at most 1 s. An app that is opening holds still, without a loop, until its first window appears.
 - **Must** (motion, added 2026-10-22), for every moment in both themes:
   - With Windows' "Animation effects" off (`UISettings.AnimationsEnabled`, read when each animation starts, not relied on to signal), everything snaps to its final state.
   - Input never waits: a click, key, drag or drop during an animation acts at once, on the final layout.
@@ -121,6 +132,18 @@ Each theme's exact values are in section 8.
 
 - **Must**: fonts, icons and sprites must be original, come with the system, or be licensed for redistribution. Don't bundle Apple's SF fonts, and don't lift assets from game screenshots. The existing themes use system fonts (Segoe UI Variable, Segoe Fluent Icons, SimSun), hand-drawn pixel fonts and sprites, and one bundled font: **Fusion Pixel Font 8 px** (Simplified Chinese, proportional, release 2026.10.16, by TakWolf, SIL Open Font License 1.1) for the Big Folder's Chinese. Its license text ships beside the exe (`OFL-FusionPixel.txt`), the packed table is built by `tools/Make-FusionFont.ps1`, and the font is only ever used as is. Emoji are not bundled: the system's Segoe UI Emoji is rendered at run time through Win2D (`Microsoft.Graphics.Win2D`, MIT) and shrunk onto the Pixel palette.
 
+### 2.11 The dock: showing and hiding
+
+The dock is the one widget above windows. It is not a widget type and has no card; every other widget stays on the desktop layer.
+
+- **Must**: the dock is always on top, but it never takes the focus. A click on it leaves the window in front where it was.
+- **Must**: it shows while no window on its screen is maximized, over the desktop and over ordinary windows.
+- **Must**: it hides, sliding down off the bottom edge, while a window on its screen is maximized. Minimized windows, windows on another virtual desktop and tool windows don't count. A large window that is not maximized stays under the dock.
+- **Must**: it hides for a full-screen window (a game, a video or a slide show). A window counts as full screen when it covers its whole monitor **and** the Shell reports a busy state (`SHQueryUserNotificationState`: full-screen Direct3D or presentation mode). Both must be true; the Shell's state alone is not enough. While such a window is in front, the bottom edge does not bring the dock back.
+- **Should**: when the full-screen test is unclear, hide. A dock that hides once too often is less harmful than one that sits over a game.
+- **Must**: it comes back, sliding up, when the pointer reaches the bottom edge under it, or when a file drag reaches that edge. It slides away again a short time after the pointer leaves (600 ms in Glass; see 4.2 for Pixel), but never while its menu, a group's panel or a drag is in use.
+- **Must**: it reserves no space. Maximized windows keep the whole screen, which is why the dock hides for them.
+
 ---
 
 ## 3. Design tokens every theme must define
@@ -133,7 +156,7 @@ Tokens of one kind go in one place, not scattered across widgets.
 | Palette | A light and a dark set, named by the roles of section 8 | `Widgets/GlassPalette.cs` | `Pixel/PixelPalette.cs` |
 | Fonts | Family, type scale, weights, fallback fonts | Segoe UI Variable Display / Text | `Pixel/PixelFonts.cs` (3×5, 5×7) + `Pixel/SystemGlyphs.cs` (SimSun 12 px) + `Pixel/FusionGlyphs.cs` (Fusion 8 px, Big Folder only) |
 | Icons | Device icons, charging indicator, empty-state icon | Segoe Fluent Icons (`Widgets/Battery/DeviceGlyphs.cs`) | `Pixel/PixelSprites.cs` |
-| Motion | Which changes animate, duration, easing | Battery ring: 700 ms cubic ease-out; the Big Folder's moments (4.1): Quick 100, Exit 150, Enter 240, Move 280, Press 80, Release 200, Blend 250 ms with three easings; the second hand ticks once a second | Stepped frames of T = 40 ms (GROW, SHRINK, DISSOLVE, MOVE, POP, LEAVE, FLASH, STEP, WIPE), whole art pixels, no alpha (4.2); the second hand ticks once a second |
+| Motion | Which changes animate, duration, easing | Battery ring: 700 ms cubic ease-out; the Big Folder's moments (4.1): Quick 100, Exit 150, Enter 240, Move 280, Press 80, Release 200, Blend 250 ms with three easings; Start 600 ms for the dock's opening (planned, 4.1); the second hand ticks once a second | Stepped frames of T = 40 ms (GROW, SHRINK, DISSOLVE, MOVE, POP, LEAVE, FLASH, STEP, WIPE, HOP), whole art pixels, no alpha (4.2); the second hand ticks once a second |
 
 ---
 
@@ -178,6 +201,52 @@ Font sizes (current values; new widgets pick the nearest):
   - **Size change (B7):** the old content fades out (Quick); the window takes the union of both sizes while the frost's clip and a matching rounded clip on the card move from the old rectangle to the new one, anchored top-left (Move); the new content is laid out at its own size when the old has gone and fades in (Enter) from the Move's half-way point; the window then settles at the new size. A new size finishes the running one first.
   - **Theme (B7):** light to dark blends the tint and the sheen (`BrushTransition`, Blend); text, tiles and plates change at once. Pixel to Glass: the old card goes at once and the new one fades in (Enter, layered alpha, no scale). Glass to Pixel is Pixel's (4.2).
   - **Widget added or removed (B8):** the card fades in and scales from 96 % about its centre (Enter; layered alpha, so the frost, the tint and the content stay together); removing takes it to opacity 0 and 96 % (Exit), and then the window closes. A leaving card takes no clicks.
+
+**Dock** (added 2026-10-31; sizes in DIP; the detailed source is `notes/design/glass/dock-20261031/HANDOFF.md`):
+
+| | Small | Medium | Large |
+|---|---|---|---|
+| Icon | 40 | 48 | 64 |
+| Padding (top, bottom, each end) | 12 | 12 | 12 |
+| Gap between icons | 12 | 12 | 12 |
+| Bar height | 64 | 72 | 88 |
+| Corner radius | 20 | 22 | 28 |
+| Hover lift | 4 | 5 | 6 |
+| Group minis (inset, gap) | 15 (4, 2) | 18 (5, 2) | 24 (6, 4) |
+| Empty bar length | 240 | 280 | 340 |
+
+- **Length:** 2 × padding + n × icon + (n − 1) × gap, where n is the number of apps. Pixel uses the same geometry (4.2).
+- **Window:** the bar, with 42 DIP of transparent room above it for the name label. Clicks in that room pass through to the window behind. The bar sits 8 DIP above the screen's bottom edge.
+- **Glass:** the bar uses the cards' glass (the host-backdrop blur, a 24 % tint and the diagonal highlight) with the radius above. No outline and no shadow, in any state. The user decided that the bar keeps this thin glass over windows too: over a white or black window it nearly disappears, and the icons float. That is accepted; don't thicken the tint.
+- **Icons:** a custom app or a file type uses the Big Folder's tile art (its `ICONS.md`). A real icon sits on the `Tile plate` at 0.68 of the tile, or fills the tile edge to edge when it already fills its square. The tile radius is 0.225 × the icon size.
+- **Name label:** a pill 26 DIP tall, with its bottom 8 DIP above the bar's top edge. It is centred on the icon and kept 8 DIP inside the screen. Its width is the text plus 20 DIP, at most 240 DIP; a longer name is shortened in the middle by `NameShortener`.
+- **Empty:** a download glyph (`E896`, 16 DIP) and "Drop apps here" in Text 12, Primary, centred in the bar.
+- **States:**
+  - Idle: the icon.
+  - Hover: the icon rises by the lift, and the label shows the name.
+  - Pressed: the tile scales to 94 % about its centre.
+  - Missing: the tile at 40 % opacity, and the label reads "Can't find {name}". The missing app is dimmed by opacity, not with the `Inactive` role. A click opens a small menu: a disabled row "{name} can't be found", then "Remove from dock".
+  - Adding (a program dragged over the bar): a tile-sized slot in `Hover` (radius 0.225) opens where the program will land. The icons after it slide aside, and the bar grows by one icon and one gap.
+  - Running, opening and closing (planned, Phase 15.4): the running art swaps the tile's light and colour (a custom icon on a coloured tile turns white, and one on a white tile turns coloured), with no dot, no outline and no shadow. A real icon gets an accent plate.
+  - Open with and group forming (planned, Phase 15.5).
+- **Colours:** the dock uses the section 8 roles Primary, Hover, Tile plate and Tile sheen now. Its planned states use Pressed, Select, On select and Drop tint. The running white tile (`#FFFFFF` to `#F2F2F7`) and the accent plate are new values for the running build; they will be added to section 8 then.
+- **Menus:** `MenuEntry` rows through `MenuFlyout`, with the words of 2.7.
+- **Motion:** Phase 12's vocabulary (above), plus one new token, **Start** 600 ms Out, for the opening wipe (planned, Phase 15.4). With "Animation effects" off, every moment is one frame. The moments, by name:
+  - **D1 Hover:** the icon lifts (Quick 100). The label fades in and rises 4 DIP (Enter 240). Moving to the next icon slides the label (Quick 100); leaving the bar drops the icon back and fades the label out (Exit 150).
+  - **D2 Press:** the tile presses (Press 80); the release (Release 200) confirms the click.
+  - **D3 Opening (planned):** the running art's clip goes from 100 % to 50 % (Start 600), then holds without a loop until the first window appears. With no window after 10 s, the art wipes back down (Move 280) and the icon is idle again.
+  - **D4 Opened (planned):** the clip goes to 0 (Enter 240), and the tile pops from 1 to 1.06 at 45 % and back to 1 (Move 280). An app started elsewhere wipes from 100 % to 0 (Move 280), without the pop.
+  - **D5 Closing (planned):** the clip goes from 0 to 100 % (Move 280).
+  - **D6 Hide and reveal:** hiding slides the bar down by its height + 12 DIP (Move 280); revealing slides it up (Enter 240). It stays up while its menu or a drag is in use, or while a group's panel is open (planned). It slides away 600 ms after the pointer leaves; that is a delay, not a motion.
+  - **D7 Reorder:** the dragged icon follows the pointer, lifted, at full opacity; the others slide to their new places (Move 280); the drop settles it (Move 280).
+  - **D8 Group forming (planned):** after 500 ms over a target, the target's plate fades in (Quick 100). Release replaces both with the group icon, which settles from 92 % (Release 200). Moving away fades the plate out (Exit 150).
+  - **D9 Group panel (planned):** opening fades it in (Enter 240) as it rises 8 DIP and grows from 97 %; closing fades it out (Exit 150) as it sinks 6 DIP and shrinks to 98 %.
+  - **D10 Add:** the gap opens and the bar grows (Move 280). On the drop, the new icon enters (opacity and 85 % to 100 %, Enter 240). A drag that leaves closes the gap (Move 280).
+  - **D11 Remove:** the icon goes to opacity 0 and 85 % (Exit 150); then the others close up and the bar shortens (Move 280).
+  - **D12 Open with (planned):** the lit plates and the lift fade in (Quick 100) and out (Exit 150).
+  - **D13 Icon size:** the frost clip and the bar's length move from the old size to the new one (Move 280), anchored at the bar's centre. The old icons fade out (Quick 100), and the new ones fade in from the Move's half-way point (Enter 240).
+  - **D14 Missing:** no motion.
+  - **D15 Light ↔ dark and Glass ↔ Pixel:** the tint and the sheen blend (Blend 250), and everything else changes at once. A new Glass dock fades in (Enter 240, opacity only).
 
 ### 4.2 Pixel
 
@@ -231,6 +300,50 @@ Added 2026-10-13.
   - **Keyboard and Narrator:** the panel is a window with the search field (Edit with the Value pattern), the sort button (ExpandCollapse) and one list item per shown item (Invoke and SelectionItem).
   - **Menus:** the item menu and the widget's own rows use the Pixel menu described above. The item menu ends with "Show more options", after a separator and with no icon (like Open and Properties); it opens Windows' own context menu, which keeps the system's look under Pixel (2.3).
   - **Motion (A1 to A4):** the panel GROWs from the card's side at full height (width 1/3, 2/3, then the panel; 120 ms), in a window of its final size with the rest transparent, and SHRINKs to that side (2/3, 1/3; 80 ms); it counts as closed from the first moment. On a drag over the card the tint shows at 1 dot in 16 with no label, then as it is with the label (the reverse on leaving; a drop snaps it off). A changed list (a drop, a rescan, a sort, a search) moves the cells that stay in their row, POPs the new ones and those that changed rows, and LEAVEs the old ones (3 frames, 120 ms, only cells in view). Hover lifts a cell's content 1 px, with the `Open fill` plate (the header too); a press lowers it 1 px on `Shade`; a completed click FLASHes the plate in `Select` once; cells being dragged out of the panel are drawn at half their pixels while the drag lasts.
+
+**Dock** (added 2026-10-31; all numbers in art pixels; the detailed source is `notes/design/pixel/dock-20261031/HANDOFF.md`):
+
+| | Small | Medium | Large |
+|---|---|---|---|
+| Icon | 20 | 24 | 32 |
+| Slot (icon + 2 of halo room on each side) | 24 | 28 | 36 |
+| Bar height (2 × pad 4 + slot) | 32 (64 DIP) | 36 (72 DIP) | 44 (88 DIP) |
+
+- **Spacing:** 4 from the card's outline to a slot, plus 2 of halo room, so 6 (12 DIP) from the outline to the icon. Slot to slot is 2, so icon to icon is 6 (12 DIP), and two halos never touch. Length = 2 × 4 + n × slot + (n − 1) × 2. The empty bar is 120, 140 or 170 art pixels long (240, 280 or 340 DIP). Padding and gap match Glass at every size (4.1).
+- **Window:** the bar sits 4 art pixels (8 DIP) above the screen's bottom edge. The window has 21 art pixels (42 DIP) of transparent room above the bar for the name plate, and is wide enough for the widest label at either end.
+- **Icons:** each size is drawn on its own grid and is never scaled. Custom apps and file types use the sprite roles of section 8. A tile has a 1-px ink outline, its fill, a shade lip along its bottom edge and a corner stair from the top: [3, 2, 1] at 20, [4, 2, 1, 1] at 24 and [5, 3, 2, 1, 1] at 32. Real icons use the Big Folder's tier-2 rule at the dock's size.
+- **Frame and shadow:** the card's frame (outline, Panel fill, a 1-px Highlight row, two Shade rows at the bottom and the stair [4, 2, 1, 1]), with the menus' hard 2-px Shadow down and to the right. The dock is the one card with a shadow, because it floats over windows. Desktop cards keep none.
+- **Halo:** a running icon has a 1-px halo that follows its shape, 2 art pixels out (planned, Phase 15.4). The halo uses the sprite roles; the dock adds no colour roles.
+- **States:**
+  - Idle: the idle drawing.
+  - Hover: the icon lifts 2 art pixels (4 DIP) at every size, and the name plate shows. The hit box stays where the slot is; the lift moves only the picture.
+  - Pressed: a `Shade` plate behind the slot (corners [2, 1]), and the icon 1 px down.
+  - Missing: ink becomes `Faint` and every other colour becomes `Track`, as in the Big Folder. A click opens a Pixel question dialog, "{app} can't be found. Remove it from the dock?", with Remove (primary, focused) and Cancel.
+  - Adding: a dotted box in `Soft`, one slot and one gap wide, opens where the program will land; the icons after it move aside by one slot.
+  - Reordering: the dragged icon rides with the pointer, 6 px up and undimmed. Its old slot is a dotted box in `Faint` until the others move.
+  - Empty: a dotted box in `Faint`, inset by the halo room, with "DROP APPS HERE" in `Soft`, centred. The pixel font draws it in capitals.
+  - Running, opening and closing (planned, Phase 15.4): the awake drawing and the halo, with the hop and dissolve of the motion below.
+  - Open with, group tiles and group panels (planned, Phase 15.5).
+- **Name plate:** a menu-style plate (outline, Panel fill, a 1-px Highlight row, one Shade row, corners [2, 1] and the hard 2-px Shadow). It is 13 art pixels tall for pixel-font text, or 15 for Fusion (26 or 30 DIP). Its text sits 5 px in from each side. Its bottom is 4 art pixels above the bar's top; it is centred over the icon and kept 4 pixels inside the screen. It is at most 120 art pixels wide (240 DIP); a longer name is shortened in the middle by `NameShortener`.
+- **Fonts:** the name plate, the empty text and the dock's other labels follow the Fusion rule of the Big Folder above. Each text uses `PixelFonts.Regular` (5×7) if it spells all of it; otherwise Fusion Pixel 8 px if it covers all of it; otherwise the 12 px SimSun bitmap font for all of it. This extends that rule to the dock's labels and empty text. Menus and dialogs keep SimSun.
+- **Menus:** the Pixel menus of this section, with the words of 2.7. "Show more options" has no icon, as in the Big Folder, and opens Windows' own menu.
+- **Motion:** stepped frames of T = 40 ms, on whole art pixels with no alpha. The moments are Glass's (4.1), D1 to D15, in pixel form:
+  - **D1 Hover:** lift 1 px, then 2 px (2 frames); the plate shows on the second frame. Leaving: down 1 px in one frame, and the plate goes at once.
+  - **D2 Press:** a `Shade` plate, 1 px down. Release: one FLASH frame in `Select`, and the app starts at once.
+  - **D3 Opening (planned):** a HOP (the icon lifts 1, 2, 3, 3, 2, 1 and 0 art pixels, 280 ms), then DISSOLVE frames 1 and 2 into the awake drawing. It holds, without a loop, until the first window appears.
+  - **D4 Opened (planned):** DISSOLVE frames 3 and 4.
+  - **D5 Closing (planned):** DISSOLVE from the awake drawing back to idle (4 frames, 160 ms).
+  - **D6 Hide and reveal:** STEP. The bar moves up from below the edge by ceil(distance / 6) pixels a frame (at most 6 frames, 240 ms), and back down the same way. The scene is drawn once and the window moves at each step; while hidden, the window is parked below the edge. The delay before it slides away after the pointer leaves is not yet set for Pixel (Glass uses 600 ms).
+  - **D7 Reorder:** the dragged icon rides 6 px up with the pointer. When the pointer passes the middle of the next slot, that icon MOVEs over (3 frames) and the gap follows. The drop is instant.
+  - **D8 Group forming (planned):** when the hold timer fires, the target turns into a group tile at once. On release, the dragged app's slot closes up (MOVE), and the group POPs (1 px up, then at rest).
+  - **D9 Group panel (planned):** GROW up from the dock at full width (heights 1/3, 2/3, then all; 120 ms); SHRINK back (2/3, 1/3; 80 ms).
+  - **D10 Add:** as the drag passes, the icons after the pointer MOVE one slot aside (3 frames) and the bar grows; on the drop, the new icon POPs in.
+  - **D11 Remove:** LEAVE (Bayer ≥ 8, then ≥ 12, then gone); then the icons after it MOVE in (3 frames) and the bar shrinks.
+  - **D12 Open with (planned):** the lit plates show at once; the target lifts 2 px with its `Select` plate and label. A drop snaps them all off.
+  - **D13 Icon size:** the window takes the new size at once, the frame draws at once, and the icons DISSOLVE in (4 frames).
+  - **D14 Missing:** no motion; it snaps.
+  - **D15 Light ↔ dark and Glass ↔ Pixel:** a light/dark change DISSOLVEs the whole dock; Glass to Pixel draws the frame at once and DISSOLVEs the icons in.
+  - Sliding the bar along the edge follows the pointer, with no motion of its own. The rules of 2.8 hold: with "Animation effects" off, everything snaps; input never waits; a new state cuts the old one short; nothing loops.
 
 ---
 
@@ -414,6 +527,14 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-22 | Every Large card is 344×364 DIP (Pixel 172×182), so a Big Folder beside two stacked Mediums has level edges, and the Pixel Big Folder Large card shows names on two lines, as in the panel. Snapping stays on; with it off, cards keep 16 DIP gaps |
 | 2026-10-22 | Motion in both themes: Glass with the vocabulary of 4.1, Pixel as stepped frames of 40 ms with the vocabulary of 4.2 (no alpha, whole art pixels); the same moments in both (the Big Folder's panel, drag feedback and items, hover and press, search and sort first); with Windows' "Animation effects" off everything snaps, and input never waits |
 | 2026-10-27 | Glass text is solid: black in light mode, white in dark mode, for names and secondary text alike (time, date, device names); only absent things (a disconnected device, an unknown level, a missing app) stay dimmed |
+| 2026-10-31 | The dock is a real dock above windows, at the bottom edge; it is not a desktop widget. The user: "在桌面、窗口没有最大化的时候常驻；有最大化的时候隐藏，鼠标移到上面后出现；游戏、视频等全屏的时候不弹出" |
+| 2026-10-31 | The dock hides only while a window on its screen is maximized (Plank calls this "dodge maximized"); a large window that is not maximized stays under the dock |
+| 2026-10-31 | No running dot. A running program shows its own running icon, with an animation when it opens and when it closes. The user: "运行中的程序额外设计一套图标，打开、关闭的时候都加上相应的动画" |
+| 2026-10-31 | A running program that is not in the dock is not shown; the taskbar shows it |
+| 2026-10-31 | A new dock starts empty, with "Drop apps here", and "Add taskbar apps" is in its menu |
+| 2026-10-31 | The taskbar's pinned apps are moved into the dock with "Add taskbar apps", and the user unpins them from the taskbar by hand; the app never changes the taskbar |
+| 2026-10-31 | The Glass dock keeps the cards' thin glass (24 % tint) over windows too; don't thicken the tint. Over a white or black window the bar nearly disappears, and the user accepted that |
+| 2026-10-31 | The dock designs are approved as previewed: Glass with its running look (the tile's light and colour swap), and Pixel with running look B, "awake + halo" (the user's choice; approved with "可以") |
 
 ---
 
@@ -442,3 +563,6 @@ Check this table before making a change. To overturn any of them, you must first
 | 2026-10-22 | All | Motion, the rest (Phase 12, Build B): Pixel menus, submenus and dialogs GROW and SHRINK and their rows WIPE; the battery's gauge STEPs and its bolt POPs (Glass: the bolt fades); a size change morphs the Glass card's outline and DISSOLVEs the Pixel card's content in; a light/dark change blends Glass's tint and DISSOLVEs Pixel's card; a theme switch fades or dissolves the new cards in; a widget added or removed fades and scales (Glass) or GROWs and SHRINKs (Pixel); 3, 4.1 and 4.2 changed | The user: "add some motion, in both themes"; both previews approved 2026-10-22 |
 | 2026-10-22 | All | Added motion (Phase 12), Big Folder first: the panel opens and closes (Glass fades and travels 8 DIP, Pixel GROWs and SHRINKs), items enter, leave and slide, a drag over the card fades or steps in, hover and press react, search and sort move the cells; 2.8, 3, 4.1, 4.2 and Appendix B changed; Pixel hover now lifts a cell's content 1 px | The user: "add some motion, in both themes"; both previews approved 2026-10-22 |
 | 2026-10-27 | Glass | Text is solid: Primary `#1C1C1E` → `#000000` in light mode, Secondary `#3C3C43` 60% / `#EBEBF5` 60% → `#000000` / `#FFFFFF`; the old Secondary values become the new role Inactive (a disconnected device's icon, an unknown level's dash, a missing app's name); 4.1, 8 and Appendix B changed | The user, with a screenshot on a dark navy wallpaper: the world clock's times and the battery's device names were hard to read; "浅色下能不能把字体变成黑色，深色下用白色" |
+| 2026-10-31 | All | Added the dock (Phase 15, build A): a bar of apps at the bottom edge of each screen. 2.2, 2.3, 2.7 and 2.8 changed; new 2.11 (above windows; showing and hiding); the section 3 motion row (Start and HOP); Appendix B changed | The user asked for a dock bar for programs: "现在我们来做一个新的widget。这个widget有点不太一样，算一个dock栏，里面只能放一些程序" |
+| 2026-10-31 | Glass | Dock subsection in 4.1: geometry, the cards' glass with no outline or shadow, the name label, states, motion D1 to D15 and the Start 600 ms token | The user approved the Glass dock design on 2026-10-31 |
+| 2026-10-31 | Pixel | Dock subsection in 4.2: art sizes 20, 24 and 32, bar geometry, the card's frame with a hard 2-px shadow (the dock is the one card with one), the name plate, the Fusion rule of Phase 8 extended to the dock's labels and empty text, stepped motion with a new HOP move | The user approved the Pixel dock design on 2026-10-31; the dock floats over windows, so it takes the menus' hard shadow |

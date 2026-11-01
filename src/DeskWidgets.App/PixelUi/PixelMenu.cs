@@ -82,7 +82,11 @@ internal sealed class PixelMenu
     /// Opens a menu with its top-left corner at a screen point (physical pixels), flipped to stay on the monitor.
     /// Opened from the pointer no row is current; <paramref name="fromKeyboard"/> makes the first row current.
     /// </summary>
-    public static PixelMenu Show(IReadOnlyList<MenuEntry> items, int anchorX, int anchorY, bool fromKeyboard = false, Action? closed = null)
+    /// <param name="openAbove">
+    /// The dock's rule (Pixel HANDOFF section 8, "Where a menu opens"): the menu's horizontal centre and the screen y its visible bottom edge sits at.
+    /// It opens upward from there, kept 4 art pixels inside the screen. Every other menu opens at the pointer.
+    /// </param>
+    public static PixelMenu Show(IReadOnlyList<MenuEntry> items, int anchorX, int anchorY, bool fromKeyboard = false, Action? closed = null, (int CenterX, int BottomY)? openAbove = null)
     {
         Active?.CloseAll(restoreForeground: false, animate: false);
         var anchor = new Win32.POINT { X = anchorX, Y = anchorY };
@@ -94,6 +98,13 @@ internal sealed class PixelMenu
         root.Plan(MaxArtHeight(work, factor));
         var (artWidth, artHeight) = root.ArtSize;
         var (x, y) = MenuPlacement.Place(anchorX, anchorY, artWidth * factor, artHeight * factor, work, preferAbove: false);
+        if (openAbove is { } above)
+        {
+            int margin = 4 * factor;
+            x = Math.Clamp(above.CenterX - artWidth * factor / 2, work.Left + margin, Math.Max(work.Left + margin, work.Right - artWidth * factor - margin));
+            y = Math.Max(work.Top + margin, above.BottomY - (artHeight - MenuLayout.ShadowOffset) * factor);
+            anchorY = y + artHeight * factor; // GROW starts from the bottom edge (the menu opens upward)
+        }
         menu._levels.Add(root);
         Active = menu;
         if (fromKeyboard)

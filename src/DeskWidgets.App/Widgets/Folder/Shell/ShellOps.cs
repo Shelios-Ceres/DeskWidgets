@@ -169,7 +169,7 @@ internal static class ShellOps
     }
 
     /// <summary>What a shortcut points to: a path, or (an ID-list shortcut) the item's parsing name, which is the AUMID for an app.</summary>
-    public readonly record struct LinkInfo(string? Target, string? Arguments, string? IdListName);
+    public readonly record struct LinkInfo(string? Target, string? Arguments, string? IdListName, string? WorkingDir = null);
 
     public static LinkInfo ReadShortcut(string linkPath)
     {
@@ -191,11 +191,14 @@ internal static class ShellOps
                 ShellNative.ILFree(pidl);
             }
         }
-        return new LinkInfo(target.Length == 0 ? null : Environment.ExpandEnvironmentVariables(target.ToString()), args.Length == 0 ? null : args.ToString(), idName);
+        var workingDir = new StringBuilder(520);
+        link.GetWorkingDirectory(workingDir, workingDir.Capacity);
+        return new LinkInfo(target.Length == 0 ? null : Environment.ExpandEnvironmentVariables(target.ToString()), args.Length == 0 ? null : args.ToString(), idName,
+            workingDir.Length == 0 ? null : Environment.ExpandEnvironmentVariables(workingDir.ToString()));
     }
 
     /// <summary>ShellExecuteEx on a file, a shortcut or a "shell:AppsFolder\..." name; <paramref name="verb"/> null means the default.</summary>
-    public static (bool Ok, int Win32Error) Open(string file, string? verb = null, string? workingDirectory = null, IntPtr owner = default)
+    public static (bool Ok, int Win32Error) Open(string file, string? verb = null, string? workingDirectory = null, IntPtr owner = default, string? parameters = null)
     {
         using var busy = PanelBusy.Enter(); // a "runas" brings up the UAC prompt, an unknown type the "Open with" box
         var info = new ShellNative.SHELLEXECUTEINFO
@@ -205,6 +208,7 @@ internal static class ShellOps
             hwnd = owner,
             lpVerb = verb,
             lpFile = file,
+            lpParameters = parameters,
             lpDirectory = workingDirectory,
             nShow = 1,
         };

@@ -69,6 +69,16 @@ public partial class App : Application
             return;
         }
 
+        int dockPreview = Array.FindIndex(commandLine, a => a.Equals("--pixel-dock-preview", StringComparison.OrdinalIgnoreCase));
+        if (dockPreview >= 0)
+        {
+            // Design aid: draw the Pixel dock's sizes, states and motion frames with sample programs to PNG sheets and quit (no window; works while the app is running).
+            string folder = dockPreview + 1 < commandLine.Length ? commandLine[dockPreview + 1] : Path.Combine(AppContext.BaseDirectory, "pixel-dock-preview");
+            Dock.PixelDockPreview.Render(folder);
+            Exit();
+            return;
+        }
+
         // Maintenance commands that run and quit, alongside a running instance.
         int inspect = Array.FindIndex(commandLine, a => a.Equals("--icons-inspect", StringComparison.OrdinalIgnoreCase));
         if (inspect >= 0)

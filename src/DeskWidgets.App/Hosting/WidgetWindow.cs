@@ -518,7 +518,7 @@ internal sealed partial class WidgetWindow : Window, IWidgetSite
             [.. Enum.GetValues<WidgetTheme>().Select(theme => MenuEntry.Radio(Strings.ThemeName(theme), theme == _theme, () => DispatcherQueue.TryEnqueue(() => _host.SetTheme(theme)), group: "theme"))],
             glyph: "", icon: PixelIcons.Theme));
         entries.Add(MenuEntry.Sub(Strings.AddWidget,
-            [.. WidgetCatalog.All.Select(factory => MenuEntry.Item(factory.DisplayName, () => _host.AddWidget(factory), glyph: factory.Glyph, icon: PixelIcons.ForWidget(factory.TypeId)))],
+            [.. WidgetCatalog.All.Select(factory => MenuEntry.Item(factory.DisplayName, () => _host.AddWidget(factory), glyph: factory.Glyph, icon: PixelIcons.ForWidget(factory.TypeId))), _host.DockMenuRow()],
             glyph: "", icon: PixelIcons.Add));
         entries.Add(MenuEntry.Item(Strings.RemoveWidget, () => _host.RemoveWidget(this), glyph: "", icon: PixelIcons.Remove));
         entries.Add(MenuEntry.Separator());
