@@ -284,10 +284,13 @@ internal sealed partial class DockController
         }
     }
 
-    /// <summary>Programs were dropped: on a group they join it; anywhere else on the bar they are added at the slot.</summary>
-    internal void DropPrograms(IReadOnlyList<DockItem> programs, int screenX)
+    /// <summary>
+    /// Programs were dropped: on a group they join it; anywhere else on the bar they are added at the slot. The group is read from the drop
+    /// point, not from <see cref="_dropGroup"/>: the drop target ends the drag (which clears it) before it hands the programs over.
+    /// </summary>
+    internal void DropPrograms(IReadOnlyList<DockItem> programs, int screenX, int screenY)
     {
-        int group = _dropGroup;
+        int group = GroupAtScreen(screenX, screenY);
         if (group >= 0 && group < Settings.Items.Count && Settings.Items[group].IsGroup)
         {
             int added = programs.Count(program => DockGroups.AddToGroup(Settings.Items, group, program));

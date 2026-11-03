@@ -140,7 +140,7 @@ internal sealed class DockDropTarget : IDropTarget
             _dock.Warn(Strings.DockOnlyPrograms);
             return 0;
         }
-        _dock.DropPrograms(programs, pt.x);
+        _dock.DropPrograms(programs, pt.x, pt.y);
         return 0;
     }
 }
