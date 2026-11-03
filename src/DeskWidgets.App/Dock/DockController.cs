@@ -596,7 +596,8 @@ internal sealed partial class DockController : IDisposable
     /// whether it is there (a drive may have come back, or a program gone). If the dock can tell when it is running, its icon goes into the
     /// opening state at once until the first window comes (D3); a start that fails, or a program that is gone, takes it back.
     /// </summary>
-    private void Start(DockItem item, int screenX, int screenY, bool asAdministrator = false)
+    /// <param name="quietWhenMissing">A program that is not there is only marked missing, not offered for removal (Open all: one dialog per member would be too many).</param>
+    private void Start(DockItem item, int screenX, int screenY, bool asAdministrator = false, bool quietWhenMissing = false)
     {
         bool tracks = item.SupportsRunning && _runStates.Started(item.Key, Now); // a program that was missing and came back is tracked too: the check below takes it back if it is not there
         if (tracks)
@@ -619,7 +620,7 @@ internal sealed partial class DockController : IDisposable
                     ApplyRunState(item.Key, DockRunState.Idle, DockRunTransition.TimedOut);
                 if (SetMissing(item, !exists))
                 {
-                    if (!exists)
+                    if (!exists && !quietWhenMissing)
                         OpenMissing(item, screenX, screenY);
                     return;
                 }

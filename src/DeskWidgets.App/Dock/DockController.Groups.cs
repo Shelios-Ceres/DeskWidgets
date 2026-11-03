@@ -199,12 +199,15 @@ internal sealed partial class DockController
         MenuEntry.Item(Strings.DockRemoveGroup, () => FrameClock.After(1, () => _host.AskRemoveGroup(Handle, ViewOf(group).Name, () => Remove(group))), glyph: "", icon: PixelIcons.Remove),
     ];
 
-    /// <summary>Starts every program of the group that is not running or opening, each once (on the worker, like a click). The running ones are left alone.</summary>
+    /// <summary>
+    /// Starts every program of the group that is not running or opening, each once (on the worker, like a click). The running ones are left
+    /// alone; one that cannot be found is marked missing and skipped, not asked about (a question per member would pile up).
+    /// </summary>
     internal void OpenAll(DockItem group)
     {
         Win32.GetCursorPos(out var at);
         foreach (var program in DockGroups.OpenAll(group, key => _runStates.StateOf(key) != DockRunState.Idle))
-            Start(program, at.X, at.Y);
+            Start(program, at.X, at.Y, quietWhenMissing: true);
     }
 
     private void BeginRename(DockItem group)
