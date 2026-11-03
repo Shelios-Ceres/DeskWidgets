@@ -212,6 +212,9 @@ internal static class Strings
     public static string DockRemoveGroup => T("移除分组", "Remove group");
     public static string DockRemoveGroupQuestion(string name) => T($"要移除分组“{name}”吗？里面的应用不会被删除，只是不再显示在这里。", $"Remove the group {name}? Its programs aren't deleted; they just stop showing here.");
     public static string DockOpenWith(string name) => T($"用 {name} 打开", $"Open with {name}");
+    public static string DockOpenWithGone => T("这个应用已经不可用。", "The app is no longer available.");
+    public static string DockNothingToOpen => T("没有可打开的文件。", "There is nothing to open.");
+    public static string DockOpenWithFailed(string name, int code) => T($"{name} 没能打开这些文件（0x{code:X8}）。", $"{name} could not open the files (0x{code:X8}).");
     public static string DockAddedHere => T("这个屏幕已经有程序坞了。", "This screen already has a dock.");
     public static string Remove => T("移除", "Remove");
     public static string Cancel => T("取消", "Cancel");

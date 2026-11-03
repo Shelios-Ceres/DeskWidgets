@@ -158,9 +158,9 @@ internal static class DockOpenWith
     public static string? Invoke(DockHandler handler, IReadOnlyList<string> paths)
     {
         if (handler.Native is not { } native)
-            return "The app is no longer available.";
+            return Strings.DockOpenWithGone;
         if (paths.Count == 0)
-            return "There is nothing to open.";
+            return Strings.DockNothingToOpen;
         var items = new List<IShellItem>();
         IntPtr unknown = IntPtr.Zero;
         try
@@ -173,14 +173,14 @@ internal static class DockOpenWith
             if (hr < 0)
             {
                 Log.Warn($"IAssocHandler.Invoke ({handler.UiName}) failed: 0x{hr:X8}");
-                return $"{handler.UiName} could not open the files (0x{hr:X8}).";
+                return Strings.DockOpenWithFailed(handler.UiName, hr);
             }
             return null;
         }
         catch (COMException ex)
         {
             Log.Warn($"Opening files with {handler.UiName} failed", ex);
-            return $"{handler.UiName} could not open the files (0x{ex.HResult:X8}).";
+            return Strings.DockOpenWithFailed(handler.UiName, ex.HResult);
         }
         finally
         {
