@@ -949,6 +949,8 @@ internal sealed partial class DockController : IDisposable
         _slide?.Stop();
         _leave?.Stop();
         _expiry?.Stop();
+        _owTimer?.Stop();
+        _owLeave?.Stop();
         _edge.Dispose();
         if (_surface is not null)
         {
