@@ -36,6 +36,7 @@ internal static class PixelDockPreview
                     PixelPreview.SavePng(Path.Combine(folder, $"dock-3-drops-{tag}.png"), Drops(palette, art, dark), Factor);
                     PixelPreview.SavePng(Path.Combine(folder, $"dock-4-empty-{tag}.png"), Empty(palette, art, dark), Factor);
                     PixelPreview.SavePng(Path.Combine(folder, $"dock-5-motion-{tag}.png"), Motion(palette, art, dark), Factor);
+                    PixelPreview.SavePng(Path.Combine(folder, $"dock-6-groups-{tag}.png"), Groups(palette, art, dark), Factor);
                 }
             }
         }
@@ -344,6 +345,96 @@ internal static class PixelDockPreview
             d.CanvasWidth = DockGeometry.PixelBarLengthArt(DockIconSize.Large, demo.Count) + 2 * Overhang;
             Strip("D13 SIZE CHANGE:", Frames(d, p, d.Change(demo, DockIconSize.Large, new DockChange(DockChangeKind.Resized), p, animate: true, keepMotion: false)));
         }
+        return Compose(rows, dark);
+    }
+
+    /// <summary>The design's Office group: Word (running), Excel, PowerPoint, Notepad and Cursor.</summary>
+    private static DockItemView Office(bool zh, bool wordRunning = true)
+    {
+        var members = new List<DockItemView>
+        {
+            new(App("Word", @"C:\Sample\WINWORD.EXE"), false, wordRunning ? DockRunState.Running : DockRunState.Idle),
+            new(App("Excel", @"C:\Sample\EXCEL.EXE"), false),
+            new(App("PowerPoint", @"C:\Sample\POWERPNT.EXE"), false),
+            new(App(zh ? "记事本" : "Notepad", Notepad), false),
+            new(App("Cursor", @"C:\Sample\Cursor.exe"), false),
+        };
+        var group = new DockItem { Name = "Office", GroupId = wordRunning ? "office" : "office-idle", Children = members.Select(m => m.Item).ToList() };
+        return new DockItemView(group, false, wordRunning ? DockRunState.Running : DockRunState.Idle, Children: members);
+    }
+
+    private static PixelCanvas Panel(PixelPalette p, PixelDockArt art, DockItemView group, int hover = -1, LineEditor? edit = null, IReadOnlyList<bool>? lit = null, int litHover = -1)
+    {
+        var members = group.Children!;
+        int width = PixelDockPanelLayout.Width(members.Count);
+        return PixelDockPanelScene.Draw(p, art, new PixelDockPanelView(group.Name, members, 0, hover, -1, -1, false, false, edit, lit, litHover, -1, -1, null, width / 2));
+    }
+
+    private static PixelCanvas Groups(PixelPalette p, PixelDockArt art, bool dark)
+    {
+        bool zh = Strings.IsChinese;
+        var demo = Demo(zh).Take(8).ToList();
+        var office = Office(zh);
+        var idleOffice = Office(zh, wordRunning: false);
+        var rows = new List<(string, PixelCanvas)>();
+        foreach (var size in Enum.GetValues<DockIconSize>())
+            rows.Add(($"GROUP, {size.ToString().ToUpperInvariant()}: IDLE, THEN WITH WORD RUNNING (SLATE HALO, AWAKE MINI)", Dock(p, art, [idleOffice, office], size, overhang: 4)));
+        var withGroup = demo.Take(3).Append(office).Concat(demo.Skip(3)).ToList();
+        rows.Add(("THE PANEL (HOVER ON EXCEL)", Panel(p, art, office, hover: 1)));
+        rows.Add(("THE PANEL, THREE APPS", Panel(p, art, new DockItemView(office.Item, false, Children: office.Children!.Skip(1).Take(3).ToList()))));
+        rows.Add(("RENAMING: THE TITLE IS A FIELD", Panel(p, art, office, edit: new LineEditor("Office", selectAll: true))));
+        rows.Add(("FILES OVER THE PANEL: WORD AND NOTEPAD TAKE THEM, THE POINTER ON NOTEPAD", Panel(p, art, office, lit: [true, false, false, true, false], litHover: 3)));
+        rows.Add(("D8: HELD OVER EDGE, IT SHOWS AS A GROUP OF ONE", Dock(p, art, demo, DockIconSize.Medium, d =>
+        {
+            d.DragIndex = 4;
+            d.DragCenter = DockGeometry.PixelIconLeftArt(DockIconSize.Medium, 5) + 17;
+            d.Forming = 5;
+        })));
+        rows.Add(("D12: FILES OVER THE DOCK, THE LIT APPS AND THE ONE UNDER THE POINTER", Dock(p, art, withGroup, DockIconSize.Medium, d =>
+        {
+            d.OpenLit = withGroup.Select((_, i) => i is 4 or 5 or 6).ToList();
+            d.OpenHover = 5;
+        })));
+        rows.Add(("D12: A GROUP WITH A MEMBER THAT TAKES THE FILES LIGHTS TOO; HOVERED, IT SHOWS ITS OWN NAME", Dock(p, art, withGroup, DockIconSize.Medium, d =>
+        {
+            d.OpenLit = withGroup.Select((_, i) => i is 3 or 4).ToList();
+            d.OpenHover = 3;
+        })));
+        {
+            var two = new List<DockItemView> { demo[5], demo[6] };
+            var pair = new DockItemView(new DockItem { Name = "", GroupId = "pair", Children = two.Select(m => m.Item).ToList() }, false, Children: two);
+            var bar = demo.Take(3).Append(pair).Append(office).ToList();
+            var dragged = new DockItemView(App("Excel", @"C:\Sample\EXCEL.EXE"), false);
+            rows.Add(("A PROGRAM FROM OUTSIDE OVER A GROUP: ITS MINI IN THE NEXT FREE CELL", Dock(p, art, bar, DockIconSize.Medium, d => d.DropPreview = (3, dragged))));
+            rows.Add(("OVER A GROUP OF FOUR OR MORE: THE GROUP LIFTS 2 PX", Dock(p, art, bar, DockIconSize.Medium, d => d.DropPreview = (4, dragged))));
+            var d = Painter(p, art, bar, DockIconSize.Medium);
+            var three = two.Append(dragged).ToList();
+            var joined = bar.ToList();
+            joined[3] = pair with { Children = three };
+            var shots = Frames(d, p, d.Change(joined, DockIconSize.Medium, new DockChange(DockChangeKind.Grouped, 3, -1), p, animate: true, keepMotion: false));
+            for (int i = 0; i < shots.Count; i++)
+                rows.Add(($"THE DROP: THE GROUP POPS, FRAME {i + 1}/{shots.Count}", shots[i]));
+        }
+        rows.Add(("A MEMBER DRAGGED OUT OF THE PANEL, OVER THE BAR (THE DOCK DRAWS IT)", Dock(p, art, withGroup, DockIconSize.Medium, d =>
+            d.Floating = (office.Children![1], Overhang + DockGeometry.PixelIconLeftArt(DockIconSize.Medium, 6) + 4, PixelDockPainter.Head - 2))));
+
+        // D8 on the drop: Chrome joined Edge; the bar closes up with the target's mini alone, then the group POPs with both.
+        {
+            var d = Painter(p, art, demo, DockIconSize.Medium, overhang: Overhang + 16);
+            var members = new List<DockItemView> { demo[5], demo[4] };
+            var group = new DockItemView(new DockItem { Name = "", GroupId = "new", Children = members.Select(m => m.Item).ToList() }, false, Children: members);
+            var after = demo.Where((_, i) => i != 4).ToList();
+            after[4] = group;
+            d.DragIndex = -1;
+            d.BarLeft += d.Pitch / 2;
+            var shots = Frames(d, p, d.Change(after, DockIconSize.Medium, new DockChange(DockChangeKind.Grouped, 4, 4), p, animate: true, keepMotion: false));
+            for (int i = 0; i < shots.Count; i++)
+                rows.Add(($"D8 DROP, GROUPED: FRAME {i + 1}/{shots.Count}", shots[i]));
+        }
+
+        // D9: GROW from the dock (1/3, 2/3), then the panel.
+        foreach (double share in new[] { 1.0 / 3, 2.0 / 3 })
+            rows.Add(($"D9 GROW {Math.Round(share * 3)}/3", PixelDockPanelScene.EmptyFrame(p, office.Children!.Count, share)));
         return Compose(rows, dark);
     }
 

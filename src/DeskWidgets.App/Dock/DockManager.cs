@@ -101,6 +101,8 @@ internal sealed class DockManager : IDockHost, IDisposable
     private void Open(DockSettings settings)
     {
         EnsureTracker();
+        if (DockGroups.Normalize(settings.Items))
+            RequestSave(); // a hand-edited group of one, an empty one, a nested one
         var dock = new DockController(this, settings);
         _docks.Add(dock);
         try
@@ -212,6 +214,25 @@ internal sealed class DockManager : IDockHost, IDisposable
             return;
         }
         int answer = Win32.MessageBox(owner, Strings.DockRemoveDockQuestion, Strings.AppName,
+            Win32.MB_YESNO | Win32.MB_ICONQUESTION | Win32.MB_DEFBUTTON2 | Win32.MB_SETFOREGROUND | Win32.MB_TOPMOST);
+        if (answer == Win32.IDYES)
+            yes();
+    }
+
+    public void AskRemoveGroup(nint owner, string name, Action yes)
+    {
+        string question = Strings.DockRemoveGroupQuestion(name);
+        if (Theme == WidgetTheme.Pixel)
+        {
+            PixelDialog.Show(owner, DialogBadge.Question, null, question, false,
+                [new DialogButtonSpec(Strings.Remove, false), new DialogButtonSpec(Strings.Cancel, true)], defaultButton: 1, cancelButton: 1, done: answer =>
+                {
+                    if (answer == 0)
+                        yes();
+                });
+            return;
+        }
+        int answer = Win32.MessageBox(owner, question, Strings.AppName,
             Win32.MB_YESNO | Win32.MB_ICONQUESTION | Win32.MB_DEFBUTTON2 | Win32.MB_SETFOREGROUND | Win32.MB_TOPMOST);
         if (answer == Win32.IDYES)
             yes();

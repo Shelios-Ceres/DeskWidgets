@@ -106,4 +106,102 @@ internal static class GlassDockLayout
     /// <summary>A window-DIP rectangle as window pixels for the region, one pixel larger on every side so an anti-aliased edge is never cut.</summary>
     public static (int Left, int Top, int Right, int Bottom) RegionPixels(DipRect rect, double scale)
         => ((int)Math.Floor(rect.X * scale) - 1, (int)Math.Floor(rect.Y * scale) - 1, (int)Math.Ceiling(rect.Right * scale) + 1, (int)Math.Ceiling(rect.Bottom * scale) + 1);
+
+    /// <summary>A group icon's minis (HANDOFF 1): size, inset and gap for a tile of <paramref name="icon"/> DIPs: 15 (4, 2), 18 (5, 2), 24 (6, 4).</summary>
+    public static (double Mini, double Inset, double Gap) Minis(double icon)
+        => icon <= 40 ? (15, 4, 2) : icon <= 48 ? (18, 5, 2) : (24, 6, 4);
+
+    /// <summary>Mini <paramref name="index"/> (0 to 3, row by row) in the group tile's own DIPs.</summary>
+    public static DipRect MiniRect(double icon, int index)
+    {
+        var (mini, inset, gap) = Minis(icon);
+        return new DipRect(inset + index % 2 * (mini + gap), inset + index / 2 * (mini + gap), mini, mini);
+    }
+
+    /// <summary>A plate <paramref name="grow"/> larger than the tile on each side (forming: 6, Open with: 4), in the tile's DIPs; its radius is 0.225 of its side.</summary>
+    public static (DipRect Rect, double Radius) Plate(double icon, double grow)
+    {
+        double side = icon + 2 * grow;
+        return (new DipRect(-grow, -grow, side, side), 0.225 * side);
+    }
+}
+
+/// <summary>
+/// The group panel's geometry (Glass HANDOFF 1 and 8), in DIPs: columns clamp(count, 3, 4), cells 80 x 92 from x 20 and y 52, at most three rows
+/// shown (then it scrolls), the bottom 12 above the bar, centred on the group icon and kept 8 inside the screen. Cell positions are in the
+/// scrolled content's coordinates (y 0 is the first row's top).
+/// </summary>
+internal static class GlassDockPanelLayout
+{
+    public const double CellWidth = 80, CellHeight = 92;
+    public const double Side = 20, GridTop = 52, BottomPad = 8;
+    public const double Radius = 22, GapAboveBar = 12, ScreenMargin = 8;
+    public const int MaxRows = 3;
+
+    /// <summary>The title is middle-shortened to at most the width less this (room for "Open all").</summary>
+    public const double TitleReserve = 140;
+
+    public static int Columns(int count) => Math.Clamp(count, 3, 4);
+
+    public static int Rows(int count) => Math.Max(1, (count + Columns(count) - 1) / Columns(count));
+
+    public static int VisibleRows(int count) => Math.Min(MaxRows, Rows(count));
+
+    public static double Width(int count) => 2 * Side + Columns(count) * CellWidth;
+
+    public static double Height(int count) => GridTop + ViewportHeight(count);
+
+    public static double ViewportHeight(int count) => VisibleRows(count) * CellHeight + BottomPad;
+
+    public static double ContentHeight(int count) => Rows(count) * CellHeight + BottomPad;
+
+    /// <summary>The panel's top-left: centred on <paramref name="iconCentre"/>, bottom 12 above <paramref name="barTop"/>, kept 8 inside the screen.</summary>
+    public static (double X, double Y) Place(double iconCentre, double barTop, double screenLeft, double screenRight, double screenTop, double width, double height)
+    {
+        double low = screenLeft + ScreenMargin, high = screenRight - ScreenMargin - width;
+        double x = high < low ? low : Math.Clamp(iconCentre - width / 2, low, high);
+        double y = Math.Max(screenTop + ScreenMargin, barTop - GapAboveBar - height);
+        return (x, y);
+    }
+
+    /// <summary>The x of the point the panel grows from and sinks to (D9: its bottom centre, on the group icon), in the panel's DIPs.</summary>
+    public static double OriginX(double iconCentre, double panelLeft, double width) => Math.Clamp(iconCentre - panelLeft, 0, width);
+
+    /// <summary>The top-left of the cell in place <paramref name="index"/>, in content coordinates.</summary>
+    public static (double X, double Y) CellOrigin(int index, int columns) => (Side + index % columns * CellWidth, index / columns * CellHeight);
+
+    /// <summary>The cell under a content point, or -1 (the side margins, past the last member).</summary>
+    public static int CellAt(double x, double y, int count, int columns)
+    {
+        if (x < Side || x >= Side + columns * CellWidth || y < 0)
+            return -1;
+        int index = (int)(y / CellHeight) * columns + (int)((x - Side) / CellWidth);
+        return index < count ? index : -1;
+    }
+
+    /// <summary>Where a member dragged to a content point would land (D7 inside the panel): the nearest place, 0 to count - 1.</summary>
+    public static int SlotAt(double x, double y, int count, int columns)
+    {
+        if (count <= 0)
+            return -1;
+        int rows = (count + columns - 1) / columns;
+        int column = Math.Clamp((int)Math.Floor((x - Side) / CellWidth), 0, columns - 1);
+        int row = Math.Clamp((int)Math.Floor(y / CellHeight), 0, rows - 1);
+        return Math.Clamp(row * columns + column, 0, count - 1);
+    }
+
+    /// <summary>The members' places while one is dragged from <paramref name="from"/> to <paramref name="to"/>: result[member] = place (as DockGroups.Reorder will leave them).</summary>
+    public static int[] Places(int count, int from, int to)
+    {
+        var order = Enumerable.Range(0, count).ToList();
+        if (from >= 0 && from < count && to >= 0 && to < count && from != to)
+        {
+            order.RemoveAt(from);
+            order.Insert(to, from);
+        }
+        var places = new int[count];
+        for (int place = 0; place < count; place++)
+            places[order[place]] = place;
+        return places;
+    }
 }

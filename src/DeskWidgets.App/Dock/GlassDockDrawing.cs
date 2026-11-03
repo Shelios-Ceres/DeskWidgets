@@ -34,6 +34,11 @@ internal sealed partial class GlassDockSurface
         public Canvas Root = null!;
         public Grid Lift = null!;
         public Grid TileHost = null!;
+
+        // The plates behind the tile, inside the lift so they rise with it (D8's forming plate, D12's lit plate); made when first needed.
+        public Canvas Plates = null!;
+        public Rectangle? FormPlate, LitPlate;
+        public bool Lit;
         public Grid IdleHost = null!;
         public Grid RunHost = null!;
         public string? TileState;
@@ -69,6 +74,8 @@ internal sealed partial class GlassDockSurface
     private readonly Grid _label = new() { IsHitTestVisible = false, Height = DockGeometry.LabelHeightDip };
     private readonly Border _labelTint = new() { CornerRadius = new CornerRadius(LabelRadius) };
     private readonly Border _labelSheen = new() { CornerRadius = new CornerRadius(LabelRadius) };
+    private readonly Border _labelSelect = new() { CornerRadius = new CornerRadius(LabelRadius), Visibility = Visibility.Collapsed }; // D12's "Open with" pill
+    private bool _labelSelected;
     private readonly TextBlock _labelText = new()
     {
         FontFamily = TextFont, FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.NoWrap,
@@ -148,6 +155,7 @@ internal sealed partial class GlassDockSurface
 
         _label.Children.Add(_labelTint);
         _label.Children.Add(_labelSheen);
+        _label.Children.Add(_labelSelect);
         _label.Children.Add(_labelText);
         GlassMotion.VisualOf(_label).Opacity = 0;
         Canvas.SetZIndex(_label, 4);
@@ -181,7 +189,8 @@ internal sealed partial class GlassDockSurface
         if (_barPlaced)
             UpdateSheen(_barTarget);
         var palette = Palette;
-        _labelText.Foreground = palette.Primary;
+        _labelSelect.Background = palette.Select;
+        _labelText.Foreground = _labelSelected ? palette.OnSelect : palette.Primary;
         _emptyText.Foreground = palette.Primary;
         _emptyGlyph.Foreground = palette.Primary;
         _gapPlate.Fill = palette.Hover;
@@ -216,6 +225,7 @@ internal sealed partial class GlassDockSurface
         ApplyThemeBrushes();
         foreach (var slot in _slots)
             UpdateTile(slot, fade: false);
+        _panel?.ApplyTheme();
     }
 
     // ---------------------------------------------------------------- the icons
@@ -242,7 +252,11 @@ internal sealed partial class GlassDockSurface
         else if (sizeChanged)
             Resize();
         else
-            Update(change.Kind, animate, delayed);
+            Update(change, animate, delayed);
+        // Build C's marks follow the new list: a forming target that went is forgotten, the lit icons are lit again on new slots.
+        if (Find(_formingKey) is null)
+            _formingKey = null;
+        ApplyOpenWith(animate: false);
     }
 
     /// <summary>Every icon made again in its place, at once (the first draw, a language or screen change, no motion).</summary>
@@ -253,7 +267,7 @@ internal sealed partial class GlassDockSurface
             Drop(slot);
         _slots.Clear();
         _leaving.Clear();
-        _hoverKey = _pressedKey = _dragKey = null;
+        _hoverKey = _pressedKey = _dragKey = _formingKey = null;
         foreach (var view in _views)
             _slots.Add(NewSlot(view));
         _barPlaced = false;
@@ -274,7 +288,7 @@ internal sealed partial class GlassDockSurface
             Leave(slot, GlassMotion.Quick);
         }
         _slots.Clear();
-        _hoverKey = _pressedKey = _dragKey = null;
+        _hoverKey = _pressedKey = _dragKey = _formingKey = null;
         foreach (var view in _views)
         {
             var slot = NewSlot(view);
@@ -286,9 +300,11 @@ internal sealed partial class GlassDockSurface
             GlassMotion.FadeTo(slot.Lift, 1, GlassMotion.Enter, GlassEase.Out, GlassMotion.Move / 2);
     }
 
-    /// <summary>The same icons, some added, removed or moved (D7, D10, D11), or a redraw only.</summary>
-    private void Update(DockChangeKind kind, bool animate, bool delayed)
+    /// <summary>The same icons, some added, removed, moved (D7, D10, D11), grouped or ungrouped (D8), or a redraw only.</summary>
+    private void Update(DockChange change, bool animate, bool delayed)
     {
+        var kind = change.Kind;
+        var before = _slots.ToList();
         var old = new Dictionary<string, Slot>();
         foreach (var slot in _slots)
             old.TryAdd(slot.Key, slot);
@@ -312,8 +328,12 @@ internal sealed partial class GlassDockSurface
         }
         _slots.Clear();
         _slots.AddRange(next);
+        bool regrouped = kind is DockChangeKind.Grouped or DockChangeKind.Ungrouped;
+        // D8: the two icons are replaced by the group icon: the gone ones go at once (no D11 fade), the group takes the target's place first.
+        if (kind == DockChangeKind.Grouped && animate)
+            PlaceNewGroup(change, before, old, entering);
         foreach (var gone in old.Values)
-            Remove(gone, animate);
+            Remove(gone, animate && !regrouped);
         if (Find(_hoverKey) is null)
             _hoverKey = null;
         if (Find(_pressedKey) is null)
@@ -321,7 +341,7 @@ internal sealed partial class GlassDockSurface
         if (Find(_dragKey) is null)
             _dragKey = null;
 
-        bool moves = animate && (kind is DockChangeKind.Added or DockChangeKind.Removed or DockChangeKind.Moved || delayed);
+        bool moves = animate && (kind is DockChangeKind.Added or DockChangeKind.Removed or DockChangeKind.Moved || regrouped || delayed);
         if (kind == DockChangeKind.Removed && animate && old.Count > 0)
         {
             // D11: the icon goes first (Exit), then the others close up and the bar shortens (Move).
@@ -338,9 +358,15 @@ internal sealed partial class GlassDockSurface
         // D10: a new icon enters in its place (opacity and 85 % to 100 %, Enter) while the others make room.
         foreach (var slot in entering)
         {
+            if (kind == DockChangeKind.Added && TakeLanding(slot))
+                continue; // a member dragged out of the panel: its picture lands here instead of D10's Enter
             if (animate && kind == DockChangeKind.Added)
                 GlassMotion.EnterItem(slot.Lift, Centre(slot));
+            else if (animate && kind == DockChangeKind.Ungrouped)
+                SettleUngrouped(slot);
         }
+        if (animate && kind == DockChangeKind.Grouped && change.Index >= 0 && change.Index < _slots.Count)
+            SettleGroup(_slots[change.Index]);
     }
 
     private Slot NewSlot(DockItemView view)
@@ -349,10 +375,11 @@ internal sealed partial class GlassDockSurface
         var idleHost = new Grid { Width = icon, Height = icon, IsHitTestVisible = false };
         var runHost = new Grid { Width = icon, Height = icon, IsHitTestVisible = false };
         var tileHost = new Grid { Width = icon, Height = icon, IsHitTestVisible = false, Children = { idleHost, runHost } };
-        var lift = new Grid { Width = icon, Height = icon, IsHitTestVisible = false, Children = { tileHost } };
+        var plates = new Canvas { Width = icon, Height = icon, IsHitTestVisible = false }; // a Canvas: the plates reach past the tile, a Grid would cut them
+        var lift = new Grid { Width = icon, Height = icon, IsHitTestVisible = false, Children = { plates, tileHost } };
         var root = new Canvas { Width = icon, Height = icon, IsHitTestVisible = false, Children = { lift } };
         Canvas.SetZIndex(root, 2);
-        var slot = new Slot { Key = view.Item.Key, View = view, Root = root, Lift = lift, TileHost = tileHost, IdleHost = idleHost, RunHost = runHost, Size = icon };
+        var slot = new Slot { Key = view.Item.Key, View = view, Root = root, Lift = lift, TileHost = tileHost, Plates = plates, IdleHost = idleHost, RunHost = runHost, Size = icon };
         GlassMotion.VisualOf(lift).CenterPoint = new Vector3(Centre(slot), 0);
         GlassMotion.VisualOf(tileHost).CenterPoint = new Vector3(Centre(slot), 0);
         UpdateTile(slot, fade: false);
@@ -367,6 +394,10 @@ internal sealed partial class GlassDockSurface
     private void UpdateTile(Slot slot, bool fade)
     {
         slot.TileHost.Opacity = slot.View.Missing ? 0.4 : 1;
+        if (slot.FormPlate is { } form)
+            form.Fill = Palette.Pressed;
+        if (slot.LitPlate is { } lit)
+            lit.Fill = Palette.DropTint;
         var (state, build, buildRunning, loading) = _tiles!.Describe(slot.View, Palette, Dark, slot.Size, Scale);
         slot.BuildRunning = buildRunning;
         if (state == slot.TileState)
@@ -400,6 +431,7 @@ internal sealed partial class GlassDockSurface
                 return;
             foreach (var slot in _slots)
                 UpdateTile(slot, fade: true);
+            _panel?.Repaint();
         });
     }
 
@@ -651,8 +683,8 @@ internal sealed partial class GlassDockSurface
         if (key != _hoverKey)
         {
             // D1: the picture rises by the lift (Quick); the one left behind drops back (Quick to the next icon, Exit off the bar).
-            if (Find(_hoverKey) is { } before && before.Key != _dragKey)
-                LiftTo(before, 0, key is null ? GlassMotion.Exit : GlassMotion.Quick, key is null ? Bezier.In : Bezier.Out);
+            if (Find(_hoverKey) is { } before && before.Key != _dragKey && !before.Lit) // a lit icon keeps D12's lift
+                LiftTo(before, 0,key is null ? GlassMotion.Exit : GlassMotion.Quick, key is null ? Bezier.In : Bezier.Out);
             _hoverKey = key;
             if (slot is not null && key != _dragKey)
                 LiftTo(slot, -DockGeometry.LiftDip(_size), GlassMotion.Quick, Bezier.Out);
@@ -704,6 +736,7 @@ internal sealed partial class GlassDockSurface
             if (Find(_dragKey) is { } dropped)
             {
                 _dragKey = null;
+                FloatDragged(dropped, floating: false);
                 Canvas.SetZIndex(dropped.Root, 2);
                 LiftTo(dropped, dropped.Key == _hoverKey ? -DockGeometry.LiftDip(_size) : 0, GlassMotion.Move, Bezier.Move);
             }
@@ -716,12 +749,15 @@ internal sealed partial class GlassDockSurface
         {
             if (Find(_dragKey) is { } other)
             {
+                FloatDragged(other, floating: false);
                 Canvas.SetZIndex(other.Root, 2);
                 LiftTo(other, 0, GlassMotion.Quick, Bezier.Out);
             }
             _dragKey = slot.Key;
             Canvas.SetZIndex(slot.Root, 3);
             LiftTo(slot, -DockGeometry.LiftDip(_size), GlassMotion.Quick, Bezier.Out);
+            if (_formingKey is not null)
+                FloatDragged(slot, floating: true);
         }
         // D7: the dragged icon follows the pointer, lifted, at full opacity; the others slide (their order came in SetItems).
         double left = GlassDockLayout.DragLeft(_size, _barTarget, BarLeftDip, x);
@@ -743,12 +779,13 @@ internal sealed partial class GlassDockSurface
     /// D1: the label fades in and rises 4 (Enter); to the next icon it slides there (Quick). Its frost is the second visual in the
     /// window, moved with it on the same curve, and the region takes in the label's rectangle (both places while it slides).
     /// </summary>
-    private void ShowLabel(Slot slot, string text)
+    private void ShowLabel(Slot slot, string text, bool select = false)
     {
         string shown = NameShortener.OneLine(text, GlassDockLayout.LabelTextMaxDip, Measure);
         var rect = GlassDockLayout.Label(slot.X + slot.Size / 2, Measure(shown), _barTarget.Y, ScreenLeftDip, ScreenRightDip);
-        if (_labelState == LabelState.Shown && rect == _labelRect && _labelText.Text == shown)
+        if (_labelState == LabelState.Shown && rect == _labelRect && _labelText.Text == shown && select == _labelSelected)
             return;
+        SetLabelSelected(select);
         _labelText.Text = shown;
         _label.Width = rect.Width;
         float scale = (float)Scale;

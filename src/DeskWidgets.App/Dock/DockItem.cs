@@ -56,6 +56,20 @@ internal sealed class DockItem
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? IconPath { get; set; }
 
+    /// <summary>
+    /// A group (PROPOSAL 3.3): its programs, in order. Null for a program. A group holds programs only (no group in a group), at least two:
+    /// <see cref="DockGroups.Normalize"/> turns a group of one back into its program and drops an empty one.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<DockItem>? Children { get; set; }
+
+    /// <summary>A group's identity (<see cref="Key"/>), made when it is made, so a rename does not change it.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? GroupId { get; set; }
+
+    [JsonIgnore]
+    public bool IsGroup => Children is not null;
+
     /// <summary>Whether the dock can tell if it is running: it needs an AUMID or an exe to match a window with. A Steam link has neither (its window is the game's own exe).</summary>
     [JsonIgnore]
     public bool SupportsRunning => !string.IsNullOrEmpty(ExePath) || !string.IsNullOrEmpty(Aumid);
@@ -66,7 +80,8 @@ internal sealed class DockItem
 
     /// <summary>Whether two items are the same program, so a program is not added twice: by AUMID, else exe path, else URL.</summary>
     public string Key
-        => !string.IsNullOrEmpty(Aumid) ? "aumid:" + Aumid.ToLowerInvariant()
+        => IsGroup ? "group:" + GroupId
+            : !string.IsNullOrEmpty(Aumid) ? "aumid:" + Aumid.ToLowerInvariant()
             : !string.IsNullOrEmpty(ExePath) ? "exe:" + ExePath.ToLowerInvariant()
             : !string.IsNullOrEmpty(Url) ? "url:" + Url.ToLowerInvariant()
             : "name:" + Name.ToLowerInvariant();
@@ -89,7 +104,11 @@ internal sealed class DockItem
         return new DockStart(DockStartKind.None, "");
     }
 
-    public DockItem Copy() => new() { Name = Name, Aumid = Aumid, ExePath = ExePath, Arguments = Arguments, WorkingDir = WorkingDir, Url = Url, IconPath = IconPath };
+    public DockItem Copy() => new()
+    {
+        Name = Name, Aumid = Aumid, ExePath = ExePath, Arguments = Arguments, WorkingDir = WorkingDir, Url = Url, IconPath = IconPath,
+        GroupId = GroupId, Children = Children?.Select(child => child.Copy()).ToList(),
+    };
 }
 
 /// <summary>One dock: the screen it is on, where it sits along the bottom edge, its icon size and its programs. Saved in settings.json beside the widgets.</summary>

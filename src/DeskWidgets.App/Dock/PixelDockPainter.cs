@@ -32,7 +32,7 @@ internal sealed class PixelDockPainter
 
     private readonly PixelDockArt _art;
     private readonly Dictionary<(int Width, int Height, bool Dark), PixelCanvas> _bars = [];
-    private readonly Dictionary<(string Text, bool Dark), PixelCanvas> _labels = [];
+    private readonly Dictionary<(string Text, bool Dark, bool Select), PixelCanvas> _labels = [];
     private PixelText? _emptyText;
 
     public PixelDockPainter(PixelDockArt art) => _art = art;
@@ -109,6 +109,30 @@ internal sealed class PixelDockPainter
 
     public bool LabelShown { get; set; }
 
+    /// <summary>D8: the icon a dragged one has been held over (-1: none): a program shows as a group of one, its own mini.</summary>
+    public int Forming { get; set; } = -1;
+
+    /// <summary>
+    /// A program from outside held over a group's middle (HANDOFF 4): the group at <c>Index</c> shows the program's mini in its next free mini
+    /// cell, or lifts 2 px when it holds four already. Null: none.
+    /// </summary>
+    public (int Index, DockItemView Dragged)? DropPreview { get; set; }
+
+    /// <summary>A member dragged out of a group's panel, drawn where the pointer is (canvas art pixels, its centre) once it has left the panel; null: none.</summary>
+    public (DockItemView View, int X, int Y)? Floating { get; set; }
+
+    /// <summary>D12: per icon, whether it takes the files being dragged over the dock (a group: a member does; null: no file drag).</summary>
+    public IReadOnlyList<bool>? OpenLit { get; set; }
+
+    /// <summary>D12: the icon under the files (-1: none); when it is lit it lifts 2 and its plate says "Open with {name}" in Select.</summary>
+    public int OpenHover { get; set; } = -1;
+
+    /// <summary>D8 on the drop: the new group and where its POP is (1: the target's mini alone while the bar closes up, 2: all minis 1 px up).</summary>
+    private string? _groupPop;
+    private int _groupPopStage;
+
+    private bool IsLit(int index) => OpenLit is { } lit && index >= 0 && index < lit.Count && lit[index];
+
     // ----- targets -----
 
     private bool Widened => Gap >= 0 && Items.Count > 0;
@@ -153,6 +177,8 @@ internal sealed class PixelDockPainter
         _leaving.Clear();
         _leaveMinBayer = 0;
         _dissolve = 0;
+        _groupPop = null;
+        _groupPopStage = 0;
         _gapShown = Gap >= 0;
         foreach (var key in _lift.Keys.ToList())
         {
@@ -191,11 +217,30 @@ internal sealed class PixelDockPainter
                     leaving.Add(Snapshot(palette, view, x));
             }
         }
+        // D8: a new group stands where its target was, under a new key: it moves from the target's place, not from nowhere.
+        bool newGroup = false;
+        // To = -1: a program from outside joined a group that was there; there is no dragged slot and no new key.
+        if (change.Kind == DockChangeKind.Grouped && change.Index >= 0 && change.Index < items.Count && change.To >= 0)
+        {
+            int oldTarget = PixelDockPanelLayout.GroupedOldTarget(change.Index, change.To);
+            string groupKey = items[change.Index].Item.Key;
+            if (oldTarget >= 0 && oldTarget < oldItems.Count && oldItems[oldTarget].Item.Key != groupKey)
+            {
+                newGroup = true;
+                if (_shownX.TryGetValue(oldItems[oldTarget].Item.Key, out int targetX))
+                    _shownX[groupKey] = targetX;
+            }
+        }
         Items = items;
         Size = size;
         SyncRunLooks();
         if (Gap > items.Count)
             Gap = items.Count;
+        if (change.Kind is DockChangeKind.Grouped or DockChangeKind.Ungrouped)
+        {
+            Forming = -1; // the hold is over, and the indexes changed
+            DropPreview = null;
+        }
 
         if (change.Kind == DockChangeKind.None && sameKeys && keepMotion)
             return null;
@@ -219,6 +264,11 @@ internal sealed class PixelDockPainter
                 // D13: the window and the bar's frame are new at once; the icons DISSOLVE in.
                 Snap();
                 return [() => _dissolve = 1, () => _dissolve = 2, () => _dissolve = 3, () => _dissolve = 0];
+            case DockChangeKind.Grouped when change.Index >= 0 && change.Index < items.Count:
+                return Grouped(items[change.Index].Item.Key, newGroup);
+            case DockChangeKind.Ungrouped:
+                // The members stand in the group's place: the icons after it MOVE aside as the bar grows, then the members POP in (a quick settle).
+                return Added(oldItems);
             default:
                 Snap();
                 return [];
@@ -260,6 +310,33 @@ internal sealed class PixelDockPainter
         {
             _popping.Clear();
             _popFrame = 0;
+        });
+        return frames;
+    }
+
+    /// <summary>
+    /// D8 on the drop: the dragged app's slot closes up (MOVE) with a new group still showing its target's mini alone, then the group POPs with
+    /// all its minis (1 px up, then at rest). A program that joined a group that was there already only closes up and POPs.
+    /// </summary>
+    private List<Action> Grouped(string groupKey, bool newGroup)
+    {
+        _hidden.Clear();
+        _popping.Clear();
+        _leaving.Clear();
+        _gapShown = false;
+        foreach (var key in _shownX.Keys.ToList())
+        {
+            if (!Items.Any(v => v.Item.Key == key))
+                _shownX.Remove(key);
+        }
+        _groupPop = groupKey;
+        _groupPopStage = newGroup ? 1 : 0;
+        var frames = Move(lastFrame: null);
+        frames.Add(() => _groupPopStage = 2);
+        frames.Add(() =>
+        {
+            _groupPop = null;
+            _groupPopStage = 0;
         });
         return frames;
     }
@@ -426,6 +503,25 @@ internal sealed class PixelDockPainter
                 DottedBox(canvas, sx + HaloRoom, IconTop, icon, icon, p.Faint);
                 continue;
             }
+            if (IsLit(i))
+            {
+                // D12: a Select plate behind it at once; the one under the files lifts 2. The plate carries the icon alone (no halo), as the FLASH does.
+                Plate(canvas, sx, SlotTop, SlotArt, p.Select);
+                var litLook = view.Missing ? null : _run.GetValueOrDefault(key);
+                BlitDissolved(_art.Icon(p, view, icon, awake: litLook?.IsRunningAtRest == true), canvas, sx + HaloRoom, IconTop - (i == OpenHover ? 2 : 0));
+                continue;
+            }
+            if (i == Forming && !view.IsGroup)
+            {
+                // D8: held over a program, it shows as a group of one under the dragged icon.
+                BlitDissolved(_art.FormingTile(p, view, icon), canvas, sx + HaloRoom, IconTop);
+                continue;
+            }
+            if (key == _groupPop && _groupPopStage == 1 && view.Children is { Count: > 0 } members)
+            {
+                BlitDissolved(_art.GroupTile(p, [members[0]], icon), canvas, sx + HaloRoom, IconTop);
+                continue;
+            }
             bool flash = i == Flash, pressed = i == Pressed && !flash;
             if (flash)
                 Plate(canvas, sx, SlotTop, SlotArt, p.Select);
@@ -443,6 +539,16 @@ internal sealed class PixelDockPainter
                 }
                 lift = 1;
             }
+            if (key == _groupPop && _groupPopStage == 2)
+                lift = 1;
+            if (DropPreview is { } preview && preview.Index == i && view.Children is { } children)
+            {
+                // The program's mini in the next free cell; a full group lifts instead.
+                if (children.Count >= 4)
+                    lift = Math.Max(lift, 2);
+                else
+                    view = view with { Children = [.. children, preview.Dragged] };
+            }
             if (flash)
             {
                 // The FLASH plate carries the icon alone: a running one keeps its awake drawing, without its halo (the mock's rule).
@@ -455,16 +561,37 @@ internal sealed class PixelDockPainter
             DottedBox(canvas, TargetBarLeft + Pad + Gap * Pitch + HaloRoom, IconTop, icon, icon, p.Soft);
         if (DragIndex >= 0 && DragIndex < Items.Count)
             canvas.Blit(_art.Icon(p, Items[DragIndex], icon), BarLeft + DragCenter - icon / 2, IconTop - DragRise);
-        if (LabelShown && Label is { Length: > 0 } text && LabelIndex >= 0 && LabelIndex < Items.Count && DragIndex < 0
+        if (Floating is { } floating)
+        {
+            // Undimmed, at the bar's icon size: it is headed for the bar.
+            var picture = _art.Icon(p, floating.View, icon);
+            canvas.Blit(picture, floating.X - icon / 2, floating.Y - icon / 2);
+        }
+        if (OpenLit is not null)
+        {
+            // D12: only the lit icon under the files has a plate, "Open with {name}" in Select; the hover label waits for the drag to end. A lit
+            // group (a member takes the files) shows its own name on a plain plate: the drop goes to a member, in its panel.
+            if (IsLit(OpenHover) && OpenHover < Items.Count && _shownX.TryGetValue(Items[OpenHover].Item.Key, out int ox))
+            {
+                var target = Items[OpenHover];
+                DrawPlate(canvas, target.IsGroup ? LabelPlate(p, target.Name) : LabelPlate(p, Strings.DockOpenWith(target.Name), select: true), ox);
+            }
+        }
+        else if (LabelShown && Label is { Length: > 0 } text && LabelIndex >= 0 && LabelIndex < Items.Count && DragIndex < 0
             && _shownX.TryGetValue(Items[LabelIndex].Item.Key, out int lx))
         {
-            var plate = LabelPlate(p, text);
-            int width = plate.Width - ShadowOffset, height = plate.Height - ShadowOffset;
-            int left = Math.Max(0, ScreenLeft + LabelGap);
-            int right = Math.Min(CanvasWidth - ShadowOffset, ScreenRight - LabelGap);
-            int x = Math.Clamp(lx + SlotArt / 2 - width / 2, left, Math.Max(left, right - width));
-            canvas.Blit(plate, x, Math.Max(0, Head - LabelGap - height));
+            DrawPlate(canvas, LabelPlate(p, text), lx);
         }
+    }
+
+    /// <summary>A name plate over the slot whose box is at <paramref name="slotX"/>: its bottom <see cref="LabelGap"/> above the bar, centred, kept inside the screen.</summary>
+    private void DrawPlate(PixelCanvas canvas, PixelCanvas plate, int slotX)
+    {
+        int width = plate.Width - ShadowOffset, height = plate.Height - ShadowOffset;
+        int left = Math.Max(0, ScreenLeft + LabelGap);
+        int right = Math.Min(CanvasWidth - ShadowOffset, ScreenRight - LabelGap);
+        int x = Math.Clamp(slotX + SlotArt / 2 - width / 2, left, Math.Max(left, right - width));
+        canvas.Blit(plate, x, Math.Max(0, Head - LabelGap - height));
     }
 
     /// <summary>
@@ -713,23 +840,36 @@ internal sealed class PixelDockPainter
 
     /// <summary>
     /// The name plate (section 5): a menu-style plate (outline, Panel, Highlight, one Shade row, corners [2, 1]) with the hard shadow;
-    /// 13 tall for the pixel font, 15 for Fusion; the text 5 from each side, at most 120 wide, middle-shortened.
+    /// 13 tall for the pixel font, 15 for Fusion; the text 5 from each side, at most 120 wide, middle-shortened. <paramref name="select"/>: the
+    /// "Open with" plate (D12), in the Select colours with OnSelect text.
     /// </summary>
-    public PixelCanvas LabelPlate(PixelPalette p, string text)
+    public PixelCanvas LabelPlate(PixelPalette p, string text, bool select = false)
     {
         bool dark = p.Panel == PixelPalette.For(true).Panel;
-        if (_labels.TryGetValue((text, dark), out var cached))
+        if (_labels.TryGetValue((text, dark, select), out var cached))
             return cached;
-        var line = FolderPixelScene.OneLine(text, PixelFonts.Regular, LabelMaxWidth - 2 * LabelPadding);
-        // SimSun is 12 tall: its plate keeps 2 above the text so that, with the 4-px gap, it still fits the 21 of headroom.
-        int top = line.Rank == 2 ? 2 : 3;
-        int width = Math.Min(LabelMaxWidth, line.Width + 2 * LabelPadding), height = line.Height + top + 3;
-        var plate = new PixelCanvas(width, height);
-        PixelFrame.Draw(plate, 0, 0, width, height, PixelFrame.MenuCorner, p.Outline, p.Panel, p.Highlight, p.Shade, 1);
-        line.Draw(plate, LabelPadding, top, p.Ink);
         if (_labels.Count > 64)
             _labels.Clear();
-        return _labels[(text, dark)] = PixelFrame.WithShadow(plate, p.Shadow, ShadowOffset);
+        return _labels[(text, dark, select)] = BuildLabelPlate(p, text, select, LabelMaxWidth);
+    }
+
+    /// <summary>
+    /// <see cref="LabelPlate"/>'s drawing, at most <paramref name="maxWidth"/> wide with the text middle-shortened to fit (the group panel's
+    /// title row draws its "Open with" plate with it, in the room left of Open all).
+    /// </summary>
+    public static PixelCanvas BuildLabelPlate(PixelPalette p, string text, bool select, int maxWidth)
+    {
+        var line = FolderPixelScene.OneLine(text, PixelFonts.Regular, maxWidth - 2 * LabelPadding);
+        // SimSun is 12 tall: its plate keeps 2 above the text so that, with the 4-px gap, it still fits the 21 of headroom.
+        int top = line.Rank == 2 ? 2 : 3;
+        int width = Math.Min(maxWidth, line.Width + 2 * LabelPadding), height = line.Height + top + 3;
+        var plate = new PixelCanvas(width, height);
+        if (select)
+            PixelFrame.Draw(plate, 0, 0, width, height, PixelFrame.MenuCorner, p.SelectPressed, p.Select, p.SelectLight, p.SelectPressed, 1);
+        else
+            PixelFrame.Draw(plate, 0, 0, width, height, PixelFrame.MenuCorner, p.Outline, p.Panel, p.Highlight, p.Shade, 1);
+        line.Draw(plate, LabelPadding, top, select ? p.OnSelect : p.Ink);
+        return PixelFrame.WithShadow(plate, p.Shadow, ShadowOffset);
     }
 
     /// <summary>A plate behind a slot (pressed: <c>Shade</c>; the click's FLASH: <c>Select</c>), corners [2, 1].</summary>

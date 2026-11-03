@@ -1,5 +1,6 @@
 using DeskWidgets.Pixel;
 using DeskWidgets.Widgets.Folder;
+using Microsoft.UI.Dispatching;
 
 namespace DeskWidgets.Dock;
 
@@ -8,7 +9,8 @@ namespace DeskWidgets.Dock;
 /// <see cref="PixelDockSprites"/>, or tier 2, the program's real icon (asked of <see cref="IconService"/> at 64 px, as the Big Folder does)
 /// box-filtered to (size − 2) on the Sweetie palette with a 1-pixel ink outline. Until a real icon arrives, or when there is none, the generic
 /// program tile stands in. A missing program gets the Big Folder's dim. A running one (section 1) shows its awake drawing inside a 1-pixel halo
-/// in its own colour. Pictures are cached; nothing here draws a window.
+/// in its own colour. A group is a silver tile of its members' minis. Pictures are cached; nothing here draws a window or reads a file on the
+/// UI thread.
 /// </summary>
 internal sealed class PixelDockArt
 {
@@ -26,6 +28,10 @@ internal sealed class PixelDockArt
     private readonly Dictionary<(string Key, int Size), PixelCanvas> _customAwake = [];
     private readonly Dictionary<(string Key, PixelCanvas Icon, bool Dark), uint> _haloColors = [];
     private readonly Dictionary<(PixelCanvas Icon, uint Color), PixelCanvas> _rings = [];
+    private readonly Dictionary<(int Size, PixelCanvas? A, PixelCanvas? B, PixelCanvas? C, PixelCanvas? D), PixelCanvas> _groups = [];
+    private readonly Dictionary<(PixelCanvas Icon, int Size), PixelCanvas> _minis = [];
+    private readonly HashSet<string> _stamping = [];
+    private readonly DispatcherQueue? _queue = DispatcherQueue.GetForCurrentThread();
 
     /// <param name="repaint">Runs on the UI thread when a real icon has arrived.</param>
     /// <param name="source">Design QA only: gives a program's real picture at once instead of the icon service (no window, no callback).</param>
@@ -38,6 +44,8 @@ internal sealed class PixelDockArt
     /// <summary>The icon of a program at <paramref name="size"/> art pixels (20, 24 or 32), dimmed when it is missing; <paramref name="awake"/> gives a custom app's awake drawing.</summary>
     public PixelCanvas Icon(PixelPalette palette, DockItemView view, int size, bool awake = false)
     {
+        if (view.IsGroup)
+            return GroupTile(palette, view.Children!, size); // its minis carry their members' looks: never dimmed as a whole
         var icon = awake && AwakeTile(view, size) is { } tile ? tile : Plain(view, size);
         if (!view.Missing)
             return icon;
@@ -64,6 +72,8 @@ internal sealed class PixelDockArt
     private uint HaloColorOf(PixelPalette palette, DockItemView view, int size)
     {
         bool dark = palette.Panel == PixelPalette.For(true).Panel;
+        if (view.IsGroup)
+            return palette.Sprite(ForBar('s', dark)); // section 1: a group's halo is slate, kept readable like any other
         var item = view.Item;
         var icon = Plain(view, size);
         if (_haloColors.TryGetValue((item.Key, icon, dark), out uint known))
@@ -90,6 +100,48 @@ internal sealed class PixelDockArt
     /// <summary>POP's first frame (D10): a 7 × 7 mini of the program's 32-pixel icon, box-filtered by the tier-2 rule, in an ink outline with its corners cut.</summary>
     public PixelCanvas Mini(PixelPalette palette, DockItemView view) => MiniOf(Icon(palette, view, 32), 7);
 
+    /// <summary>
+    /// A group's tile (section 2): the app tile's shape in silver (lip slate) holding up to four minis in a 2 × 2, each a member's 32-pixel icon
+    /// (awake while it runs) by the tier-2 rule: 7 at Small, 9 at Medium, 12 at Large, 1 apart (2 at Large), the block centred.
+    /// </summary>
+    public PixelCanvas GroupTile(PixelPalette palette, IReadOnlyList<DockItemView> members, int size)
+    {
+        int m = GroupMiniSize(size);
+        var shown = new PixelCanvas?[4];
+        for (int k = 0; k < Math.Min(4, members.Count); k++)
+        {
+            var member = members[k];
+            var big = Icon(palette, member, 32, awake: member.State == DockRunState.Running && !member.Missing);
+            if (!_minis.TryGetValue((big, m), out var mini))
+                mini = BoundedCache.Put(_minis, (big, m), MiniOf(big, m), MaxCached);
+            shown[k] = mini;
+        }
+        // Keyed by the minis' pictures: a real icon that arrives, or a member that starts running, makes a new tile.
+        var key = (size, shown[0], shown[1], shown[2], shown[3]);
+        if (_groups.TryGetValue(key, out var cached))
+            return cached;
+        var tile = Tile(size, 'g', 's');
+        var (x0, y0, pitch) = GroupMiniLayout(size);
+        for (int k = 0; k < 4; k++)
+        {
+            if (shown[k] is { } mini)
+                FolderPixelScene.Blit(mini, tile, x0 + k % 2 * pitch, y0 + k / 2 * pitch);
+        }
+        return BoundedCache.Put(_groups, key, tile, MaxCached);
+    }
+
+    /// <summary>D8: the target of a held drag drawn as a group of one, its own mini in the first place.</summary>
+    public PixelCanvas FormingTile(PixelPalette palette, DockItemView target, int size) => GroupTile(palette, [target], size);
+
+    internal static int GroupMiniSize(int size) => size switch { <= 20 => 7, <= 24 => 9, _ => 12 };
+
+    /// <summary>The first mini's top-left and the step to the next (mini + gap): the 2 × 2 block centred, rounded up one row for the shade lip (the mock's rule).</summary>
+    internal static (int X, int Y, int Pitch) GroupMiniLayout(int size)
+    {
+        int m = GroupMiniSize(size), gap = size >= 32 ? 2 : 1, block = 2 * m + gap;
+        return ((size - block) / 2, (size - 1 - block) / 2, m + gap);
+    }
+
     /// <summary>A custom app's own tile when the view carries its key (found off the UI thread), else the real icon, else the generic tile.</summary>
     private PixelCanvas Plain(DockItemView view, int size)
     {
@@ -110,9 +162,9 @@ internal sealed class PixelDockArt
                 direct = _direct[(item.Key, size)] = _source(item) is { } pixels ? Tier2(pixels, size) : Placeholder(size);
             return direct;
         }
-        if (IconPath(item) is { } path)
+        if (IconPath(item) is { } path && RequestFor(item) is { } known)
         {
-            var (stamp, fallback) = RequestFor(item);
+            var (stamp, fallback) = known;
             var request = new IconRequest(path, 64, IconFlavor.AppIcon, stamp, fallback);
             var icons = IconService.Shared;
             if (icons.TryGet(request, out var image))
@@ -141,23 +193,48 @@ internal sealed class PixelDockArt
             : DockIdentity.SafeIconPath(item.IconPath) is { } linkIcon ? linkIcon // a link's own icon file, local only (a UNC path would send credentials)
             : null;
 
-    private (long Stamp, string? Fallback) RequestFor(DockItem item)
+    /// <summary>
+    /// The icon request's stamp (the exe's last write, so an updated program gets its new icon) and fallback. The stamp is a file read, which can
+    /// take seconds on a network or sleeping drive: it is read on a worker, and until it is known (null) the generic tile stands in and nothing
+    /// is asked of the icon service, which caches by stamp. When it comes the dock repaints.
+    /// </summary>
+    private (long Stamp, string? Fallback)? RequestFor(DockItem item)
     {
         if (_requests.TryGetValue(item.Key, out var known))
             return known;
-        long stamp = 0;
-        if (!string.IsNullOrEmpty(item.ExePath))
-        {
-            try
-            {
-                stamp = File.GetLastWriteTimeUtc(item.ExePath).Ticks;
-            }
-            catch (Exception)
-            {
-            }
-        }
         string? fallback = !string.IsNullOrEmpty(item.ExePath) && !string.IsNullOrEmpty(item.Aumid) ? @"shell:AppsFolder\" + item.Aumid : null;
-        return _requests[item.Key] = (stamp, fallback);
+        if (string.IsNullOrEmpty(item.ExePath))
+            return _requests[item.Key] = (0, fallback);
+        if (_queue is null)
+            return _requests[item.Key] = (ReadStamp(item.ExePath), fallback); // no UI thread to come back to: read here
+        if (_stamping.Add(item.Key))
+        {
+            string key = item.Key, exe = item.ExePath;
+            var queue = _queue;
+            Task.Run(() =>
+            {
+                long stamp = ReadStamp(exe);
+                queue.TryEnqueue(() =>
+                {
+                    _stamping.Remove(key);
+                    _requests[key] = (stamp, fallback);
+                    _repaint();
+                });
+            });
+        }
+        return null;
+    }
+
+    private static long ReadStamp(string exe)
+    {
+        try
+        {
+            return File.GetLastWriteTimeUtc(exe).Ticks;
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
     }
 
     /// <summary>

@@ -58,6 +58,11 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
     private bool _parked; // hidden by Hide (the slide-out ended), until Show
     private bool _disposed;
 
+    private PixelDockPanel? _panel;
+    private int _panelGroup = -1;
+    private IDropTarget? _panelDrop;
+    private bool _swallowUp; // a press on the dock that closed the group's panel: its release is not a click either
+
     public PixelDockSurface()
     {
         _queue = DispatcherQueue.GetForCurrentThread();
@@ -115,6 +120,13 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
         _painter.Pressed = -1;
         _painter.Flash = -1;
         _painter.DragIndex = -1;
+        _painter.Forming = -1;
+        _painter.Floating = null;
+        _painter.DropPreview = null;
+        _painter.OpenLit = null;
+        _painter.OpenHover = -1;
+        _swallowUp = false;
+        HidePanel(animated: false); // a panel over a dock that has gone would point at nothing
         _motion.Cancel();
         _gapClose?.Stop();
         _gapClose = null;
@@ -237,11 +249,13 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
             _gapClose.Stop();
             _gapClose = null;
             _painter.ClearGap();
-            if (change.Kind != DockChangeKind.Added)
-                animate = false;
+            if (change.Kind is not (DockChangeKind.Added or DockChangeKind.Grouped))
+                animate = false; // a program dropped on a group still POPs it
         }
-        if (change.Kind is DockChangeKind.Added or DockChangeKind.Removed)
+        if (change.Kind is DockChangeKind.Added or DockChangeKind.Removed or DockChangeKind.Grouped or DockChangeKind.Ungrouped)
             _painter.Shift(shift);
+        if (change.Kind == DockChangeKind.Grouped)
+            _painter.DragIndex = -1; // the dragged icon went into the group: no dotted slot may stay on an index that now means another icon
 
         var frames = _painter.Change(items, size, change, Palette(), animate, keepMotion: !placed);
         if (frames is null)
@@ -424,6 +438,17 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
             ? barLeft + (int)Math.Round((DockGeometry.IconLeftDip(_painter.Size, icon) + DockGeometry.IconDip(_painter.Size) / 2) * _factor / 2.0)
             : screenX;
         int barTop = _y + PixelDockPainter.Head * _factor;
+        if (_panel is { IsOpen: true } panel && panel.Rect.Contains(screenX, screenY))
+        {
+            // A member's menu, asked from the panel: it opens at the pointer, and its taking the activation does not close the panel.
+            panel.MenuOpen = true;
+            PixelMenu.Show(entries, screenX, screenY, closed: () =>
+            {
+                panel.MenuClosed();
+                closed();
+            });
+            return;
+        }
         PixelMenu.Show(entries, screenX, screenY, closed: closed, openAbove: (centerX, barTop - 4 * _factor));
     }
 
@@ -433,7 +458,127 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
             _drop.RegisterOn(Hwnd, target);
     }
 
-    public void ApplyLanguage() => _painter.ForgetText();
+    // ---------------------------------------------------------------- groups and opening files (Build C)
+
+    public void SetGroupForming(int index)
+    {
+        if (_disposed || index == _painter.Forming)
+            return;
+        // D8: the target turns into a group of one at once (a still state, nothing ticks); -1 puts it back.
+        _painter.Forming = index;
+        Render();
+    }
+
+    public void SetGroupDropPreview(int groupIndex, DockItemView? dragged)
+    {
+        if (_disposed)
+            return;
+        (int, DockItemView)? preview = dragged is not null && groupIndex >= 0 && groupIndex < _painter.Items.Count && _painter.Items[groupIndex].IsGroup
+            ? (groupIndex, dragged)
+            : null;
+        if (preview == _painter.DropPreview)
+            return;
+        // A still state, at once (the drop's POP comes with the Grouped list).
+        _painter.DropPreview = preview;
+        Render();
+    }
+
+    public void SetOpenWith(IReadOnlyList<bool>? lit, int hovered)
+    {
+        if (_disposed)
+            return;
+        // D12: the lit plates, the target's lift and its "Open with" plate show at once, and a drop snaps them off: no frames.
+        _painter.OpenLit = lit?.ToList();
+        _painter.OpenHover = lit is null ? -1 : hovered;
+        Render();
+    }
+
+    public event Action<DockPanelEvent>? Panel;
+
+    public bool PanelOpen => _panel?.IsOpen == true;
+
+    public DockRect PanelRect => _panel?.Rect ?? default;
+
+    public void ShowPanel(int groupIndex, string title, IReadOnlyList<DockItemView> members, bool forDrop)
+    {
+        if (_disposed || Hwnd == 0 || _parked || groupIndex < 0 || groupIndex >= _painter.Items.Count)
+            return;
+        if (_panel is { IsOpen: true } open)
+        {
+            if (groupIndex == _panelGroup)
+            {
+                open.Update(title, members, forDrop);
+                return;
+            }
+            open.Close(animated: false, restoreForeground: false);
+        }
+        _panelGroup = groupIndex;
+        // Above the group's icon as it rests on the bar (HANDOFF 6): the frame's bottom 6 art pixels above the bar's top.
+        int barLeft = _x + _barOffsetPx;
+        int centerX = barLeft + (DockGeometry.PixelIconLeftArt(_painter.Size, groupIndex) * 2 + _painter.IconArt) * _factor / 2;
+        int barTop = _y + PixelDockPainter.Head * _factor;
+        var work = Win32.GetWorkArea(new Win32.POINT { X = centerX, Y = barTop + 1 });
+        var anchor = (centerX, barTop, new DockRect(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top));
+        PixelDockPanel? panel = null;
+        panel = new PixelDockPanel(_art, e => OnPanelEvent(panel!, e), _factor, anchor, title, members, forDrop, _panelDrop);
+        _panel = panel;
+        panel.Open();
+    }
+
+    private void OnPanelEvent(PixelDockPanel from, DockPanelEvent e)
+    {
+        if (from != _panel)
+            return; // a panel already replaced
+        if (e.Kind == DockPanelEventKind.Dismissed)
+            _panel = null;
+        FollowDragOut(from, e);
+        Panel?.Invoke(e);
+    }
+
+    /// <summary>
+    /// A member dragged out of the panel: the panel draws it only inside its own frame, so from there on the dock draws it under the pointer,
+    /// over the bar and its headroom (the panel's bottom lies in that headroom, so the picture never drops out between the two windows).
+    /// </summary>
+    private void FollowDragOut(PixelDockPanel panel, DockPanelEvent e)
+    {
+        (DockItemView, int, int)? floating = null;
+        if (e.Kind == DockPanelEventKind.DragMove && e.Index >= 0 && e.Index < panel.Members.Count && WindowRect.Contains(e.ScreenX, e.ScreenY))
+            floating = (panel.Members[e.Index], (e.ScreenX - _x) / _factor, (e.ScreenY - _y) / _factor);
+        if (floating is null && _painter.Floating is null)
+            return;
+        _painter.Floating = floating;
+        Render();
+    }
+
+    public void SetPanelMembers(string title, IReadOnlyList<DockItemView> members) => _panel?.Update(title, members);
+
+    public void SetPanelOpenWith(IReadOnlyList<bool>? lit, int hovered) => _panel?.SetOpenWith(lit, hovered);
+
+    public void BeginPanelRename() => _panel?.BeginRename();
+
+    public void HidePanel(bool animated)
+    {
+        var panel = _panel;
+        _panel = null;
+        if (_painter.Floating is not null)
+        {
+            _painter.Floating = null; // a drag out that ended with the panel
+            Render();
+        }
+        panel?.Close(animated && MotionSettings.Enabled && !_parked, restoreForeground: true);
+    }
+
+    /// <summary>The member under a screen pixel in the open panel, or -1: the controller's drop target hit-tests a file drag with it.</summary>
+    public int PanelMemberAt(int screenX, int screenY) => _panel?.MemberAt(screenX, screenY) ?? -1;
+
+    /// <summary>The controller's drop target, registered on every panel window from now on (each open makes a new window).</summary>
+    public void AttachPanelDropTarget(IDropTarget target) => _panelDrop = target;
+
+    public void ApplyLanguage()
+    {
+        _painter.ForgetText();
+        _panel?.Redraw();
+    }
 
     private static PixelPalette Palette() => CurrentPalette();
 
@@ -452,6 +597,7 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
     /// <summary>A real icon came: one repaint for however many come together.</summary>
     private void RepaintSoon()
     {
+        _panel?.RepaintSoon(); // the panel draws from the same pictures
         if (_disposed || _parked || _repaint is not null)
             return; // hidden: Show draws
         _repaint = FrameClock.After(1, () =>
@@ -468,12 +614,30 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
                 return;
             _painter.ForgetText();
             Render();
+            _panel?.Redraw();
         });
 
     // ---------------------------------------------------------------- pointer
 
     protected override nint OnMessage(uint msg, nint wParam, nint lParam)
     {
+        if (msg is Native.WM_LBUTTONDOWN or WM_MBUTTONDOWN or Native.WM_RBUTTONDOWN)
+        {
+            _swallowUp = false;
+            if (_panel is { IsOpen: true, ForDrop: false } panel)
+            {
+                // A click anywhere else closes the group's panel, the dock included (the dock never activates, so the panel is not deactivated by
+                // it). Like a menu's click-away, the press is used up: a click on the group's own icon closes its panel rather than opening it again.
+                _swallowUp = true;
+                panel.Dismiss(restoreForeground: true);
+                return 0;
+            }
+        }
+        else if (_swallowUp && msg is Native.WM_LBUTTONUP or WM_MBUTTONUP or Native.WM_RBUTTONUP)
+        {
+            _swallowUp = false;
+            return 0;
+        }
         switch (msg)
         {
             case Native.WM_MOUSEACTIVATE:
@@ -592,6 +756,8 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
         _flashTicket?.Stop();
         _repaint?.Stop();
         _runTicket?.Stop();
+        _panel?.Dispose();
+        _panel = null;
         _drop.Revoke();
         if (Hwnd != 0 && Native.GetCapture() == Hwnd)
             Native.ReleaseCapture();

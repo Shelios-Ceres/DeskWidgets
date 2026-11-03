@@ -205,6 +205,13 @@ internal static class Strings
     public static string DockOnlyPrograms => T("程序坞只能放程序（应用、程序的快捷方式、Steam 游戏）。", "The dock only holds programs (apps, shortcuts to programs, Steam games).");
     public static string DockNoTaskbarApps => T("没有读到任务栏上固定的应用。", "No apps pinned to the taskbar were found.");
     public static string DockNoNewTaskbarApps => T("任务栏上的应用都已经在程序坞里了。", "Every app pinned to the taskbar is already on the dock.");
+    public static string DockGroup => T("分组", "Group");
+    public static string DockOpenAll => T("全部打开", "Open all");
+    public static string DockRename => T("重命名", "Rename");
+    public static string DockUngroup => T("取消分组", "Ungroup");
+    public static string DockRemoveGroup => T("移除分组", "Remove group");
+    public static string DockRemoveGroupQuestion(string name) => T($"要移除分组“{name}”吗？里面的应用不会被删除，只是不再显示在这里。", $"Remove the group {name}? Its programs aren't deleted; they just stop showing here.");
+    public static string DockOpenWith(string name) => T($"用 {name} 打开", $"Open with {name}");
     public static string DockAddedHere => T("这个屏幕已经有程序坞了。", "This screen already has a dock.");
     public static string Remove => T("移除", "Remove");
     public static string Cancel => T("取消", "Cancel");

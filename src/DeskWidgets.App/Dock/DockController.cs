@@ -26,6 +26,9 @@ internal interface IDockHost
 
     void RemoveDock(DockController dock);
 
+    /// <summary>Asks "remove this group?" in the theme's own dialog; runs <paramref name="yes"/> on a yes.</summary>
+    void AskRemoveGroup(nint owner, string name, Action yes);
+
     /// <summary>Whether another dock than <paramref name="self"/> is on this screen (one dock per screen).</summary>
     bool OtherDockOn(DockController self, string? device);
 
@@ -41,7 +44,7 @@ internal interface IDockHost
 /// pointer. Moves the window itself (the slide, SetWindowPos each frame: SPIKE section 1), watches the tracker's verdict, owns the edge
 /// strip, and does what a click, a menu row or a drop asks.
 /// </summary>
-internal sealed class DockController : IDisposable
+internal sealed partial class DockController : IDisposable
 {
     private const double DragThresholdDip = 4;
     private const int LeaveHideMs = 600;
@@ -111,6 +114,7 @@ internal sealed class DockController : IDisposable
     {
         _surface = _host.CreateSurface();
         _surface.Pointer += OnPointer;
+        _surface.Panel += OnPanelEvent;
         _edge.Reached += () => Reveal("pointer at the edge");
         _edge.DragReached += () => Reveal("drag at the edge");
         FindMonitor();
@@ -128,6 +132,7 @@ internal sealed class DockController : IDisposable
         EvaluateRule();
         CheckMissing();
         _surface.AttachDropTarget(new DockDropTarget(this));
+        _surface.AttachPanelDropTarget(new DockDropTarget(this, panel: true));
     }
 
     /// <summary>Swaps the window for the other theme's (the host does this on a theme switch).</summary>
@@ -136,14 +141,19 @@ internal sealed class DockController : IDisposable
         if (_surface is null)
             return;
         _surface.Pointer -= OnPointer;
+        _surface.Panel -= OnPanelEvent;
         _surface.Dispose();
+        _openGroup = null; // the old surface's panel went with it
+        ClearHold();
         _surface = _host.CreateSurface();
         _surface.Pointer += OnPointer;
+        _surface.Panel += OnPanelEvent;
         _hover = -1; // the new surface knows no hover
         Relayout(new DockChange(DockChangeKind.Reset)); // a hidden dock is placed below the edge by this
         if (!_hidden)
             _surface.Show();
         _surface.AttachDropTarget(new DockDropTarget(this));
+        _surface.AttachPanelDropTarget(new DockDropTarget(this, panel: true));
     }
 
     private void FindMonitor()
@@ -203,9 +213,18 @@ internal sealed class DockController : IDisposable
 
     // A key the worker has not resolved yet falls back to the match that reads no file (AUMID, exe name, Steam id): the exe's version info
     // is read only by CheckMissing's worker (a network exe would stall the UI), and the redraw that follows brings the full key.
-    private IReadOnlyList<DockItemView> Views(IEnumerable<DockItem> items)
-        => [.. items.Select(item => new DockItemView(item, _missing.Contains(item.Key), _runStates.StateOf(item.Key),
-            _customKeys.TryGetValue(item.Key, out var key) ? key : DockCustomKeys.Quick(item)))];
+    private IReadOnlyList<DockItemView> Views(IEnumerable<DockItem> items) => [.. items.Select(ViewOf)];
+
+    private DockItemView ViewOf(DockItem item)
+    {
+        if (item.IsGroup)
+        {
+            var members = item.Children!.Select(ViewOf).ToList();
+            return new DockItemView(item, false, DockGroups.GroupState(members.Select(m => m.State)), null, members);
+        }
+        return new DockItemView(item, _missing.Contains(item.Key), _runStates.StateOf(item.Key),
+            _customKeys.TryGetValue(item.Key, out var key) ? key : DockCustomKeys.Quick(item));
+    }
 
     // ---------------------------------------------------------------- hiding and showing
 
@@ -236,7 +255,7 @@ internal sealed class DockController : IDisposable
         }
     }
 
-    private bool InUse => _menuOpen || _dragging || _preview is not null || _dropping;
+    private bool InUse => _menuOpen || _dragging || _preview is not null || _dropping || _surface is { PanelOpen: true };
 
     private bool _dropping;
 
@@ -329,7 +348,10 @@ internal sealed class DockController : IDisposable
     private void FinishSlide(bool hide)
     {
         if (hide)
-            _surface?.Hide();
+        {
+            _surface?.Hide(); // closes a panel that was still up, without telling us
+            _openGroup = null;
+        }
         _edge.SetVisible(hide);
     }
 
@@ -396,7 +418,8 @@ internal sealed class DockController : IDisposable
             return;
         }
         var item = Settings.Items[index];
-        _surface.SetHover(index, _missing.Contains(item.Key) ? Strings.DockCantFind(item.Name) : item.Name);
+        string name = ViewOf(item).Name;
+        _surface.SetHover(index, _missing.Contains(item.Key) ? Strings.DockCantFind(name) : name);
     }
 
     private void PointerDown(DockPointer p)
@@ -450,10 +473,12 @@ internal sealed class DockController : IDisposable
     {
         if (_surface is null || _preview is null)
             return;
+        UpdateHold(p);
         int slot = DockGeometry.SlotAt(Settings.IconSize, _preview.Count, p.X);
         // slot counts the icons whose middle is left of the pointer; the dragged icon is one of them while it is left of itself.
         int target = Math.Clamp(slot > _dragFrom ? slot - 1 : slot, 0, _preview.Count - 1);
-        if (target != _dragFrom)
+        // Over another icon's middle zone the pointer is holding for a group: the icons do not reorder there.
+        if (target != _dragFrom && _hold.Target < 0)
         {
             var item = _preview[_dragFrom];
             _preview.RemoveAt(_dragFrom);
@@ -522,17 +547,19 @@ internal sealed class DockController : IDisposable
     {
         var preview = _preview;
         _preview = null;
+        var grouped = preview is null ? null : TryGroup(preview);
+        ClearHold();
         _dragFrom = -1;
         _surface?.SetDrag(-1, 0);
         if (preview is null)
             return;
-        if (!preview.SequenceEqual(Settings.Items))
+        if (grouped is not null || !preview.SequenceEqual(Settings.Items))
         {
             Settings.Items.Clear();
             Settings.Items.AddRange(preview);
             _host.RequestSave();
         }
-        _surface?.SetItems(Views(Settings.Items), Settings.IconSize, new DockChange(DockChangeKind.None));
+        _surface?.SetItems(Views(Settings.Items), Settings.IconSize, grouped ?? new DockChange(DockChangeKind.None));
     }
 
     // ---------------------------------------------------------------- click and menus
@@ -540,8 +567,17 @@ internal sealed class DockController : IDisposable
     private void Click(int index, DockPointer p)
     {
         var item = Settings.Items[index];
+        if (item.IsGroup)
+        {
+            TogglePanel(index);
+            return;
+        }
+        ClickProgram(item, p.Middle || p.Shift, p.ScreenX, p.ScreenY);
+    }
+
+    private void ClickProgram(DockItem item, bool another, int screenX, int screenY)
+    {
         // A click on a running program switches to its window; middle-click or Shift+click starts another copy (PROPOSAL 3.4, 3.8).
-        bool another = p.Middle || p.Shift;
         if (!another && _runStates.StateOf(item.Key) == DockRunState.Running && DockRunning.WindowsOf(item, _windows) is { Count: > 0 } windows)
         {
             DockSwitcher.Do(DockRunning.PlanSwitch([.. windows.Select(w => w.Handle)], Win32.ForegroundWindow()));
@@ -549,7 +585,7 @@ internal sealed class DockController : IDisposable
         }
         if (!another && _runStates.StateOf(item.Key) == DockRunState.Opening)
             return; // it is opening: another click would only start a second copy
-        Start(item, p.ScreenX, p.ScreenY);
+        Start(item, screenX, screenY);
     }
 
     /// <summary>
@@ -615,14 +651,14 @@ internal sealed class DockController : IDisposable
     {
         if (_host.Theme == WidgetTheme.Pixel)
         {
-            _host.AskRemoveMissing(Handle, item.Name, () => Remove(item));
+            _host.AskRemoveMissing(Handle, item.Name, () => RemoveProgram(item));
             return;
         }
         ShowMenu(
         [
             new MenuEntry { Text = Strings.DockMissingHeader(item.Name), Kind = MenuKind.Item, Enabled = false, Glyph = "" },
             MenuEntry.Separator(),
-            MenuEntry.Item(Strings.DockRemoveFromDock, () => Remove(item), glyph: "", icon: PixelIcons.Remove),
+            MenuEntry.Item(Strings.DockRemoveFromDock, () => RemoveProgram(item), glyph: "", icon: PixelIcons.Remove),
         ], screenX, screenY);
     }
 
@@ -631,7 +667,8 @@ internal sealed class DockController : IDisposable
         int index = IconAtPointer(p);
         if (index >= 0)
         {
-            ShowMenu(AppMenu(Settings.Items[index]), p.ScreenX, p.ScreenY);
+            var item = Settings.Items[index];
+            ShowMenu(item.IsGroup ? GroupMenu(item) : AppMenu(item), p.ScreenX, p.ScreenY);
             return;
         }
         if (OverBar(p) || p.Y < 0)
@@ -663,7 +700,7 @@ internal sealed class DockController : IDisposable
             Click = () => DockLauncher.OpenFileLocation(item), Glyph = "", Icon = PixelIcons.Folder,
         });
         rows.Add(MenuEntry.Separator());
-        rows.Add(MenuEntry.Item(Strings.DockRemoveFromDock, () => Remove(item), glyph: "", icon: PixelIcons.Remove));
+        rows.Add(MenuEntry.Item(Strings.DockRemoveFromDock, () => RemoveProgram(item), glyph: "", icon: PixelIcons.Remove));
         if (!string.IsNullOrEmpty(item.ExePath) && File.Exists(item.ExePath))
         {
             rows.Add(MenuEntry.Separator());
@@ -719,7 +756,7 @@ internal sealed class DockController : IDisposable
         int first = at;
         foreach (var item in items)
         {
-            if (Settings.Items.Any(existing => existing.Key == item.Key))
+            if (DockGroups.Contains(Settings.Items, item.Key))
                 continue;
             Settings.Items.Insert(at++, item);
             added++;
@@ -738,8 +775,13 @@ internal sealed class DockController : IDisposable
         if (index < 0)
             return;
         Settings.Items.RemoveAt(index);
-        _missing.Remove(item.Key);
-        _runStates.Forget(item.Key);
+        foreach (var program in DockGroups.Programs([item]))
+        {
+            _missing.Remove(program.Key);
+            _runStates.Forget(program.Key);
+        }
+        if (item.IsGroup && _openGroup == item)
+            HidePanel(animated: false);
         _hover = -1;
         _host.RequestSave();
         // D11: the icon goes (the surface draws it leaving), then the bar shortens.
@@ -767,7 +809,7 @@ internal sealed class DockController : IDisposable
     /// <summary>Checks, off the UI thread, which programs can still be found; a missing one is dimmed.</summary>
     public void CheckMissing()
     {
-        var items = Settings.Items.Select(i => i.Copy()).ToList();
+        var items = DockGroups.Programs(Settings.Items).Select(i => i.Copy()).ToList();
         var unkeyed = items.Where(i => !_customKeys.ContainsKey(i.Key)).ToList();
         var ui = DispatcherQueue.GetForCurrentThread();
         _worker.Post(() =>
@@ -784,7 +826,7 @@ internal sealed class DockController : IDisposable
                 foreach (var (key, value) in keys)
                 {
                     string? shown = _customKeys.TryGetValue(key, out var known) ? known
-                        : Settings.Items.FirstOrDefault(i => i.Key == key) is { } item ? DockCustomKeys.Quick(item) : value;
+                        : DockGroups.Programs(Settings.Items).FirstOrDefault(i => i.Key == key) is { } item ? DockCustomKeys.Quick(item) : value;
                     newKey |= shown != value;
                     _customKeys[key] = value;
                 }
@@ -793,6 +835,7 @@ internal sealed class DockController : IDisposable
                 _missing.Clear();
                 _missing.UnionWith(missing);
                 _surface.SetItems(Views(Settings.Items), Settings.IconSize, new DockChange(DockChangeKind.None));
+                RefreshPanel();
             });
         });
     }
@@ -805,11 +848,12 @@ internal sealed class DockController : IDisposable
         _windows = windows;
         if (_surface is null || _disposed)
             return;
-        var running = Settings.Items.Where(i => i.SupportsRunning && DockRunning.WindowsOf(i, windows).Count > 0).Select(i => i.Key).ToHashSet();
+        var programs = DockGroups.Programs(Settings.Items).ToList();
+        var running = programs.Where(i => i.SupportsRunning && DockRunning.WindowsOf(i, windows).Count > 0).Select(i => i.Key).ToHashSet();
         // What is already running when the dock starts is shown as it is, with no wipe.
         bool first = !_haveWindows;
         _haveWindows = true;
-        foreach (var (key, state, how) in _runStates.WindowsNow(running, Settings.Items.Select(i => i.Key)))
+        foreach (var (key, state, how) in _runStates.WindowsNow(running, programs.Select(i => i.Key)))
             ApplyRunState(key, state, first ? DockRunTransition.None : how);
         ScheduleExpiry();
     }
@@ -821,7 +865,16 @@ internal sealed class DockController : IDisposable
         // While an icon is dragged the surface shows the preview order, which is not the saved one.
         int index = (_preview ?? Settings.Items).FindIndex(i => i.Key == key);
         if (index >= 0)
+        {
             _surface?.SetRunState(index, state, how);
+            return;
+        }
+        // A member of a group: the group's icon (its minis, its halo) and the panel follow, with no motion of their own.
+        if (Settings.Items.Any(i => i.IsGroup && i.Children!.Any(c => c.Key == key)))
+        {
+            _surface?.SetItems(Views(_preview ?? Settings.Items), Settings.IconSize, new DockChange(DockChangeKind.None));
+            RefreshPanel();
+        }
     }
 
     /// <summary>One timer, only while some icon is opening: when the earliest one runs out, it goes back to idle (D3: not an error).</summary>
@@ -866,6 +919,7 @@ internal sealed class DockController : IDisposable
 
     internal void DropEnded()
     {
+        EndProgramDrop();
         _dropping = false;
         _gap = -1;
         _surface?.SetGap(-1);
@@ -894,8 +948,10 @@ internal sealed class DockController : IDisposable
         if (_surface is not null)
         {
             _surface.Pointer -= OnPointer;
+            _surface.Panel -= OnPanelEvent;
             _surface.Dispose();
         }
+        StopGroupTimers();
         _worker.Dispose();
     }
 }

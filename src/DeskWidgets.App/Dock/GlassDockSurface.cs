@@ -143,6 +143,7 @@ internal sealed partial class GlassDockSurface : IDockSurface
             _root.ReleasePointerCaptures();
         }
         ClearPointerLooks();
+        _panel?.Hide(animated: false); // a panel left above a dock that slid away would float over nothing
         if (_shown)
             ShowWindow(_hwnd, SW_HIDE);
     }
@@ -292,6 +293,8 @@ internal sealed partial class GlassDockSurface : IDockSurface
         // A left or middle press is captured, so the Moves go on through a drag that leaves the bar.
         if ((p.IsLeftButtonPressed || p.IsMiddleButtonPressed) && _root.CapturePointer(e.Pointer))
             _captured = true;
+        if (Win32.GetCursorPos(out var at))
+            DismissPanelForPress((at.X - _bar.X) / Scale);
         Raise(DockPointerKind.Down, p.IsLeftButtonPressed, p.IsRightButtonPressed, p.IsMiddleButtonPressed, Shift(e));
         e.Handled = true;
     }
@@ -425,12 +428,15 @@ internal sealed partial class GlassDockSurface : IDockSurface
             _drop.RegisterOn(_hwnd, target);
     }
 
+    // Build C (groups, the panel, Open with) is in GlassDockGroups.cs and GlassDockPanel.cs.
+
     public void ApplyLanguage()
     {
         if (_disposed)
             return;
         _window.Title = $"{Strings.AppName} · {Strings.DockName}";
         _emptyText.Text = Strings.DockEmpty;
+        _panel?.ApplyLanguage();
     }
 
     public void Dispose()
@@ -440,6 +446,9 @@ internal sealed partial class GlassDockSurface : IDockSurface
         _disposed = true;
         StopTimers();
         _menu?.Hide();
+        _panel?.Destroy();
+        _panel = null;
+        _dragImage.Dispose();
         _drop.Revoke();
         _dropTarget = null;
         _window.SystemBackdrop = null;
