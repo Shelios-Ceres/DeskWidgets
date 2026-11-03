@@ -300,6 +300,7 @@ internal sealed partial class DockController
                 _surface?.SetItems(Views(Settings.Items), Settings.IconSize, new DockChange(DockChangeKind.Grouped, group, -1));
                 RefreshPanel();
                 CheckMissing();
+                OnWindows(_windows); // a running program joining a group lights its mini now
             }
             return;
         }

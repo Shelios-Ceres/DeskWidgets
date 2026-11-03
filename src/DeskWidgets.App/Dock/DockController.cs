@@ -766,6 +766,7 @@ internal sealed partial class DockController : IDisposable
         _host.RequestSave();
         Relayout(new DockChange(DockChangeKind.Added, first));
         CheckMissing();
+        OnWindows(_windows); // a program that is running as it is added shows so now, not at the next window event
         return added;
     }
 
