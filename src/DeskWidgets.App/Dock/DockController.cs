@@ -105,6 +105,9 @@ internal sealed partial class DockController : IDisposable
 
     public bool IsHidden => _hidden;
 
+    /// <summary>The screen the dock is shown on: its saved one, or the primary screen while that one is absent (so "one dock per screen" counts it where it is).</summary>
+    internal string? ScreenDevice => _monitor.Device ?? Settings.Monitor;
+
     /// <summary>The window's rectangle when shown, in screen pixels (the bar plus the gap to the edge: what the desktop icons keep clear of).</summary>
     public DockRect BarRectWithGap => new(_layout.Bar.X, _layout.Bar.Y, _layout.Bar.Width, _layout.Bar.Height + (int)Math.Round(DockGeometry.EdgeGapDip * _scale));
 

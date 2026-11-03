@@ -137,9 +137,9 @@ internal sealed class DockManager : IDockHost, IDisposable
     // ---------------------------------------------------------------- adding and removing a dock
 
     /// <summary>Whether the screen under the pointer (or the primary one) already has a dock: the menu row is greyed then.</summary>
-    public bool ScreenHasDock(string? device) => _docks.Any(d => SameScreen(d.Settings.Monitor, device));
+    public bool ScreenHasDock(string? device) => _docks.Any(d => SameScreen(d.ScreenDevice, device));
 
-    bool IDockHost.OtherDockOn(DockController self, string? device) => _docks.Any(d => d != self && SameScreen(d.Settings.Monitor, device));
+    bool IDockHost.OtherDockOn(DockController self, string? device) => _docks.Any(d => d != self && SameScreen(d.ScreenDevice, device));
 
     /// <summary>The screen the pointer is on: where "Dock" in a menu adds one.</summary>
     public static string? ScreenUnderPointer()
