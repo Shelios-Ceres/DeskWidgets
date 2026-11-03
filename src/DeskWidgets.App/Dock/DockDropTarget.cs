@@ -40,9 +40,11 @@ internal sealed class DockDropTarget : IDropTarget
         try
         {
             _items = FolderActions.ReadDrop(dataObject);
-            _accepting = !_panel && _items.Any(item => DockIdentity.Classify(item.Entry) == DockDropKind.Candidate);
+            bool programs = _items.Any(item => DockIdentity.Classify(item.Entry) == DockDropKind.Candidate);
+            _accepting = !_panel && programs;
             _preview = _accepting ? _items.Where(item => DockIdentity.Classify(item.Entry) == DockDropKind.Candidate).Select(DockIdentity.FromDropped).FirstOrDefault(program => program is not null) : null;
-            if (!_accepting)
+            // A program over the group's panel is neither added (that is the bar's job) nor opened with anything.
+            if (!programs)
             {
                 // Not programs: real files (no folders, no virtual items) can be opened with an app.
                 _files = [.. _items.Where(item => !item.Entry.IsVirtual && !item.Entry.IsFolder && item.Entry.Path is not null).Select(item => item.Entry.Path!)];
