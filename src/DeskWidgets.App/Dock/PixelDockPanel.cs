@@ -41,6 +41,7 @@ internal sealed class PixelDockPanel : PixelPopupWindow
     private nint _previousForeground;
     private FrameClock.Ticket? _repaint;
     private readonly StepAnimator _cellSteps = new(); // D7's MOVE of the cells while a member is dragged
+    private FrameClock.Ticket? _autoScroll; // Phase 16.4: runs only while a drag is at the grid's top or bottom edge and the list can go that way
     private readonly Dictionary<int, (int X, int Y)> _cellShown = [];
     private readonly PixelDockPanelAccessible _accessible;
     private const uint ActivateMessage = Win32.WM_APP + 31; // assistive technology pressed an element: answered from the message loop
@@ -160,6 +161,7 @@ internal sealed class PixelDockPanel : PixelPopupWindow
         _guard.Stop();
         _repaint?.Stop();
         _repaint = null;
+        StopAutoScroll();
         _cellSteps.Dispose();
         _drop.Revoke();
         _text?.Dispose();
@@ -552,6 +554,7 @@ internal sealed class PixelDockPanel : PixelPopupWindow
             }
             _dragOutside = outside;
             _dragAt = (x, y);
+            UpdateAutoScroll(x, y, outside);
             // Outside the panel the member would leave the group: the cells go back to their order until it comes back in.
             int to = outside ? _dragFrom : PixelDockPanelLayout.ReorderTarget(_members.Count, _firstRow, x, y, _dragFrom);
             if (outside)
@@ -695,8 +698,53 @@ internal sealed class PixelDockPanel : PixelPopupWindow
         });
     }
 
+    /// <summary>
+    /// Phase 16.4: a dragged member held at the grid's top or bottom edge scrolls the list a row at a time (one row per <see cref="PixelDockPanelLayout.AutoScrollFrames"/>
+    /// Pixel frames). The timer exists only while that holds; the others slide to show where the member would land, as when it moves.
+    /// </summary>
+    private void UpdateAutoScroll(int x, int y, bool outside)
+    {
+        if (outside || PixelDockPanelLayout.AutoScrollRows(_members.Count, _firstRow, y) == 0)
+        {
+            StopAutoScroll();
+            return;
+        }
+        _autoScroll ??= FrameClock.Every(StepAnimator.FrameMs * PixelDockPanelLayout.AutoScrollFrames, _ => AutoScrollTick());
+    }
+
+    private void AutoScrollTick()
+    {
+        if (!_dragging || Hwnd == 0 || _closing || !Win32.GetCursorPos(out var point))
+        {
+            StopAutoScroll();
+            return;
+        }
+        var (x, y) = ToArt(point.X, point.Y);
+        int step = InFrame(x, y) ? PixelDockPanelLayout.AutoScrollRows(_members.Count, _firstRow, y) : 0;
+        if (step == 0)
+        {
+            StopAutoScroll();
+            return;
+        }
+        _firstRow += step;
+        _dragAt = (x, y);
+        int to = PixelDockPanelLayout.ReorderTarget(_members.Count, _firstRow, x, y, _dragFrom);
+        if (to != _dragTo && to >= 0)
+            MoveCells(to);
+        Redraw();
+        if (PixelDockPanelLayout.AutoScrollRows(_members.Count, _firstRow, y) == 0)
+            StopAutoScroll(); // at the end of the list
+    }
+
+    private void StopAutoScroll()
+    {
+        _autoScroll?.Stop();
+        _autoScroll = null;
+    }
+
     private void EndDrag()
     {
+        StopAutoScroll();
         _cellSteps.Cancel();
         _cellShown.Clear();
         _dragging = false;

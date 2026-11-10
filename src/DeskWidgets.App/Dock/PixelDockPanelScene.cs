@@ -22,6 +22,26 @@ internal static class PixelDockPanelLayout
 
     public const int IconSize = 24;
 
+    /// <summary>Phase 16.4: a drag within this many art pixels of the grid's top or bottom edge scrolls the list one row at a time, one row per <see cref="AutoScrollFrames"/> Pixel frames.</summary>
+    public const int AutoScrollBand = 8, AutoScrollFrames = 5;
+
+    /// <summary>
+    /// Which way the list scrolls for a dragged member whose pointer is at art row <paramref name="y"/>: -1 up, +1 down, 0 none (also when the list
+    /// is already at that end, or has no more rows than the panel shows). Pure.
+    /// </summary>
+    public static int AutoScrollRows(int count, int firstRow, int y)
+    {
+        int max = MaxFirstRow(count);
+        if (max <= 0)
+            return 0;
+        int bottom = GridY + VisibleRows(count) * CellHeight;
+        if (y < GridY + AutoScrollBand)
+            return firstRow > 0 ? -1 : 0;
+        if (y >= bottom - AutoScrollBand)
+            return firstRow < max ? 1 : 0;
+        return 0;
+    }
+
     public static int Columns(int count) => Math.Clamp(count, 3, 4);
 
     public static int TotalRows(int count) => Math.Max(1, (count + Columns(count) - 1) / Columns(count));

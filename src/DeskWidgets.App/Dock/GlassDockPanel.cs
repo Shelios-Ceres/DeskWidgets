@@ -13,6 +13,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -124,6 +125,10 @@ internal sealed class GlassDockPanel
     private Vector2 _grab;
     private IReadOnlyList<bool>? _lit;
     private int _litHovered = -1;
+    private MenuFlyout? _menu; // a member's menu, while it is up (Phase 16.2)
+    private FrameClock.Ticket? _autoScroll; // Phase 16.4: runs only while a drag is near the top or bottom edge of a list that can scroll
+    private double _autoLast;
+    private double? _scrollTarget; // the offset just asked of the scroll viewer, which reaches it a frame later
 
     private readonly GlassDockDragImage _image;
     private bool _imageOn; // the dragged member is drawn by the drag picture (its cell is hidden)
@@ -135,7 +140,7 @@ internal sealed class GlassDockPanel
         _image = image;
         _raise = raise;
         // A drag of a member out to the bar keeps the panel up whatever the foreground does meanwhile.
-        _guard = new PanelFocusGuard(() => _shown && !_forDrop, () => _hwnd, () => _dragging, Dismiss, TakeForeground);
+        _guard = new PanelFocusGuard(() => _shown && !_forDrop, () => _hwnd, () => _dragging || _menu is not null, Dismiss, TakeForeground);
     }
 
     public bool IsOpen => _shown;
@@ -271,6 +276,8 @@ internal sealed class GlassDockPanel
             return;
         _shown = false;
         _guard.Stop();
+        _menu?.Hide();
+        StopAutoScroll();
         if (_dragging || _captured)
         {
             _captured = false;
@@ -545,6 +552,7 @@ internal sealed class GlassDockPanel
         _closing = false;
         _destroying = true;
         _guard.Stop();
+        StopAutoScroll();
         foreach (var ticket in _timers.ToList())
             ticket.Stop();
         _timers.Clear();
@@ -1199,6 +1207,43 @@ internal sealed class GlassDockPanel
         }
     }
 
+    /// <summary>
+    /// A member's menu (Phase 16.2): it opens at the member, in this window, with its top-left corner at the point (the pointer for a right click,
+    /// the cell for the Menu key) and WinUI flips it to stay on the screen, as the Big Folder's panel does. The dock's bar menu opens above the bar,
+    /// which here would cover the panel's lower rows. The panel stays up while the menu does (the guard is told it is busy).
+    /// </summary>
+    public void ShowMenu(IReadOnlyList<PixelUi.MenuEntry> entries, int screenX, int screenY, Action closed)
+    {
+        if (!_shown || _window is null || _destroying)
+        {
+            closed();
+            return;
+        }
+        _menu?.Hide();
+        var menu = new MenuFlyout { ShouldConstrainToRootBounds = false };
+        foreach (var item in FlyoutMenuAdapter.Build(entries))
+            menu.Items.Add(item);
+        menu.Opened += (_, _) =>
+        {
+            // The panel is topmost: the menu's own window goes above it.
+            FlyoutRaiser.Raise(_hwnd);
+            _root.DispatcherQueue.TryEnqueue(() => FlyoutRaiser.Raise(_hwnd));
+        };
+        menu.Closed += (_, _) =>
+        {
+            if (_menu == menu)
+                _menu = null;
+            closed();
+            _root.DispatcherQueue.TryEnqueue(() =>
+            {
+                _guard.Touch(); // the click that closed the menu must not close the panel as well
+                _guard.Reclaim();
+            });
+        };
+        _menu = menu;
+        menu.ShowAt(_root, new FlyoutShowOptions { Position = new Point((screenX - _rect.X) / _scale, (screenY - _rect.Y) / _scale) });
+    }
+
     private void Click(int index)
     {
         _launching = true; // the program is taking the foreground: closing must not hand it to the old window
@@ -1260,7 +1305,7 @@ internal sealed class GlassDockPanel
     /// <summary>The drag picture over the cell's tile, lifted (D7), in screen pixels: the cell's place is the pointer's, in content coordinates.</summary>
     private void PlaceImage(Cell cell)
     {
-        double x = cell.X + 16, y = GlassDockPanelLayout.GridTop + cell.Y - _scroll.VerticalOffset + 6 - CellLiftDip;
+        double x = cell.X + 16, y = GlassDockPanelLayout.GridTop + cell.Y - ScrollOffset + 6 - CellLiftDip;
         _image.MoveTo(_rect.X + (int)Math.Round(x * _scale), _rect.Y + (int)Math.Round(y * _scale));
     }
 
@@ -1269,6 +1314,70 @@ internal sealed class GlassDockPanel
         var visual = GlassMotion.VisualOf(cell.Root);
         visual.StopAnimation("Opacity");
         visual.Opacity = shown ? 1 : 0;
+    }
+
+    // ---------------------------------------------------------------- Phase 16.4: auto-scroll while a member is dragged near the list's edge
+
+    /// <summary>Where the list is scrolled to: the offset just asked for while auto-scrolling (the viewer reaches it a frame later), else the viewer's own.</summary>
+    private double ScrollOffset => _scrollTarget ?? _scroll.VerticalOffset;
+
+    /// <summary>The scroll speed for a pointer at a screen point, in DIP per second (negative is up); zero outside the panel or away from the edges.</summary>
+    private double AutoScrollSpeedAt(Win32.POINT cursor)
+    {
+        if (!_rect.Contains(cursor.X, cursor.Y))
+            return 0;
+        double y = (cursor.Y - _rect.Y) / _scale, top = GlassDockPanelLayout.GridTop;
+        return GlassDockPanelLayout.AutoScrollSpeed(y, top, top + GlassDockPanelLayout.VisibleRows(_cellList.Count) * GlassDockPanelLayout.CellHeight);
+    }
+
+    private bool CanScrollTowards(double speed)
+        => speed < 0 ? ScrollOffset > 0.5 : speed > 0 && ScrollOffset < _scroll.ScrollableHeight - 0.5;
+
+    /// <summary>
+    /// Starts the scroll's timer when the drag is near an edge and the list can go that way, and stops it when not. Events only: the timer exists
+    /// just while this holds, so an idle panel (and a drag in the middle of the list) runs nothing.
+    /// </summary>
+    private void UpdateAutoScroll(Win32.POINT cursor, bool outside)
+    {
+        double speed = outside ? 0 : AutoScrollSpeedAt(cursor);
+        if (speed == 0 || !CanScrollTowards(speed))
+        {
+            StopAutoScroll();
+            return;
+        }
+        if (_autoScroll is { Active: true })
+            return;
+        _autoLast = FrameClock.Now;
+        _autoScroll = FrameClock.Every(16, AutoScrollTick);
+    }
+
+    private void AutoScrollTick(double now)
+    {
+        double seconds = Math.Min((now - _autoLast) / 1000, 0.05);
+        _autoLast = now;
+        if (!_dragging || !_shown || !Win32.GetCursorPos(out var cursor))
+        {
+            StopAutoScroll();
+            return;
+        }
+        double speed = AutoScrollSpeedAt(cursor), offset = ScrollOffset;
+        double next = Math.Clamp(offset + speed * seconds, 0, _scroll.ScrollableHeight);
+        if (speed == 0 || next == offset)
+        {
+            StopAutoScroll();
+            return;
+        }
+        _scrollTarget = next;
+        _scroll.ChangeView(null, next, null, disableAnimation: true);
+        // The pointer has not moved, but another part of the list is under it now: the others slide to show where the member would land.
+        DragTo(new Point((cursor.X - _rect.X) / _scale, (cursor.Y - _rect.Y) / _scale - GlassDockPanelLayout.GridTop + next));
+    }
+
+    private void StopAutoScroll()
+    {
+        _autoScroll?.Stop();
+        _autoScroll = null;
+        _scrollTarget = null;
     }
 
     /// <summary>The drag picture has gone (landed on the bar, or the drag ended here): the member's cell shows again, if it is still here.</summary>
@@ -1299,6 +1408,9 @@ internal sealed class GlassDockPanel
         bool outside = !_rect.Contains(cursor.X, cursor.Y);
         int to = outside ? _dragFrom : GlassDockPanelLayout.SlotAt(p.X, p.Y, _cellList.Count, Columns);
         _outside = outside;
+        if (!outside)
+            _image.EaseTo(null); // back over the panel: the picture is a panel tile again (Phase 16.3)
+        UpdateAutoScroll(cursor, outside);
         if (to != _dragTo)
         {
             _dragTo = to;
@@ -1320,6 +1432,7 @@ internal sealed class GlassDockPanel
         int from = _dragFrom, to = _dragTo;
         bool outside = _outside;
         var cell = _cellList[from];
+        StopAutoScroll();
         _dragging = false;
         _outside = false;
         _dragFrom = _dragTo = -1;

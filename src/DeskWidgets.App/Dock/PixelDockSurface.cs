@@ -34,6 +34,7 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
     private FrameClock.Ticket? _moveTicket;
     private FrameClock.Ticket? _gapClose;
     private FrameClock.Ticket? _flashTicket;
+    private FrameClock.Ticket? _floatTicket; // Phase 16.3: the dragged member's picture stepping to the bar's icon size
     private FrameClock.Ticket? _repaint;
     private (int X, int Y)? _pendingMove;
 
@@ -133,9 +134,10 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
         _painter.ClearGap();
         _painter.Snap();
         _painter.SnapRuns();
-        foreach (var ticket in new[] { _liftTicket, _runTicket, _flashTicket, _repaint })
+        foreach (var ticket in new[] { _liftTicket, _runTicket, _flashTicket, _repaint, _floatTicket })
             ticket?.Stop();
-        _liftTicket = _runTicket = _flashTicket = _repaint = null;
+        _liftTicket = _runTicket = _flashTicket = _repaint = _floatTicket = null;
+        _painter.FloatSize = -1;
         // The slide's last step may still be waiting for its frame: the window goes where the controller left it.
         _moveTicket?.Stop();
         _moveTicket = null;
@@ -546,8 +548,42 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
             floating = (panel.Members[e.Index], (e.ScreenX - _x) / _factor, (e.ScreenY - _y) / _factor);
         if (floating is null && _painter.Floating is null)
             return;
+        bool arriving = floating is not null && _painter.Floating is null;
         _painter.Floating = floating;
+        if (floating is null)
+            EndFloatSteps();
+        else if (arriving)
+            BeginFloatSteps();
         Render();
+    }
+
+    /// <summary>
+    /// Phase 16.3: the picture crossed from the panel onto the bar (it is the panel's 24-pixel icon until now): it steps to the bar's icon size, one
+    /// frame per step (24, then halfway, then the bar's). No steps with "Animation effects" off, or when the bar's icons are 24 too.
+    /// </summary>
+    private void BeginFloatSteps()
+    {
+        EndFloatSteps();
+        var sizes = MotionSettings.Enabled ? PixelDockPainter.FloatSizes(PixelDockPanelLayout.IconSize, _painter.IconArt) : [];
+        if (sizes.Length == 0)
+            return;
+        _painter.FloatSize = PixelDockPanelLayout.IconSize;
+        int step = 0;
+        _floatTicket = FrameClock.Every(StepAnimator.FrameMs, _ =>
+        {
+            _painter.FloatSize = step < sizes.Length - 1 ? sizes[step] : -1;
+            step++;
+            if (step >= sizes.Length)
+                EndFloatSteps();
+            Render();
+        });
+    }
+
+    private void EndFloatSteps()
+    {
+        _floatTicket?.Stop();
+        _floatTicket = null;
+        _painter.FloatSize = -1;
     }
 
     public void SetPanelMembers(string title, IReadOnlyList<DockItemView> members) => _panel?.Update(title, members);
@@ -756,6 +792,7 @@ internal sealed class PixelDockSurface : PixelPopupWindow, IDockSurface
         _flashTicket?.Stop();
         _repaint?.Stop();
         _runTicket?.Stop();
+        _floatTicket?.Stop();
         _panel?.Dispose();
         _panel = null;
         _drop.Revoke();

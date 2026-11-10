@@ -289,6 +289,10 @@ internal static class ShellNative
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
     public static extern int SHCreateItemFromParsingName(string path, IntPtr pbc, ref Guid riid, out IShellItem item);
 
+    /// <summary>The property key of a canonical name such as <c>System.Link.Arguments</c>.</summary>
+    [DllImport("propsys.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+    public static extern int PSGetPropertyKeyFromName(string canonicalName, out PROPERTYKEY key);
+
     [DllImport("shell32.dll", PreserveSig = true)]
     public static extern int SHCreateItemFromIDList(IntPtr pidl, ref Guid riid, out IShellItem item);
 
@@ -591,6 +595,10 @@ internal static class Shell
         ShellNative.CoTaskMemFree(ptr);
         return text.Length == 0 ? null : text;
     }
+
+    /// <summary>A string property by its canonical name (<c>System.Link.Arguments</c>); null when it is missing, empty or unknown.</summary>
+    public static string? Str(IShellItem item, string canonicalName)
+        => ShellNative.PSGetPropertyKeyFromName(canonicalName, out var key) < 0 ? null : Str(item, key);
 
     public static string? KnownFolder(Guid id)
     {

@@ -190,6 +190,24 @@ internal static class GlassDockPanelLayout
         return Math.Clamp(row * columns + column, 0, count - 1);
     }
 
+    /// <summary>Phase 16.4: a drag within this many DIP of the viewport's top or bottom edge scrolls the list; the speed rises with the depth, in DIP per second.</summary>
+    public const double AutoScrollZone = 28, AutoScrollMinSpeed = 60, AutoScrollMaxSpeed = 420;
+
+    /// <summary>
+    /// The scroll speed (DIP per second, negative is up) for a dragged member whose pointer is at <paramref name="y"/> (panel DIPs) over a list viewport
+    /// that spans <paramref name="top"/> to <paramref name="bottom"/>: zero away from the edges, from the minimum at the zone's start to the maximum at
+    /// the edge and beyond it (the title row above, the panel's padding below). Pure.
+    /// </summary>
+    public static double AutoScrollSpeed(double y, double top, double bottom)
+    {
+        static double Speed(double depth) => AutoScrollMinSpeed + (AutoScrollMaxSpeed - AutoScrollMinSpeed) * Math.Clamp(depth / AutoScrollZone, 0, 1);
+        if (y < top + AutoScrollZone)
+            return -Speed(top + AutoScrollZone - y);
+        if (y > bottom - AutoScrollZone)
+            return Speed(y - (bottom - AutoScrollZone));
+        return 0;
+    }
+
     /// <summary>The members' places while one is dragged from <paramref name="from"/> to <paramref name="to"/>: result[member] = place (as DockGroups.Reorder will leave them).</summary>
     public static int[] Places(int count, int from, int to)
     {

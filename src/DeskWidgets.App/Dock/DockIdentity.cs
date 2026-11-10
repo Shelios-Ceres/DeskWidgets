@@ -15,8 +15,9 @@ internal enum DockDropKind
 }
 
 /// <summary>
-/// Turns what the user dropped, or what the taskbar pins, into a saved <see cref="DockItem"/>: the AppUserModelID when there is one, else the
-/// exe path with its arguments and working folder (SPIKE section 5.1). Reading is done once; the dock keeps no file afterwards.
+/// Turns what the user dropped, or what the taskbar pins, into a saved <see cref="DockItem"/>: the AppUserModelID when there is one, and the
+/// exe path with its arguments and working folder when there is one (SPIKE section 5.1); a program that has both keeps both (Phase 16.1: the
+/// AUMID alone left a classic app with no icon to ask for and no exe to match its windows by). Reading is done once; the dock keeps no file afterwards.
 /// </summary>
 internal static partial class DockIdentity
 {
@@ -193,7 +194,11 @@ internal static partial class DockIdentity
         }
         if (Path.IsPathRooted(parsing) && IsProgramFile(parsing))
             return FromExe(parsing, aumid: parsing, name: name);
-        return new DockItem { Name = name, Aumid = parsing };
+        var item = new DockItem { Name = name, Aumid = parsing };
+        // A classic app in the Applications folder has no path of its own, but its Start entry knows one: keep both identities (Phase 16.1).
+        // A Store app finds nothing there and stays AUMID-only.
+        DockBackfill.FromStartEntry(item);
+        return item;
     }
 
     /// <summary>A Store or Start app by its AUMID (the taskbar's Store pins): the name comes from the Applications folder.</summary>

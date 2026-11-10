@@ -32,6 +32,14 @@ internal sealed class GlassDockDragImage : IDisposable
     private FrameClock.Ticket? _flight;
     private Action? _landed;
 
+    // Phase 16.3: the picture is rendered once at the panel's tile size, then drawn at a scale of it (1 = as rendered). It eases to the bar's icon
+    // size while the drag is over the bar and back when it leaves, about the pointer, so the point the user holds stays under the pointer.
+    private byte[]? _source;
+    private int _sourceWidth, _sourceHeight;
+    private double _scale = 1;
+    private Win32.POINT _natural; // where the top-left would be at scale 1 (what the panel asked for)
+    private FrameClock.Ticket? _ease;
+
     /// <summary>The picture is up (rendered and shown).</summary>
     public bool Visible => _visible;
 
@@ -74,7 +82,118 @@ internal sealed class GlassDockDragImage : IDisposable
         if (_hwnd == 0 || _disposed)
             return;
         StopFlight(land: false);
-        Place(x, y);
+        _natural = new Win32.POINT { X = x, Y = y };
+        var (ax, ay) = Anchored(_scale);
+        Place(ax, ay);
+    }
+
+    /// <summary>The top-left for a scale: scaled about the pointer, so the grab point stays put (at scale 1 it is the natural place).</summary>
+    private (int X, int Y) Anchored(double scale)
+    {
+        if (Math.Abs(scale - 1) < 0.0005 || !Win32.GetCursorPos(out var cursor))
+            return (_natural.X, _natural.Y);
+        return (ScaleAbout(_natural.X, cursor.X, scale), ScaleAbout(_natural.Y, cursor.Y, scale));
+    }
+
+    /// <summary>Where a coordinate lands when everything is scaled by <paramref name="scale"/> about <paramref name="about"/>. Pure.</summary>
+    internal static int ScaleAbout(int from, int about, double scale) => (int)Math.Round(about - (about - from) * scale);
+
+    /// <summary>The drawn edge for a scale: the rendered edge times the scale, at least one pixel. Pure.</summary>
+    internal static int ScaledEdge(int edge, double scale) => Math.Max(1, (int)Math.Round(edge * scale));
+
+    /// <summary>The scale that makes the picture <paramref name="edgePx"/> pixels across, or 1 (as rendered) for null. Pure.</summary>
+    internal static double ScaleFor(int renderedEdge, int? edgePx) => edgePx is { } edge && renderedEdge > 0 ? Math.Max(0.1, edge / (double)renderedEdge) : 1;
+
+    /// <summary>
+    /// Phase 16.3: eases the picture to <paramref name="edgePx"/> pixels across (the bar's icon), or back to its rendered size for null. It follows
+    /// the "Release" scale vocabulary (200 ms, ease out); with "Animation effects" off it is one step.
+    /// </summary>
+    public void EaseTo(int? edgePx)
+    {
+        if (!_visible || _disposed || _source is null || Claimed)
+            return;
+        double target = ScaleFor(_sourceWidth, edgePx);
+        if (Math.Abs(target - _scale) < 0.0005 && _ease is null)
+            return;
+        _ease?.Stop();
+        _ease = null;
+        double from = _scale;
+        if (!MotionSettings.Enabled)
+        {
+            SetScale(target);
+            return;
+        }
+        double begin = FrameClock.Now, ms = GlassMotion.Release.TotalMilliseconds;
+        _ease = FrameClock.Every(16, now =>
+        {
+            double t = Math.Clamp((now - begin) / ms, 0, 1);
+            SetScale(from + (target - from) * Bezier.Out.At(t));
+            if (t >= 1)
+            {
+                _ease?.Stop();
+                _ease = null;
+            }
+        });
+    }
+
+    /// <summary>Draws the picture at another scale, about the pointer.</summary>
+    private void SetScale(double scale)
+    {
+        _scale = scale;
+        if (!_visible || _source is null)
+            return;
+        var (x, y) = Anchored(scale);
+        _at = new Win32.POINT { X = x, Y = y };
+        Present();
+    }
+
+    /// <summary>Resamples the rendered picture to the current scale, puts it in the window's bitmap and pushes it with its place.</summary>
+    private void Present()
+    {
+        if (_source is null || _hwnd == 0)
+            return;
+        int width = ScaledEdge(_sourceWidth, _scale), height = ScaledEdge(_sourceHeight, _scale);
+        if (!EnsureBitmap(width, height))
+            return;
+        if (width == _sourceWidth && height == _sourceHeight)
+            Marshal.Copy(_source, 0, _bits, Math.Min(_source.Length, width * height * 4));
+        else
+            Marshal.Copy(Resample(_source, _sourceWidth, _sourceHeight, width, height), 0, _bits, width * height * 4);
+        var destination = _visible ? _at : new Win32.POINT { X = -32000, Y = -32000 }; // off screen until MoveTo places it
+        var size = new Native.SIZE { cx = width, cy = height };
+        var origin = new Win32.POINT();
+        var blend = new Native.BLENDFUNCTION { BlendOp = 0 /* AC_SRC_OVER */, SourceConstantAlpha = 255, AlphaFormat = 1 /* AC_SRC_ALPHA */ };
+        Native.UpdateLayeredWindow(_hwnd, 0, ref destination, ref size, _dc, ref origin, 0, ref blend, 2 /* ULW_ALPHA */);
+    }
+
+    /// <summary>
+    /// Bilinear resampling of premultiplied BGRA (the window wants it premultiplied), pixel centres aligned so a picture shrunk and grown about its
+    /// centre does not drift. Pure. The picture is a few hundred pixels across at most and is resampled only while it eases.
+    /// </summary>
+    internal static byte[] Resample(byte[] source, int sourceWidth, int sourceHeight, int width, int height)
+    {
+        var result = new byte[width * height * 4];
+        double sx = sourceWidth / (double)width, sy = sourceHeight / (double)height;
+        for (int y = 0; y < height; y++)
+        {
+            double fy = Math.Clamp((y + 0.5) * sy - 0.5, 0, sourceHeight - 1);
+            int y0 = (int)fy, y1 = Math.Min(y0 + 1, sourceHeight - 1);
+            double wy = fy - y0;
+            for (int x = 0; x < width; x++)
+            {
+                double fx = Math.Clamp((x + 0.5) * sx - 0.5, 0, sourceWidth - 1);
+                int x0 = (int)fx, x1 = Math.Min(x0 + 1, sourceWidth - 1);
+                double wx = fx - x0;
+                int target = (y * width + x) * 4;
+                for (int c = 0; c < 4; c++)
+                {
+                    double top = source[(y0 * sourceWidth + x0) * 4 + c] * (1 - wx) + source[(y0 * sourceWidth + x1) * 4 + c] * wx;
+                    double bottom = source[(y1 * sourceWidth + x0) * 4 + c] * (1 - wx) + source[(y1 * sourceWidth + x1) * 4 + c] * wx;
+                    result[target + c] = (byte)Math.Round(top * (1 - wy) + bottom * wy);
+                }
+            }
+        }
+        return result;
     }
 
     private void Place(int x, int y)
@@ -90,7 +209,7 @@ internal sealed class GlassDockDragImage : IDisposable
     }
 
     /// <summary>D7's landing: from where it is to a screen pixel (Move), then <paramref name="landed"/>; a new flight starts from where this one is.</summary>
-    public void FlyTo(int x, int y, Action landed)
+    public void FlyTo(int x, int y, Action landed, int? edgePx = null)
     {
         if (!_visible || _disposed)
         {
@@ -98,10 +217,16 @@ internal sealed class GlassDockDragImage : IDisposable
             return;
         }
         Claimed = true;
+        _ease?.Stop();
+        _ease = null;
         StopFlight(land: false);
         _landed = landed;
+        // The landing is at the bar's icon size: a picture that has not eased yet (a quick let-go) grows on the way, with the flight's own curve.
+        double scaleFrom = _scale, scaleTo = edgePx is null ? _scale : ScaleFor(_sourceWidth, edgePx);
         if (!MotionSettings.Enabled)
         {
+            _scale = scaleTo;
+            Present();
             Place(x, y);
             Land();
             return;
@@ -111,6 +236,11 @@ internal sealed class GlassDockDragImage : IDisposable
         _flight = FrameClock.Every(16, now =>
         {
             double t = Math.Clamp((now - begin) / ms, 0, 1), k = Bezier.Move.At(t);
+            if (Math.Abs(scaleTo - scaleFrom) > 0.0005)
+            {
+                _scale = scaleFrom + (scaleTo - scaleFrom) * k;
+                Present();
+            }
             Place((int)Math.Round(from.X + (x - from.X) * k), (int)Math.Round(from.Y + (y - from.Y) * k));
             if (t >= 1)
                 Land();
@@ -146,6 +276,9 @@ internal sealed class GlassDockDragImage : IDisposable
         _generation++;
         Claimed = false;
         StopFlight(land: false);
+        _ease?.Stop();
+        _ease = null;
+        _scale = 1;
         if (_hwnd != 0 && _visible)
             Native.ShowWindow(_hwnd, Native.SW_HIDE);
         _visible = false;
@@ -156,14 +289,15 @@ internal sealed class GlassDockDragImage : IDisposable
     {
         if (_hwnd == 0 && !CreateWindow())
             return false;
+        _source = premultipliedBgra;
+        _sourceWidth = width;
+        _sourceHeight = height;
+        _scale = 1; // a new picture is drawn as rendered
+        _ease?.Stop();
+        _ease = null;
         if (!EnsureBitmap(width, height))
             return false;
-        Marshal.Copy(premultipliedBgra, 0, _bits, Math.Min(premultipliedBgra.Length, width * height * 4));
-        var destination = _visible ? _at : new Win32.POINT { X = -32000, Y = -32000 }; // off screen until MoveTo places it
-        var size = new Native.SIZE { cx = width, cy = height };
-        var source = new Win32.POINT();
-        var blend = new Native.BLENDFUNCTION { BlendOp = 0 /* AC_SRC_OVER */, SourceConstantAlpha = 255, AlphaFormat = 1 /* AC_SRC_ALPHA */ };
-        Native.UpdateLayeredWindow(_hwnd, 0, ref destination, ref size, _dc, ref source, 0, ref blend, 2 /* ULW_ALPHA */);
+        Present();
         return true;
     }
 

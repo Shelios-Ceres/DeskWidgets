@@ -819,6 +819,14 @@ internal sealed partial class DockController : IDisposable
         var ui = DispatcherQueue.GetForCurrentThread();
         _worker.Post(() =>
         {
+            // A classic app saved with only its AUMID gets its exe path from its Start entry (Phase 16.1). The copies take it first, so the
+            // existence check and the custom-tile key below see the program the way it will be.
+            var fills = new List<(string Key, string Target, string? Arguments)>();
+            foreach (var item in items.Where(DockBackfill.Wants))
+            {
+                if (DockBackfill.FromStartEntry(item))
+                    fills.Add((item.Key, item.ExePath!, item.Arguments));
+            }
             var missing = items.Where(item => !DockLauncher.Exists(item)).Select(item => item.Key).ToHashSet();
             // The custom tiles' keys, once per program: this may read an exe's version info, which is why it is here and not in a draw.
             var keys = unkeyed.Select(item => (item.Key, Value: DockCustomKeys.Resolve(item))).ToList();
@@ -826,6 +834,15 @@ internal sealed partial class DockController : IDisposable
             {
                 if (_disposed)
                     return;
+                // The exe paths found are saved on the real items; nothing else in the settings changes.
+                bool filled = false;
+                foreach (var (key, target, arguments) in fills)
+                {
+                    if (DockGroups.Programs(Settings.Items).FirstOrDefault(i => i.Key == key) is { } real)
+                        filled |= DockBackfill.Apply(real, target, arguments);
+                }
+                if (filled)
+                    _host.RequestSave();
                 // A redraw is due when a key differs from what the bar shows now (the no-read match Views falls back to).
                 bool newKey = false;
                 foreach (var (key, value) in keys)
@@ -835,12 +852,14 @@ internal sealed partial class DockController : IDisposable
                     newKey |= shown != value;
                     _customKeys[key] = value;
                 }
-                if (_surface is null || _missing.SetEquals(missing) && !newKey)
+                if (_surface is null || _missing.SetEquals(missing) && !newKey && !filled)
                     return;
                 _missing.Clear();
                 _missing.UnionWith(missing);
                 _surface.SetItems(Views(Settings.Items), Settings.IconSize, new DockChange(DockChangeKind.None));
                 RefreshPanel();
+                if (filled && _haveWindows)
+                    OnWindows(_windows); // the exe path lets a window be matched by it: the running look may now apply
             });
         });
     }

@@ -355,6 +355,12 @@ internal sealed partial class GlassDockSurface : IDockSurface
             return;
         }
         _menu?.Hide();
+        // A member's menu, asked from the group's panel, opens at the member in the panel's own window (Phase 16.2); the bar's menus open above the bar.
+        if (_panel is { IsOpen: true, ForDrop: false } panel && panel.Rect.Contains(screenX, screenY))
+        {
+            panel.ShowMenu(entries, screenX, screenY, closed);
+            return;
+        }
         var menu = new MenuFlyout { ShouldConstrainToRootBounds = false };
         foreach (var item in FlyoutMenuAdapter.Build(entries))
             menu.Items.Add(item);

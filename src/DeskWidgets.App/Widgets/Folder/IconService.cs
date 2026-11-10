@@ -32,6 +32,12 @@ internal sealed class IconService : IDisposable
 {
     private const int CacheLimit = 400;
 
+    /// <summary>
+    /// A failed Start-entry request (<c>shell:AppsFolder\...</c>) is asked again after this long, at the next draw that needs it: the Applications
+    /// folder can be empty right after sign-in, and a failure cached for the whole session left a dock tile blank until the app restarted.
+    /// </summary>
+    internal const long RetryFailedAfterMs = 30_000;
+
     private static IconService? s_shared;
 
     private readonly DispatcherQueue _ui;
@@ -39,6 +45,7 @@ internal sealed class IconService : IDisposable
     private readonly Dictionary<IconRequest, IconImage?> _cache = [];
     private readonly Queue<IconRequest> _order = new();
     private readonly HashSet<IconRequest> _pending = [];
+    private readonly Dictionary<IconRequest, long> _failedAt = [];
     private readonly object _gate = new();
     private int _next;
 
@@ -55,8 +62,27 @@ internal sealed class IconService : IDisposable
     public bool TryGet(IconRequest request, out IconImage? image)
     {
         lock (_gate)
-            return _cache.TryGetValue(request, out image);
+        {
+            if (!_cache.TryGetValue(request, out image))
+                return false;
+            if (image is null && _failedAt.TryGetValue(request, out long failed) && ShouldRetry(request, Environment.TickCount64 - failed))
+            {
+                // Forget the failure: the caller asks again.
+                _cache.Remove(request);
+                _failedAt.Remove(request);
+                image = null;
+                return false;
+            }
+            return true;
+        }
     }
+
+    /// <summary>Whether a failed request is worth asking again after <paramref name="ageMs"/>: only a Start-entry one, and not before <see cref="RetryFailedAfterMs"/>.</summary>
+    internal static bool ShouldRetry(IconRequest request, long ageMs)
+        => ageMs >= RetryFailedAfterMs
+            && (IsStartEntry(request.Path) || IsStartEntry(request.Fallback));
+
+    private static bool IsStartEntry(string? path) => path is not null && path.StartsWith(@"shell:AppsFolder\", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Fetches in the background unless cached or already on its way; <paramref name="ready"/> runs on the UI thread afterwards.</summary>
     public void Request(IconRequest request, Action ready)
@@ -87,8 +113,15 @@ internal sealed class IconService : IDisposable
             lock (_gate)
             {
                 if (_cache.Count >= CacheLimit && _order.TryDequeue(out var oldest))
+                {
                     _cache.Remove(oldest);
+                    _failedAt.Remove(oldest);
+                }
                 _cache[request] = image;
+                if (image is null)
+                    _failedAt[request] = Environment.TickCount64;
+                else
+                    _failedAt.Remove(request);
                 _order.Enqueue(request);
                 _pending.Remove(request);
             }

@@ -42,14 +42,14 @@ internal sealed class GlassDockTiles
         if (view.CustomKey is { } key && GlassTileArt.ForApp(key) is { } art)
             return ($"art|{key}|{theme}|{size}", () => GlassTiles.Designed(art, dark, size), () => GlassDockRunning.Designed(key, art, dark, size), false);
 
-        if (IconPath(item) is { } path)
+        if (DockIconSource.PathFor(item) is { } path)
         {
             // The icon cache is keyed by the file's write time too: until it is known (read off the UI thread) nothing is asked for, so the
             // picture is never fetched twice under two stamps.
             if (!TryStamp(path, out long stamp))
                 return ($"loading|{theme}|{size}", () => GlassTiles.Loading(palette, size), () => GlassTiles.Loading(palette, size), true);
             int pixels = GlassTiles.IconPixels(size, scale);
-            var request = new IconRequest(path, GlassTileProvider.AskSize(pixels), IconFlavor.AppIcon, stamp, Fallback(item, path));
+            var request = new IconRequest(path, GlassTileProvider.AskSize(pixels), IconFlavor.AppIcon, stamp, DockIconSource.FallbackFor(item));
             var icons = IconService.Shared;
             if (!icons.TryGet(request, out var image))
             {
@@ -102,17 +102,6 @@ internal sealed class GlassDockTiles
         }
         return (state, Build, null, loading);
     }
-
-    /// <summary>What to ask the Shell for: the exe, else the Start entry (<c>shell:AppsFolder\&lt;AUMID&gt;</c>); a bare link has no icon of its own.</summary>
-    private static string? IconPath(DockItem item)
-        => !string.IsNullOrEmpty(item.ExePath) ? item.ExePath
-            : !string.IsNullOrEmpty(item.Aumid) ? @"shell:AppsFolder\" + item.Aumid
-            : DockIdentity.SafeIconPath(item.IconPath) is { } linkIcon ? linkIcon // a link's own icon file, local only (a UNC path would send credentials)
-            : null;
-
-    /// <summary>An exe that also has an AUMID: its Start entry, tried when the exe gives no good icon.</summary>
-    private static string? Fallback(DockItem item, string path)
-        => !string.IsNullOrEmpty(item.Aumid) && path != @"shell:AppsFolder\" + item.Aumid ? @"shell:AppsFolder\" + item.Aumid : null;
 
     /// <summary>
     /// The file's write time for the icon cache's key, from a cache filled off the UI thread (a stat of an exe on a slow or sleeping disk

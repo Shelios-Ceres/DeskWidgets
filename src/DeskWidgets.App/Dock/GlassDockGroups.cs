@@ -233,10 +233,16 @@ internal sealed partial class GlassDockSurface
             _landing = true;
             _landingKey = null;
             var gap = GlassDockLayout.Gap(_size, _barTarget, _gap);
-            _dragImage.FlyTo(_actual.X + (int)Math.Round(gap.X * Scale), _actual.Y + (int)Math.Round(gap.Y * Scale), Landed);
+            _dragImage.FlyTo(_actual.X + (int)Math.Round(gap.X * Scale), _actual.Y + (int)Math.Round(gap.Y * Scale), Landed, IconEdgePx);
         }
         Panel?.Invoke(e);
+        // Phase 16.3: over the bar the picture eases to the bar's icon size; off it (still outside the panel) it eases back.
+        if (e.Kind == DockPanelEventKind.DragMove)
+            _dragImage.EaseTo(_gap >= 0 ? IconEdgePx : null);
     }
+
+    /// <summary>The bar's icon edge in screen pixels: what a member's picture grows or shrinks to when it is over the bar.</summary>
+    private int IconEdgePx => (int)Math.Round(IconDip * Scale);
 
     // ---------------------------------------------------------------- D7 out of the panel: the dragged picture lands
 
@@ -254,7 +260,7 @@ internal sealed partial class GlassDockSurface
             return false;
         _landingKey = slot.Key;
         GlassMotion.Preset(slot.Lift, 0, 1, Centre(slot));
-        _dragImage.FlyTo(_actual.X + (int)Math.Round(slot.X * Scale), _actual.Y + (int)Math.Round(slot.Y * Scale), Landed);
+        _dragImage.FlyTo(_actual.X + (int)Math.Round(slot.X * Scale), _actual.Y + (int)Math.Round(slot.Y * Scale), Landed, IconEdgePx);
         return true;
     }
 

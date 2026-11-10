@@ -162,7 +162,7 @@ internal sealed class PixelDockArt
                 direct = _direct[(item.Key, size)] = _source(item) is { } pixels ? Tier2(pixels, size) : Placeholder(size);
             return direct;
         }
-        if (IconPath(item) is { } path && RequestFor(item) is { } known)
+        if (DockIconSource.PathFor(item) is { } path && RequestFor(item) is { } known)
         {
             var (stamp, fallback) = known;
             var request = new IconRequest(path, 64, IconFlavor.AppIcon, stamp, fallback);
@@ -187,12 +187,6 @@ internal sealed class PixelDockArt
     /// <summary>The view's custom-tile key (found off the UI thread by the controller); design QA's views carry none, so it matches them here (no file read).</summary>
     private string? KeyOf(DockItemView view) => view.CustomKey ?? (_source is not null ? DockCustomKeys.Quick(view.Item) : null);
 
-    private static string? IconPath(DockItem item)
-        => !string.IsNullOrEmpty(item.ExePath) ? item.ExePath
-            : !string.IsNullOrEmpty(item.Aumid) ? @"shell:AppsFolder\" + item.Aumid
-            : DockIdentity.SafeIconPath(item.IconPath) is { } linkIcon ? linkIcon // a link's own icon file, local only (a UNC path would send credentials)
-            : null;
-
     /// <summary>
     /// The icon request's stamp (the exe's last write, so an updated program gets its new icon) and fallback. The stamp is a file read, which can
     /// take seconds on a network or sleeping drive: it is read on a worker, and until it is known (null) the generic tile stands in and nothing
@@ -200,16 +194,18 @@ internal sealed class PixelDockArt
     /// </summary>
     private (long Stamp, string? Fallback)? RequestFor(DockItem item)
     {
-        if (_requests.TryGetValue(item.Key, out var known))
+        // The exe path is part of the key: a classic app that was saved with only its AUMID gets its exe path later (DockBackfill), and then asks again.
+        string key = item.Key + "|" + item.ExePath;
+        if (_requests.TryGetValue(key, out var known))
             return known;
-        string? fallback = !string.IsNullOrEmpty(item.ExePath) && !string.IsNullOrEmpty(item.Aumid) ? @"shell:AppsFolder\" + item.Aumid : null;
+        string? fallback = DockIconSource.FallbackFor(item);
         if (string.IsNullOrEmpty(item.ExePath))
-            return _requests[item.Key] = (0, fallback);
+            return _requests[key] = (0, fallback);
         if (_queue is null)
-            return _requests[item.Key] = (ReadStamp(item.ExePath), fallback); // no UI thread to come back to: read here
-        if (_stamping.Add(item.Key))
+            return _requests[key] = (ReadStamp(item.ExePath), fallback); // no UI thread to come back to: read here
+        if (_stamping.Add(key))
         {
-            string key = item.Key, exe = item.ExePath;
+            string exe = item.ExePath;
             var queue = _queue;
             Task.Run(() =>
             {

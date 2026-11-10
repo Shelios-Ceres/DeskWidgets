@@ -121,6 +121,30 @@ internal sealed class PixelDockPainter
     /// <summary>A member dragged out of a group's panel, drawn where the pointer is (canvas art pixels, its centre) once it has left the panel; null: none.</summary>
     public (DockItemView View, int X, int Y)? Floating { get; set; }
 
+    /// <summary>
+    /// Phase 16.3: the floating picture's edge in art pixels while it steps from the panel's icon size to the bar's (-1: the bar's icon size, the
+    /// end of the steps). The picture is the panel's 24 until it has crossed onto the bar, then it is stepped through <see cref="FloatSizes"/>.
+    /// </summary>
+    public int FloatSize { get; set; } = -1;
+
+    /// <summary>
+    /// The sizes the floating picture steps through after the panel's icon size <paramref name="from"/> to reach the bar's <paramref name="to"/>: the
+    /// halfway size, then the bar's. None when they are the same (a Medium bar). One step per frame (<see cref="StepAnimator.FrameMs"/>).
+    /// </summary>
+    internal static int[] FloatSizes(int from, int to) => from == to ? [] : [(from + to) / 2, to];
+
+    /// <summary>A picture drawn at another square size by nearest pixel (art stays hard-edged; only the in-between frame of the steps uses it).</summary>
+    internal static PixelCanvas Resized(PixelCanvas source, int size)
+    {
+        var result = new PixelCanvas(size, size);
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+                result.Pixels[y * size + x] = source.Get(x * source.Width / size, y * source.Height / size);
+        }
+        return result;
+    }
+
     /// <summary>D12: per icon, whether it takes the files being dragged over the dock (a group: a member does; null: no file drag).</summary>
     public IReadOnlyList<bool>? OpenLit { get; set; }
 
@@ -563,9 +587,10 @@ internal sealed class PixelDockPainter
             canvas.Blit(_art.Icon(p, Items[DragIndex], icon), BarLeft + DragCenter - icon / 2, IconTop - DragRise);
         if (Floating is { } floating)
         {
-            // Undimmed, at the bar's icon size: it is headed for the bar.
-            var picture = _art.Icon(p, floating.View, icon);
-            canvas.Blit(picture, floating.X - icon / 2, floating.Y - icon / 2);
+            // Undimmed and headed for the bar: it steps from the panel's icon size to the bar's (Phase 16.3), about the pointer.
+            int size = FloatSize > 0 ? FloatSize : icon;
+            var picture = size == icon ? _art.Icon(p, floating.View, icon) : Resized(_art.Icon(p, floating.View, PixelDockPanelLayout.IconSize), size);
+            canvas.Blit(picture, floating.X - size / 2, floating.Y - size / 2);
         }
         if (OpenLit is not null)
         {
