@@ -134,8 +134,8 @@ internal sealed partial class DockController
                 ClickProgram(member, another: false, at.X, at.Y);
                 break;
             case DockPanelEventKind.RightClick when member is not null:
-                Win32.GetCursorPos(out var menuAt);
-                ShowMenu(AppMenu(member), menuAt.X, menuAt.Y);
+                // Where the panel says: the pointer for a right click, the focused cell for the Menu key and Shift+F10 (B5-2).
+                ShowMenu(AppMenu(member), e.ScreenX, e.ScreenY);
                 break;
             case DockPanelEventKind.Reorder:
                 if (DockGroups.Reorder(group, e.Index, e.To))

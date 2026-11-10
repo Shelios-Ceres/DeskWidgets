@@ -51,7 +51,7 @@ internal sealed class GlassDockTiles
             int pixels = GlassTiles.IconPixels(size, scale);
             var request = new IconRequest(path, GlassTileProvider.AskSize(pixels), IconFlavor.AppIcon, stamp, DockIconSource.FallbackFor(item));
             var icons = IconService.Shared;
-            if (!icons.TryGet(request, out var image))
+            if (!icons.TryGet(request, out var image, _repaint))
             {
                 icons.Request(request, _repaint);
                 return ($"loading|{theme}|{size}", () => GlassTiles.Loading(palette, size), () => GlassTiles.Loading(palette, size), true);

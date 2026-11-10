@@ -35,25 +35,43 @@ public class DockBackfillTests
     // ----- what is taken -----
 
     [Fact]
-    public void ApplyingAStartEntry_KeepsTheAumidAndAddsTheExeAndArguments()
+    public void ApplyingAStartEntry_KeepsTheAumidAndAddsTheExe()
     {
         var item = AumidOnly();
-        Assert.True(DockBackfill.Apply(item, Exe, "--profile=work"));
+        Assert.True(DockBackfill.Apply(item, Exe, null));
         Assert.Equal("com.anysphere.sand", item.Aumid);
         Assert.Equal(Exe, item.ExePath);
-        Assert.Equal("--profile=work", item.Arguments);
+        Assert.Null(item.Arguments);
         Assert.Equal("aumid:com.anysphere.sand", item.Key); // the identity does not change, so custom tiles and running state still follow it
-        // Starting goes through the exe with the shortcut's own arguments, as the Start entry would.
-        Assert.Equal(new DockStart(DockStartKind.Exe, Exe, "--profile=work"), item.PlanStart());
+        Assert.Equal(new DockStart(DockStartKind.Exe, Exe), item.PlanStart());
         Assert.True(item.SupportsRunning);
     }
 
-    [Fact]
-    public void AnEntryWithNoArguments_LeavesThemNull()
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    [InlineData(null)]
+    public void AnEntryWithNoRealArguments_IsTaken(string? arguments)
+        => Assert.True(DockBackfill.Apply(AumidOnly(), Exe, arguments));
+
+    // B5-1: a Start entry with arguments runs a launcher or a host exe with them. Real ones on the user's PC:
+    // Sticky Notes -> ONENOTE.EXE "/memoryWindow start", a game -> its launcher with a game id, Windows SDK -> explorer.exe "<folder>",
+    // a developer prompt -> cmd.exe /k ..., IDLE -> pythonw.exe idle.pyw.
+    [Theory]
+    [InlineData("/memoryWindow start")]
+    [InlineData("nxl://launch/10100")]
+    [InlineData("--game=hkrpg_cn")]
+    [InlineData("/k vsdevcmd.bat")]
+    [InlineData("idle.pyw")]
+    public void AnEntryWithArguments_IsNotTaken_TheItemStaysAumidOnly(string arguments)
     {
-        var item = AumidOnly();
-        Assert.True(DockBackfill.Apply(item, Exe, "  "));
+        var item = AumidOnly("Microsoft.Office.OneNote.MemoryPreview");
+        Assert.False(DockBackfill.Apply(item, Exe, arguments));
+        Assert.Null(item.ExePath);
         Assert.Null(item.Arguments);
+        Assert.True(DockBackfill.Wants(item)); // asked again on a later load: a cheap re-read
+        Assert.Equal(new DockStart(DockStartKind.AppsFolder, @"shell:AppsFolder\Microsoft.Office.OneNote.MemoryPreview"), item.PlanStart());
+        Assert.Equal(@"shell:AppsFolder\Microsoft.Office.OneNote.MemoryPreview", DockIconSource.PathFor(item)); // its own Start-entry icon, not the host's
     }
 
     [Theory]
@@ -65,7 +83,7 @@ public class DockBackfillTests
     public void AnUnusableTarget_ChangesNothing(string? target)
     {
         var item = AumidOnly();
-        Assert.False(DockBackfill.Apply(item, target, "--x"));
+        Assert.False(DockBackfill.Apply(item, target, null));
         Assert.Null(item.ExePath);
         Assert.Null(item.Arguments);
     }
@@ -160,27 +178,99 @@ public class DockBackfillTests
         Assert.Null(DockIconSource.PathFor(new DockItem { Name = "g", Url = "steam://rungameid/1", IconPath = @"\\server\share\game.ico" }));
     }
 
-    // ----- a failed Start-entry icon is asked again -----
+    // ----- a failed Start-entry icon is asked again (B5-3: without changing what is shown, and without growing the order) -----
+
+    private static readonly IconRequest StartEntry = new(@"shell:AppsFolder\com.anysphere.sand", 64, IconFlavor.AppIcon, 0);
+    private static readonly IconImage Picture = new(new Pixels(1, 1, [0xFF, 0, 0, 0xFF]), false);
 
     [Fact]
-    public void AFailedStartEntryRequest_IsRetriedAfterTheDelay_AndNotBefore()
+    public void AFailedStartEntryRequest_IsDueAfterTheDelay_AndNotBefore()
     {
-        var request = new IconRequest(@"shell:AppsFolder\com.anysphere.sand", 64, IconFlavor.AppIcon, 0);
-        Assert.False(IconService.ShouldRetry(request, IconService.RetryFailedAfterMs - 1));
-        Assert.True(IconService.ShouldRetry(request, IconService.RetryFailedAfterMs));
+        var cache = new IconResultCache(10);
+        cache.Store(StartEntry, null, now: 1000);
+        Assert.True(cache.TryGet(StartEntry, 1000 + IconResultCache.RetryFailedAfterMs - 1, out _, out bool early));
+        Assert.False(early);
+        Assert.True(cache.TryGet(StartEntry, 1000 + IconResultCache.RetryFailedAfterMs, out _, out bool due));
+        Assert.True(due);
     }
 
     [Fact]
-    public void ARequestWhoseFallbackIsAStartEntry_IsRetriedToo()
+    public void ADueRetry_StillAnswersWithTheCachedFailure_SoTheTileDoesNotChange()
     {
-        var request = new IconRequest(@"C:\Chrome\chrome.exe", 64, IconFlavor.AppIcon, 5, @"shell:AppsFolder\Chrome");
-        Assert.True(IconService.ShouldRetry(request, IconService.RetryFailedAfterMs + 1));
+        var cache = new IconResultCache(10);
+        cache.Store(StartEntry, null, now: 0);
+        bool hit = cache.TryGet(StartEntry, 10 * IconResultCache.RetryFailedAfterMs, out var image, out bool due);
+        Assert.True(hit); // a hit: the caller shows what it showed, not a loading state
+        Assert.Null(image);
+        Assert.True(due);
+        Assert.True(cache.Contains(StartEntry));
+    }
+
+    [Fact]
+    public void AfterARetry_TheOrderStillHoldsOneEntryPerRequest()
+    {
+        var cache = new IconResultCache(10);
+        cache.Store(StartEntry, null, now: 0);
+        for (int retry = 1; retry <= 5; retry++)
+            cache.Store(StartEntry, null, now: retry * IconResultCache.RetryFailedAfterMs); // each failed retry is stored again
+        Assert.Equal(1, cache.OrderCount);
+        Assert.Equal(1, cache.Count);
+    }
+
+    [Fact]
+    public void ARetryThatFailsAgain_WaitsAnotherFullDelay()
+    {
+        var cache = new IconResultCache(10);
+        cache.Store(StartEntry, null, now: 0);
+        cache.Store(StartEntry, null, now: 40_000);
+        cache.TryGet(StartEntry, 40_000 + IconResultCache.RetryFailedAfterMs - 1, out _, out bool early);
+        Assert.False(early);
+    }
+
+    [Fact]
+    public void ARetryThatSucceeds_ReplacesTheFailure_AndIsNeverDueAgain()
+    {
+        var cache = new IconResultCache(10);
+        cache.Store(StartEntry, null, now: 0);
+        cache.Store(StartEntry, Picture, now: 31_000);
+        Assert.True(cache.TryGet(StartEntry, 1_000_000, out var image, out bool due));
+        Assert.Same(Picture, image);
+        Assert.False(due);
+    }
+
+    [Fact]
+    public void ARetryDoesNotEvictAnotherEntry_AndEvictionStillDropsTheOldest()
+    {
+        var cache = new IconResultCache(2);
+        var other = new IconRequest(@"C:\a.exe", 64, IconFlavor.AppIcon, 1);
+        var third = new IconRequest(@"C:\b.exe", 64, IconFlavor.AppIcon, 2);
+        cache.Store(StartEntry, null, now: 0);
+        cache.Store(other, Picture, now: 0);
+        cache.Store(StartEntry, null, now: 40_000); // a retry while full: nothing leaves
+        Assert.True(cache.Contains(other));
+        cache.Store(third, Picture, now: 41_000); // a new request while full: the oldest (the Start entry) leaves
+        Assert.False(cache.Contains(StartEntry));
+        Assert.True(cache.Contains(other));
+        Assert.Equal(2, cache.OrderCount);
     }
 
     [Fact]
     public void AFailedFileRequest_IsNeverRetried_SoABigFolderOfBrokenThumbnailsIsNotAskedAgain()
     {
-        var request = new IconRequest(@"C:\Pictures\broken.jpg", 64, IconFlavor.Thumbnail, 5);
-        Assert.False(IconService.ShouldRetry(request, 10 * IconService.RetryFailedAfterMs));
+        var cache = new IconResultCache(10);
+        var broken = new IconRequest(@"C:\Pictures\broken.jpg", 64, IconFlavor.Thumbnail, 5);
+        cache.Store(broken, null, now: 0);
+        cache.TryGet(broken, 100 * IconResultCache.RetryFailedAfterMs, out _, out bool due);
+        Assert.False(due);
+    }
+
+    [Fact]
+    public void ARequestWhoseFallbackIsAStartEntry_IsRetriedToo()
+    {
+        var cache = new IconResultCache(10);
+        var request = new IconRequest(@"C:\Chrome\chrome.exe", 64, IconFlavor.AppIcon, 5, @"shell:AppsFolder\Chrome");
+        cache.Store(request, null, now: 0);
+        cache.TryGet(request, IconResultCache.RetryFailedAfterMs, out _, out bool due);
+        Assert.True(due);
     }
 }

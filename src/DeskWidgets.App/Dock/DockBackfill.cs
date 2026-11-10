@@ -4,7 +4,7 @@ namespace DeskWidgets.Dock;
 
 /// <summary>
 /// Phase 16.1: a classic desktop app that was saved with only its AppUserModelID (an Applications-folder item or a taskbar pin has no file of its
-/// own) gets its exe path, and the shortcut's arguments, from the Start entry behind that AUMID. The AUMID stays: it is the item's identity and
+/// own) gets its exe path from the Start entry behind that AUMID, when that entry simply runs the app's own exe (no arguments). The AUMID stays: it is the item's identity and
 /// is what Windows reports for the app's windows. The exe path is what the icon request, the window match and "Open file location" need.
 /// The decision is pure (tested); reading the Start entry is the only Shell call and belongs on a worker.
 /// </summary>
@@ -26,16 +26,17 @@ internal static class DockBackfill
         => DockIdentity.SafeIconPath(target) is { } path && DockIdentity.IsProgramFile(path);
 
     /// <summary>
-    /// Puts a Start entry's target and arguments on an item that <see cref="Wants"/> them. Returns whether anything changed, so the caller saves.
-    /// Starting then goes through the exe with the shortcut's own arguments, which is what the Start entry would have done.
+    /// Puts a Start entry's target on an item that <see cref="Wants"/> it. Returns whether anything changed, so the caller saves.
+    /// A Start entry that has arguments is not taken (B5-1): it runs a launcher or a host exe with them (Sticky Notes is ONENOTE.EXE
+    /// "/memoryWindow start", a game is its launcher with a game id, an SDK prompt is cmd.exe), and that exe is not the program: its icon would be
+    /// the host's and every window of the host would light the item. The item stays AUMID-only, as before: the Start entry's icon, started through
+    /// the Applications folder, matched by AUMID.
     /// </summary>
     public static bool Apply(DockItem item, string? target, string? arguments)
     {
-        if (!Wants(item) || !IsUsableTarget(target))
+        if (!Wants(item) || !string.IsNullOrWhiteSpace(arguments) || !IsUsableTarget(target))
             return false;
         item.ExePath = DockIdentity.SafeIconPath(target);
-        if (!string.IsNullOrWhiteSpace(arguments))
-            item.Arguments = arguments;
         return true;
     }
 

@@ -31,7 +31,7 @@ internal sealed class PixelFolderIcons
             bool app = kind == FolderItemKind.App;
             var request = new IconRequest(item.IconPath, 64, app ? IconFlavor.AppIcon : IconFlavor.Thumbnail, Stamp(item), Fallback(item));
             var icons = IconService.Shared;
-            if (icons.TryGet(request, out var image))
+            if (icons.TryGet(request, out var image, _repaint))
             {
                 if (image is not null)
                 {

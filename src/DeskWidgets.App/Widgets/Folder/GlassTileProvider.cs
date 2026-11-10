@@ -52,7 +52,7 @@ internal sealed class GlassTileProvider
             int pixels = app ? GlassTiles.IconPixels(size, scale) : (int)Math.Ceiling(size * scale);
             request = new IconRequest(item.IconPath, AskSize(pixels), app ? IconFlavor.AppIcon : IconFlavor.Thumbnail, StampOf(item), Fallback(item));
             var icons = IconService.Shared;
-            if (icons.TryGet(request, out var image))
+            if (icons.TryGet(request, out var image, _repaint))
             {
                 if (image is not null)
                 {

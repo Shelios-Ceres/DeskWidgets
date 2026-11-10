@@ -32,20 +32,12 @@ internal sealed class IconService : IDisposable
 {
     private const int CacheLimit = 400;
 
-    /// <summary>
-    /// A failed Start-entry request (<c>shell:AppsFolder\...</c>) is asked again after this long, at the next draw that needs it: the Applications
-    /// folder can be empty right after sign-in, and a failure cached for the whole session left a dock tile blank until the app restarted.
-    /// </summary>
-    internal const long RetryFailedAfterMs = 30_000;
-
     private static IconService? s_shared;
 
     private readonly DispatcherQueue _ui;
     private readonly StaWorker[] _workers = [new("Big Folder icons 1"), new("Big Folder icons 2")];
-    private readonly Dictionary<IconRequest, IconImage?> _cache = [];
-    private readonly Queue<IconRequest> _order = new();
+    private readonly IconResultCache _cache = new(CacheLimit);
     private readonly HashSet<IconRequest> _pending = [];
-    private readonly Dictionary<IconRequest, long> _failedAt = [];
     private readonly object _gate = new();
     private int _next;
 
@@ -59,42 +51,42 @@ internal sealed class IconService : IDisposable
     /// <summary>One service for the app. First use must be on the UI thread.</summary>
     public static IconService Shared => s_shared ??= new IconService(DispatcherQueue.GetForCurrentThread());
 
-    public bool TryGet(IconRequest request, out IconImage? image)
+    /// <summary>
+    /// The cached answer, at once. A failed Start-entry request that is due again (<see cref="IconResultCache.RetryFailedAfterMs"/>) still answers
+    /// with its failure, so the tile does not change while it is asked again; the re-fetch runs in the background and <paramref name="retryReady"/>
+    /// runs on the UI thread only if it now has a picture.
+    /// </summary>
+    public bool TryGet(IconRequest request, out IconImage? image, Action? retryReady = null)
     {
+        bool due;
+        bool hit;
         lock (_gate)
-        {
-            if (!_cache.TryGetValue(request, out image))
-                return false;
-            if (image is null && _failedAt.TryGetValue(request, out long failed) && ShouldRetry(request, Environment.TickCount64 - failed))
-            {
-                // Forget the failure: the caller asks again.
-                _cache.Remove(request);
-                _failedAt.Remove(request);
-                image = null;
-                return false;
-            }
-            return true;
-        }
+            hit = _cache.TryGet(request, Environment.TickCount64, out image, out due);
+        if (hit && due && retryReady is not null)
+            Fetch(request, retryReady, retry: true);
+        return hit;
     }
-
-    /// <summary>Whether a failed request is worth asking again after <paramref name="ageMs"/>: only a Start-entry one, and not before <see cref="RetryFailedAfterMs"/>.</summary>
-    internal static bool ShouldRetry(IconRequest request, long ageMs)
-        => ageMs >= RetryFailedAfterMs
-            && (IsStartEntry(request.Path) || IsStartEntry(request.Fallback));
-
-    private static bool IsStartEntry(string? path) => path is not null && path.StartsWith(@"shell:AppsFolder\", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Fetches in the background unless cached or already on its way; <paramref name="ready"/> runs on the UI thread afterwards.</summary>
     public void Request(IconRequest request, Action ready)
     {
         lock (_gate)
         {
-            if (_cache.ContainsKey(request))
+            if (_cache.Contains(request))
                 return;
+        }
+        Fetch(request, ready, retry: false);
+    }
+
+    private void Fetch(IconRequest request, Action ready, bool retry)
+    {
+        lock (_gate)
+        {
             if (!_pending.Add(request))
             {
                 // Already on its way: the earlier caller's callback repaints; this caller's own view repaints on the same event.
-                _waiting.Add((request, ready));
+                if (!retry)
+                    _waiting.Add((request, ready));
                 return;
             }
         }
@@ -112,19 +104,12 @@ internal sealed class IconService : IDisposable
             }
             lock (_gate)
             {
-                if (_cache.Count >= CacheLimit && _order.TryDequeue(out var oldest))
-                {
-                    _cache.Remove(oldest);
-                    _failedAt.Remove(oldest);
-                }
-                _cache[request] = image;
-                if (image is null)
-                    _failedAt[request] = Environment.TickCount64;
-                else
-                    _failedAt.Remove(request);
-                _order.Enqueue(request);
+                _cache.Store(request, image, Environment.TickCount64);
                 _pending.Remove(request);
             }
+            // A retry that failed again changes nothing on screen: no repaint.
+            if (retry && image is null)
+                return;
             _ui.TryEnqueue(() =>
             {
                 ready();
@@ -202,4 +187,65 @@ internal sealed class IconService : IDisposable
         foreach (var worker in _workers)
             worker.Dispose();
     }
+}
+
+/// <summary>
+/// The icon service's results, with no threads or Shell in it so it can be tested: results by request, the order they came in (to evict the oldest
+/// once full), and when each failure happened. A failed Start-entry request (<c>shell:AppsFolder\...</c>) is due again after
+/// <see cref="RetryFailedAfterMs"/>: the Applications folder can be empty right after sign-in, and a failure kept for the whole session left a tile
+/// blank until the app restarted. A request is in the order once, however many times it is stored.
+/// </summary>
+internal sealed class IconResultCache
+{
+    /// <summary>How long a failed Start-entry request waits before it is asked again.</summary>
+    internal const long RetryFailedAfterMs = 30_000;
+
+    private readonly int _limit;
+    private readonly Dictionary<IconRequest, IconImage?> _results = [];
+    private readonly Queue<IconRequest> _order = new();
+    private readonly Dictionary<IconRequest, long> _failedAt = [];
+
+    public IconResultCache(int limit) => _limit = limit;
+
+    /// <summary>How many requests the eviction order holds (one per cached request).</summary>
+    public int OrderCount => _order.Count;
+
+    public int Count => _results.Count;
+
+    public bool Contains(IconRequest request) => _results.ContainsKey(request);
+
+    /// <summary>The cached result (a failure is a cached null). <paramref name="retryDue"/>: it is a failure that is worth asking again now; the answer is still the failure.</summary>
+    public bool TryGet(IconRequest request, long now, out IconImage? image, out bool retryDue)
+    {
+        retryDue = false;
+        if (!_results.TryGetValue(request, out image))
+            return false;
+        retryDue = image is null && _failedAt.TryGetValue(request, out long failed) && ShouldRetry(request, now - failed);
+        return true;
+    }
+
+    /// <summary>Keeps a result. A request already cached is updated in place: no new place in the order, and nothing is evicted for it.</summary>
+    public void Store(IconRequest request, IconImage? image, long now)
+    {
+        if (!_results.ContainsKey(request))
+        {
+            if (_results.Count >= _limit && _order.TryDequeue(out var oldest))
+            {
+                _results.Remove(oldest);
+                _failedAt.Remove(oldest);
+            }
+            _order.Enqueue(request);
+        }
+        _results[request] = image;
+        if (image is null)
+            _failedAt[request] = now;
+        else
+            _failedAt.Remove(request);
+    }
+
+    /// <summary>Whether a failed request is worth asking again after <paramref name="ageMs"/>: only a Start-entry one, and not before <see cref="RetryFailedAfterMs"/>.</summary>
+    internal static bool ShouldRetry(IconRequest request, long ageMs)
+        => ageMs >= RetryFailedAfterMs && (IsStartEntry(request.Path) || IsStartEntry(request.Fallback));
+
+    private static bool IsStartEntry(string? path) => path is not null && path.StartsWith(@"shell:AppsFolder\", StringComparison.OrdinalIgnoreCase);
 }

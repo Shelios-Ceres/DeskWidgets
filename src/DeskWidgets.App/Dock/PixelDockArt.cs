@@ -167,7 +167,7 @@ internal sealed class PixelDockArt
             var (stamp, fallback) = known;
             var request = new IconRequest(path, 64, IconFlavor.AppIcon, stamp, fallback);
             var icons = IconService.Shared;
-            if (icons.TryGet(request, out var image))
+            if (icons.TryGet(request, out var image, _repaint))
             {
                 if (image is not null)
                 {
